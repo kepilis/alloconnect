@@ -1,0 +1,58 @@
+{
+  "name": "alloconnect",
+  "productName": "alloconnect",
+  "version": "1.13.1",
+  "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
+  "main": "main.js",
+  "author": "alloconnect",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win zip --x64"
+  },
+  "devDependencies": {
+    "electron": "^44.9.1",
+    "electron-builder": "^26.0.0",
+    "resedit": "^1.7.2",
+    "@sapphi-red/web-noise-suppressor": "^0.4.1"
+  },
+  "build": {
+    "appId": "local.alloconnect",
+    "productName": "alloconnect",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "renderer.js",
+      "pcm-worklet.js",
+      "icon.png",
+      "net-friends.js",
+      "upnp.js",
+      "vendor/rnnoise-worklet.js",
+      "vendor/rnnoise.wasm",
+      "vendor/rnnoise_simd.wasm",
+      "vendor/LICENSE-web-noise-suppressor",
+      "overlay.html",
+      "overlay.js",
+      "vendor-notice/ViGEmClient-LICENSE",
+      "overlay-preload.js",
+      "stun-lists.js",
+      "clip.js",
+      "vendor/mp4-muxer.js",
+      "vendor/LICENSE-mp4-muxer"
+    ],
+    "win": {
+      "target": "zip",
+      "signAndEditExecutable": false,
+      "icon": "build/icon.ico"
+    },
+    "extraResources": [
+      {
+        "from": "native/alloconnect-helper.exe",
+        "to": "alloconnect-helper.exe"
+      }
+    ],
+    "afterPack": "build/afterPack.js"
+  }
+}

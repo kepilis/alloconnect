@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src blob:; media-src blob:;" />
+<title>alloconnect-overlay</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 14px "Segoe UI", system-ui, sans-serif; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  .react { position: fixed; bottom: -60px; font-size: 54px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.5)); animation: rise 3.2s ease-out forwards; }
+  @keyframes rise { 0% { transform: translateY(0) scale(.6); opacity: 0; } 10% { opacity: 1; transform: translateY(-80px) scale(1.1); } 100% { transform: translateY(-62vh) scale(1); opacity: 0; } }
+  .img { position: fixed; left: 50%; top: 12%; transform: translateX(-50%); max-width: 42%; max-height: 42%; text-align: center; animation: pop 6.5s ease forwards; }
+  .img img { max-width: 100%; max-height: 38vh; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); display: block; margin: 0 auto; }
+  .img span { display: inline-block; margin-top: 6px; background: rgba(15,16,20,.85); color: #e8e9ee; border-radius: 8px; padding: 3px 10px; font-size: 13px; }
+  @keyframes pop { 0% { opacity: 0; transform: translateX(-50%) scale(.7); } 6% { opacity: 1; transform: translateX(-50%) scale(1); } 88% { opacity: 1; } 100% { opacity: 0; } }
+  .img.placed { transform: none; max-width: none; max-height: none; animation: pop2 6.5s ease forwards; }
+  .img.placed img { max-width: none; max-height: none; border-radius: 10px; }
+  .img.placed span { position: absolute; left: 6px; bottom: 6px; margin: 0; }
+  .img.placed br { display: none; }
+  @keyframes pop2 { 0% { opacity: 0; transform: scale(.85); } 6% { opacity: 1; transform: scale(1); } 88% { opacity: 1; } 100% { opacity: 0; } }
+  .vid { position: fixed; animation: vpop .35s ease forwards; }
+  .vid video { width: 100%; height: 100%; display: block; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.6); object-fit: fill; }
+  .vid span { position: absolute; left: 6px; bottom: 6px; background: rgba(15,16,20,.85); color: #e8e9ee; border-radius: 8px; padding: 3px 10px; font-size: 13px; }
+  .vid.out { transition: opacity .4s; opacity: 0; }
+  @keyframes vpop { 0% { opacity: 0; transform: scale(.85); } 100% { opacity: 1; transform: scale(1); } }
+  #banner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(220,40,60,.92); color: #fff; font-weight: 700;
+            border-radius: 10px; padding: 7px 16px; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: none; white-space: nowrap; }
+  #banner small { font-weight: 400; opacity: .9; margin-left: 8px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="banner"></div>
+<script src="overlay.js"></script>
+</body>
+</html>
