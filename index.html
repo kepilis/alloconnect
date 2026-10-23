@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' blob:;" />
+  <title>alloconnect</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ЛОББИ -->
+<section id="lobby" class="screen active">
+  <div class="lobby-card">
+    <div class="logo"><img src="icon.png" alt="" class="logo-img" /> alloconnect</div>
+    <p class="muted">Звонки, демонстрация экрана, чат и файлы с друзьями. Напрямую, без серверов. Первый раз — по коду через любой мессенджер (alloconnect сам копирует свой код и сам замечает код друга), дальше — из списка друзей в один клик.</p>
+
+    <label class="field">
+      <span>Твой ник</span>
+      <input id="nick" maxlength="24" placeholder="Например, Райден" />
+    </label>
+
+    <!-- Шаг 0: выбор -->
+    <div id="stepHome" class="step active">
+      <div id="friendsBox" class="friends hidden">
+        <div class="friends-head">Друзья</div>
+        <div id="friendsList"></div>
+        <div id="netVerdictLobby" class="net-verdict wait small"></div>
+      </div>
+      <button id="btnInvite" class="btn primary big">Пригласить по коду</button>
+      <div class="or"><span>или</span></div>
+      <button id="btnHaveInvite" class="btn big">У меня есть код приглашения</button>
+      <p class="muted small hint">Позвони один раз по коду и нажми «В друзья» — дальше звони из списка в один клик, а 💬 — чат и файлы без звонка.</p>
+    </div>
+
+    <!-- Ты приглашаешь -->
+    <div id="stepHost" class="step">
+      <div class="stepnum"><b>1</b> Отправь другу приглашение</div>
+      <div class="codebox">
+        <textarea id="offerOut" readonly placeholder="Готовлю приглашение…"></textarea>
+        <button id="btnCopyOffer" class="btn primary" disabled>Скопировать</button>
+      </div>
+      <div class="stepnum"><b>2</b> Вставь ответ, который пришлёт друг</div>
+      <div class="codebox">
+        <textarea id="answerIn" placeholder="ALOA.…" spellcheck="false"></textarea>
+        <button id="btnPasteAnswer" class="btn">Вставить</button>
+      </div>
+      <button id="btnApplyAnswer" class="btn primary big" disabled>Подключиться</button>
+      <p id="hostInfo" class="muted small info"></p>
+      <button class="link back">← Назад</button>
+    </div>
+
+    <!-- Тебя пригласили -->
+    <div id="stepGuest" class="step">
+      <div class="stepnum"><b>1</b> Вставь приглашение от друга</div>
+      <div class="codebox">
+        <textarea id="offerIn" placeholder="ALOI.…" spellcheck="false"></textarea>
+        <button id="btnPasteOffer" class="btn">Вставить</button>
+      </div>
+      <button id="btnMakeAnswer" class="btn primary big">Создать ответ</button>
+      <div id="guestAnswerBlock" class="hidden">
+        <div class="stepnum"><b>2</b> Отправь ответ другу — побыстрее, в течение минуты</div>
+        <div class="codebox">
+          <textarea id="answerOut" readonly></textarea>
+          <button id="btnCopyAnswer" class="btn primary">Скопировать</button>
+        </div>
+      </div>
+      <p id="guestInfo" class="muted small info"></p>
+      <button class="link back">← Назад</button>
+    </div>
+
+    <p id="lobbyError" class="error"></p>
+    <button id="btnSettingsLobby" class="link">Настройки звука и сети</button>
+    <button id="btnOpenLogsLobby" class="link logs-link">Открыть папку с логами</button>
+    <p class="muted small test-note">Тестовая сборка: пишет подробный лог звонков. Когда стрим лагает — нажми <kbd>Ctrl+Shift+L</kbd>, в логе появится метка.</p>
+  </div>
+</section>
+
+<!-- ЗВОНОК -->
+<section id="call" class="screen">
+  <header class="topbar">
+    <div class="room">
+      <span class="muted">Звонок с</span> <b id="friendTop">…</b>
+    </div>
+    <button id="btnAddFriend" class="btn small add-friend hidden">➕ В друзья</button>
+    <div id="status" class="status waiting"><i></i><span>Ждём друга…</span></div>
+    <button id="btnSettings" class="icon-btn" title="Настройки">⚙</button>
+  </header>
+
+  <main class="stage">
+    <div class="view">
+      <!-- Участники (пока никто не стримит) -->
+      <div id="people" class="people">
+        <div class="person" id="meCard">
+          <div class="avatar"><span id="meInitial">?</span></div>
+          <div class="pname"><span id="meName">Я</span> <em class="badges" id="meBadges"></em></div>
+        </div>
+        <div class="person ghost" id="friendCard">
+          <div class="avatar"><span id="friendInitial">…</span></div>
+          <div class="pname"><span id="friendName">ожидание</span> <em class="badges" id="friendBadges"></em></div>
+        </div>
+      </div>
+
+      <!-- Стрим друга -->
+      <div id="remoteScreenWrap" class="screenwrap hidden">
+        <video id="remoteScreen" autoplay playsinline></video>
+        <canvas id="drawLayer" class="draw-layer"></canvas>
+        <div id="inputLayer" class="input-layer"></div>
+        <div class="stoolbar" id="stoolbar">
+          <button class="tbtn" id="toolPtr" title="Указка">👆</button>
+          <button class="tbtn" id="toolDraw" title="Рисовать">✏️</button>
+          <button class="tbtn color" id="toolColor" title="Цвет"></button>
+          <button class="tbtn" id="toolClear" title="Стереть рисунки">🧹</button>
+          <span class="tsep"></span>
+          <span id="reactBar" class="react-bar"></span>
+          <button class="tbtn" id="toolImg" title="Картинка, гифка или видео на экран друга">🖼</button>
+          <input type="file" id="screenImgInput" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska,.mkv,.mov" class="hidden" />
+          <span class="tsep"></span>
+          <button class="tbtn wide" id="toolCtl">🎮 Управление</button>
+          <button class="tbtn wide hidden" id="toolLock" title="Для игр, где мышь крутит камеру">🖱 Захват мыши</button>
+          <button class="tbtn" id="toolFull" title="На весь экран / обратно">⛶</button>
+        </div>
+        <div class="overlay">
+          <span class="tag">Экран: <b id="remoteScreenOwner">друг</b> <span id="remoteScreenTitle" class="muted"></span></span>
+          <span class="tag" id="remoteStats"></span>
+          <span class="tag warn" id="remoteReason"></span>
+          <label class="tag vol">🔊 <input type="range" id="screenVol" min="0" max="100" value="100" /></label>
+          <button class="tag btn-tag" id="btnFull">⛶ На весь экран</button>
+        </div>
+      </div>
+
+      <!-- Своё превью стрима -->
+      <div id="localScreenWrap" class="local-preview hidden">
+        <video id="localScreen" autoplay playsinline muted></video>
+        <span class="tag live">● Ты в эфире</span>
+        <span class="tag local-stats" id="localStats"></span>
+        <div id="ctlBadge" class="ctl-badge hidden"><span id="ctlBadgeText">🎮 управляет</span> <button id="btnCtlRevoke" class="btn small danger-btn">Забрать</button></div>
+      </div>
+    </div>
+
+    <aside class="chat">
+      <div class="chat-head">Чат</div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm" class="chat-form">
+        <button type="button" id="btnAttach" class="btn attach" title="Отправить файл (или Ctrl+V / перетащи в окно)">📎</button>
+        <input type="file" id="fileInput" multiple class="hidden" />
+        <input id="chatInput" placeholder="Сообщение или Ctrl+V" title="Ctrl+V — вставить картинку или файл из буфера" autocomplete="off" maxlength="2000" />
+        <button class="btn primary" type="submit">➤</button>
+      </form>
+    </aside>
+  </main>
+
+  <footer class="controls">
+    <div class="ctl-group">
+      <button id="btnMute" class="ctl" title="Микрофон (Ctrl+Shift+M)"><b>🎙</b><span>Микрофон</span></button>
+      <button id="btnDeafen" class="ctl" title="Звук (Ctrl+Shift+D)"><b>🎧</b><span>Звук</span></button>
+      <button id="btnNs" class="ctl ns" title="Шумодав (Ctrl+Shift+N)"><b>✨</b><span>Шумодав</span></button>
+      <label class="ctl vol-ctl" title="Громкость друга">
+        <b>🔈</b><input type="range" id="friendVol" min="0" max="200" value="100" /><span id="friendVolVal">100%</span>
+      </label>
+    </div>
+    <div class="ctl-group">
+      <button id="btnSoundpad" class="ctl" title="Саундпад"><b>🎵</b><span>Саундпад</span></button>
+      <button id="btnShare" class="ctl share"><b>🖥</b><span>Показать экран</span></button>
+      <button id="btnLeave" class="ctl danger"><b>✕</b><span>Выйти</span></button>
+    </div>
+  </footer>
+</section>
+
+<!-- ВЫБОР ИСТОЧНИКА ДЛЯ ДЕМОНСТРАЦИИ -->
+<div id="picker" class="modal hidden">
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <h2>Что показать</h2>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="window">Приложения</button>
+      <button class="tab" data-tab="screen">Весь экран</button>
+    </div>
+    <div id="sourceGrid" class="source-grid"></div>
+    <div class="picker-opts">
+      <label class="field inline">
+        <span>Качество</span>
+        <select id="quality">
+          <option value="720p30">720p · 30 fps</option>
+          <option value="1080p30">1080p · 30 fps</option>
+          <option value="1080p60" selected>1080p · 60 fps</option>
+          <option value="1440p60">1440p · 60 fps</option>
+        </select>
+      </label>
+      <label class="field inline">
+        <span>Режим</span>
+        <select id="shareMode">
+          <option value="game" selected>Игра / видео — плавность</option>
+          <option value="text">Текст / код — чёткость</option>
+        </select>
+      </label>
+      <label class="check" id="autoRestoreRow">
+        <input type="checkbox" id="autoRestore" />
+        <span>Развернуть свёрнутое окно сразу <small class="muted">(иначе — заглушка, пока не развернёшь)</small></span>
+      </label>
+      <label class="check" id="sysAudioRow">
+        <input type="checkbox" id="sysAudio" />
+        <span id="sysAudioLabel">Звук компьютера <small class="muted">(кроме голосов из alloconnect)</small></span>
+      </label>
+      <button id="btnStartShare" class="btn primary" disabled>Начать</button>
+    </div>
+  </div>
+</div>
+
+<!-- ВЫЗОВ ДРУГА / ВХОДЯЩИЙ -->
+<div id="callModal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar" id="callAvatar">?</div>
+    <h2 id="callTitle">Звоним</h2>
+    <p id="callSub" class="muted">…</p>
+    <div class="call-actions">
+      <button id="btnCallAccept" class="btn primary big">Принять</button>
+      <button id="btnCallDecline" class="btn big danger-btn">Отклонить</button>
+      <button id="btnCallCancel" class="btn big danger-btn">Отменить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ПОВТОР (КЛИП) -->
+<div id="clipModal" class="modal hidden">
+  <div class="modal-card clip-card">
+    <div class="modal-head"><h2>Повтор</h2><button id="clipClose" class="icon-btn">✕</button></div>
+    <video id="clipVideo" controls autoplay loop class="clip-video"></video>
+    <p id="clipInfo" class="muted small"></p>
+    <div class="call-actions">
+      <button id="clipSend" class="btn primary big">Отправить другу</button>
+      <button id="clipSave" class="btn big">Сохранить файл</button>
+    </div>
+  </div>
+</div>
+
+<!-- ОБНОВЛЕНИЕ -->
+<div id="updModal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar ctl-icon">⬆</div>
+    <h2 id="updTitle">Обновление</h2>
+    <p id="updText" class="muted small" style="white-space:pre-wrap"></p>
+    <div class="call-actions">
+      <button id="updApply" class="btn primary big hidden">Установить и перезапустить</button>
+      <button id="updClose" class="btn big">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ЗАПРОС УПРАВЛЕНИЯ -->
+<div id="ctlModal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar ctl-icon">🎮</div>
+    <h2 id="ctlTitle">Друг просит управление</h2>
+    <p class="muted small">Он сможет управлять только тем, что ты сейчас показываешь. Забрать в любой момент — <kbd>Ctrl+Shift+X</kbd> или кнопка «Забрать». Пока ты сам двигаешь мышью, его мышь на паузе.</p>
+    <div class="ctl-perms">
+      <label class="check"><input type="checkbox" id="ctlMouse" checked /> <span>Мышь</span></label>
+      <label class="check"><input type="checkbox" id="ctlKb" checked /> <span>Клавиатура <small class="muted">(кроме клавиши Windows)</small></span></label>
+      <label class="check"><input type="checkbox" id="ctlPad" checked /> <span>Геймпад <small class="muted">(нужен драйвер ViGEmBus)</small></span></label>
+    </div>
+    <div class="call-actions">
+      <button id="btnCtlAllow" class="btn primary big">Разрешить</button>
+      <button id="btnCtlDeny" class="btn big danger-btn">Отказать</button>
+    </div>
+  </div>
+</div>
+
+<!-- ЧАТ С ДРУГОМ БЕЗ ЗВОНКА -->
+<div id="dm" class="modal hidden">
+  <div class="modal-card dm-card">
+    <div class="dm-head">
+      <div class="favatar big" id="dmAvatar"><span>?</span></div>
+      <div class="dm-who"><b id="dmTitle">Друг</b><small id="dmSub" class="muted"></small></div>
+      <button id="dmCall" class="btn primary small">📞 Позвонить</button>
+      <button id="dmClear" class="icon-btn" title="Очистить историю с этим другом">🗑</button>
+      <button id="dmClose" class="icon-btn" title="Закрыть">✕</button>
+    </div>
+    <div id="dmMessages" class="messages dm-messages"></div>
+    <form id="dmForm" class="chat-form">
+      <button type="button" id="dmAttach" class="btn attach" title="Отправить файл (или Ctrl+V / перетащи)">📎</button>
+      <input type="file" id="dmFile" multiple class="hidden" />
+      <input id="dmInput" placeholder="Сообщение" autocomplete="off" maxlength="2000" />
+      <button class="btn primary" type="submit">➤</button>
+    </form>
+  </div>
+</div>
+
+<!-- НАСТРОЙКИ -->
+<div id="settings" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>Настройки</h2>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+
+    <div class="avatar-row">
+      <div class="favatar big" id="avatarPreview"><span id="avatarInitial">?</span></div>
+      <div>
+        <div class="netbox-head">Аватарка</div>
+        <small class="muted">Картинка или гифка до 2 МБ — друзья увидят её в списке и в звонке</small><br />
+        <button type="button" id="btnAvatarPick" class="btn small">Выбрать…</button>
+        <button type="button" id="btnAvatarClear" class="btn small">Убрать</button>
+        <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+      </div>
+    </div>
+
+    <label class="field">
+      <span>Микрофон</span>
+      <select id="micSelect"></select>
+    </label>
+    <div class="meter"><i id="micMeter"></i></div>
+
+    <label class="field">
+      <span>Вывод звука</span>
+      <select id="outSelect"></select>
+    </label>
+
+    <label class="check"><input type="checkbox" id="optRnn" checked /> <span>Шумодав (нейросеть RNNoise) <small class="muted">— кнопка в звонке, <kbd>Ctrl+Shift+N</kbd></small></span></label>
+    <label class="check"><input type="checkbox" id="optNoise" checked /> <span>Встроенное шумоподавление Chromium <small class="muted">(слабое)</small></span></label>
+    <label class="check"><input type="checkbox" id="optEcho" checked /> <span>Эхоподавление</span></label>
+    <label class="check"><input type="checkbox" id="optAgc" checked /> <span>Автогромкость микрофона</span></label>
+    <label class="check"><input type="checkbox" id="optSounds" checked /> <span>Звуки входа/выхода и сообщений</span></label>
+    <div class="ringbox">
+      <div class="ringbox-head">Приглушение</div>
+      <label class="check"><input type="checkbox" id="optDuck" /> <span>Приглушать другие программы (игру, музыку, браузер), пока идёт разговор</span></label>
+      <label class="field inline ring-vol"><span>Насколько</span><input type="range" id="duckAmount" min="10" max="100" step="5" value="50" /><b id="duckAmountVal" class="small">50%</b></label>
+      <label class="check"><input type="checkbox" id="optDuckOthers" /> <span>Когда говорит друг</span></label>
+      <label class="check"><input type="checkbox" id="optDuckMe" /> <span>Когда говорю я</span></label>
+      <label class="check"><input type="checkbox" id="optDuckStream" /> <span>Звук стрима друга в alloconnect тоже</span></label>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Поверх моего стрима</div>
+      <label class="check"><input type="checkbox" id="optOvlDraw" /> <span>Друг может показывать указку и рисовать поверх моего экрана</span></label>
+      <label class="check"><input type="checkbox" id="optOvlReact" /> <span>Друг может присылать реакции, картинки, гифки и видео поверх моего экрана <small class="muted">(картинки — на пару секунд, видео — до минуты)</small></span></label>
+      <label class="check"><input type="checkbox" id="optSvidSound" /> <span>Звук у видео, которые присылает друг</span></label>
+      <label class="field inline ring-vol"><span>Громкость видео</span><input type="range" id="svidInVol" min="0" max="100" step="5" value="80" /><b id="svidInVolVal" class="small">80%</b></label>
+      <label class="check"><input type="checkbox" id="optCtlAllow" /> <span>Друг может попросить управление <small class="muted">(каждый раз спрошу разрешение)</small></span></label>
+      <p class="muted small">Поверх игры видно в оконном режиме и «без рамки», в эксклюзивном полноэкранном — нет.</p>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Повтор последних секунд</div>
+      <label class="check"><input type="checkbox" id="optClip" /> <span>Держать повтор стрима <small class="muted">(сохранить — <kbd>Ctrl+Shift+C</kbd>, работает пока идёт показ экрана)</small></span></label>
+      <label class="field inline ring-vol"><span>Длина</span><input type="range" id="clipSeconds" min="10" max="60" step="5" value="30" /><b id="clipSecondsVal" class="small">30 с</b></label>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Рация и статус</div>
+      <label class="check"><input type="checkbox" id="optPtt" /> <span>Рация (push-to-talk): микрофон открыт, только пока держишь клавишу <small class="muted">(работает и в игре)</small></span></label>
+      <button type="button" id="pttKey" class="btn small">Клавиша рации: не задана</button>
+      <label class="check"><input type="checkbox" id="optActivity" /> <span>Показывать друзьям, во что играю <small class="muted">(только полноэкранная игра; браузер и плееры не показываются)</small></span></label>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Обновление</div>
+      <label class="check"><input type="checkbox" id="optAutoUpd" /> <span>Проверять новую версию на GitHub <small class="muted">(раз в несколько часов; ставится только по твоему нажатию)</small></span></label>
+      <div class="row-btns"><button type="button" id="btnGhCheck" class="btn small">Проверить сейчас</button> <span id="ghStatus" class="muted small"></span></div>
+      <p class="muted small">Ещё новая версия может приехать от друга, когда вы оба в сети: нажми «⬆» у друга в списке. Подпись проверяется в обоих случаях, старая версия остаётся для отката.</p>
+      <div id="rollbackRow"><button type="button" id="btnRollback" class="btn small">Откатиться на прошлую версию</button></div>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Звук входящего звонка</div>
+      <div class="ring-row">
+        <span id="ringName" class="muted small">стандартный</span>
+        <button type="button" id="btnRingPick" class="btn small">Выбрать файл…</button>
+        <button type="button" id="btnRingTest" class="btn small">▶ Проверить</button>
+        <button type="button" id="btnRingReset" class="btn small">Сбросить</button>
+        <input type="file" id="ringFileInput" accept="audio/*,.mp3,.ogg,.wav,.m4a,.opus,.flac" class="hidden" />
+      </div>
+      <label class="field inline ring-vol"><span>Громкость</span><input type="range" id="ringVol" min="0" max="100" value="80" /></label>
+      <label class="check"><input type="checkbox" id="optRingMute" /> <span>Без звука (только окно и мигание)</span></label>
+    </div>
+    <label class="field">
+      <span>Нижняя планка качества стрима, который ты смотришь</span>
+      <select id="minKbps">
+        <option value="1000">1 Мбит/с — слабый интернет</option>
+        <option value="2500" selected>2.5 Мбит/с — по умолчанию</option>
+        <option value="4000">4 Мбит/с — хороший интернет</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="optAv1" /> <span>AV1 через видеокарту <small class="muted">(экспериментально: RTX 40/50, RX 7000, Arc; применится после перезапуска)</small></span></label>
+
+    <div class="netbox">
+      <div class="netbox-head">Программа</div>
+      <label class="check"><input type="checkbox" id="appTray" /> <span>Значок в трее (возле часов)</span></label>
+      <label class="check"><input type="checkbox" id="appCloseToTray" /> <span>Крестик прячет в трей, а не закрывает <small class="muted">(чтобы друзья могли дозвониться)</small></span></label>
+      <label class="check"><input type="checkbox" id="appMinToTray" /> <span>Сворачивать в трей</span></label>
+      <label class="check"><input type="checkbox" id="appAutostart" /> <span>Запускать вместе с Windows</span></label>
+      <label class="check"><input type="checkbox" id="appStartHidden" /> <span>При автозапуске — сразу в трей, без окна</span></label>
+      <label class="check"><input type="checkbox" id="appBossKey" /> <span>Мгновенно скрыть/показать: <kbd>Ctrl+Shift+H</kbd></span></label>
+      <label class="check"><input type="checkbox" id="appNotify" /> <span>Уведомления Windows о звонках и сообщениях, когда окно скрыто</span></label>
+    </div>
+
+    <div class="netbox">
+      <div class="netbox-head">Сеть и звонки друзьям</div>
+      <div id="netVerdict" class="net-verdict wait">Проверяю сеть…</div>
+      <ul id="netDetails" class="net-details"></ul>
+      <button id="btnNetRecheck" class="btn small">Проверить заново</button>
+    </div>
+
+    <details class="adv">
+      <summary>Сеть (если не соединяется)</summary>
+      <p class="muted small">STUN — это одноразовый вопрос «какой у меня внешний IP?» к публичному серверу. Данные через него не идут. Сначала спрашиваем основные (Google, Cloudflare); если за 2.5 с не ответили — сами переключаемся на альтернативные (10 серверов других компаний). Если вы оба в Tailscale или одной локалке, STUN можно выключить.</p>
+      <label class="check"><input type="checkbox" id="optNoStun" /> <span>Не использовать STUN (только Tailscale / локальная сеть)</span></label>
+      <label class="check"><input type="checkbox" id="optStunAlt" /> <span>Сразу использовать альтернативные STUN <small class="muted">(без Google и Cloudflare, без ожидания основных)</small></span></label>
+      <label class="field"><span>Свои STUN-серверы <small class="muted">(по одному на строку, например stun.example.com:3478; если заполнено — используются только они)</small></span>
+        <textarea id="stunCustom" class="stun-custom" rows="3" spellcheck="false" placeholder="stun.example.com:3478"></textarea></label>
+      <p class="muted small">Если у кого-то строгий NAT и напрямую не соединяется — проще всего поставить обоим Tailscale. Либо указать TURN-сервер (через него пойдёт трафик):</p>
+      <label class="field"><span>TURN адрес</span><input id="turnUrl" placeholder="turn:example.com:3478" /></label>
+      <label class="field"><span>TURN логин</span><input id="turnUser" /></label>
+      <label class="field"><span>TURN пароль</span><input id="turnPass" type="password" /></label>
+      <label class="check"><input type="checkbox" id="optRelay" /> <span>Только через TURN (для проверки)</span></label>
+    </details>
+
+    <p class="muted small">Хоткеи работают и в играх: <kbd>Ctrl+Shift+M</kbd> — микрофон, <kbd>Ctrl+Shift+D</kbd> — звук, <kbd>Ctrl+Shift+X</kbd> — забрать управление, <kbd>Ctrl+Shift+L</kbd> — метка «лагает» в логе.</p>
+    <button id="btnHistClearAll" class="btn logs-btn">🗑 Очистить историю всех чатов</button>
+    <button id="btnOpenLogs" class="btn logs-btn">📁 Открыть папку с логами</button>
+    <button id="btnSaveSettings" class="btn primary">Готово</button>
+  </div>
+</div>
+
+<!-- САУНДПАД -->
+<div id="soundpad" class="soundpad hidden">
+  <div class="sp-head">
+    <b>Саундпад</b>
+    <button id="spAdd" class="btn small primary">＋ Звук</button>
+    <button id="spStop" class="btn small" title="Правый клик — назначить клавишу">■ Стоп всё <small id="spStopKey" class="muted"></small></button>
+    <button id="spClose" class="icon-btn">✕</button>
+    <input type="file" id="spFile" multiple accept="audio/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac" class="hidden" />
+  </div>
+  <div id="spGrid" class="sp-grid"></div>
+  <div id="spEmpty" class="sp-empty muted small">Перетащи сюда mp3/ogg/wav или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
+  <div class="sp-opts">
+    <label class="sp-vol">Другу <input type="range" id="spVolOut" min="0" max="150" value="100" /></label>
+    <label class="sp-vol"><input type="checkbox" id="spMonitor" checked /> Слышать себя <input type="range" id="spVolMon" min="0" max="100" value="60" /></label>
+    <label class="check"><input type="checkbox" id="spWhenMuted" checked /> <span>Играть, даже когда микрофон выключен</span></label>
+  </div>
+  <div id="spEdit" class="sp-edit hidden">
+    <input id="spEditName" maxlength="40" placeholder="Название" />
+    <label class="sp-vol">Громкость <input type="range" id="spEditVol" min="0" max="200" value="100" /></label>
+    <button id="spEditKey" class="btn small">Клавиша: —</button>
+    <button id="spEditKeyClear" class="btn small">✕ клавишу</button>
+    <button id="spEditShare" class="btn small" title="Отправить этот звук другу в звонке">📤 Другу</button>
+    <button id="spEditDel" class="btn small danger-btn">Удалить</button>
+    <button id="spEditDone" class="btn small primary">Готово</button>
+  </div>
+</div>
+
+<div id="dropOverlay" class="drop-overlay hidden"><div>Отпусти, чтобы отправить другу</div></div>
+<div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
+
+<div id="toast" class="toast"></div>
+
+<audio id="remoteVoice" autoplay></audio>
+
+<script src="stun-lists.js"></script>
+<script src="vendor/mp4-muxer.js"></script>
+<script src="clip.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>
