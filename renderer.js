@@ -1742,7 +1742,7 @@ async function loadHistory(conv, more) {
 function renderHistEntry(conv, e, into) {
   const mine = e.who === 'me';
   const who = mine ? (S.nick || store.get('nick', '') || 'Я') : (e.nick || conv.nick);
-  const opt = { mid: e.mid, re: e.re, react: e.react, edited: e.edited, deleted: e.deleted, type: e.type };
+  const opt = { mid: e.mid, who: e.who, re: e.re, react: e.react, edited: e.edited, deleted: e.deleted, type: e.type };
   if (e.deleted && (e.type === 'text' || e.type === 'file')) {
     chatMsg(conv, who, '', mine, e.ts, into, opt);
   } else if (e.type === 'text') {
@@ -1783,7 +1783,7 @@ function chatMsg(conv, who, text, mine, ts, into, opt = {}) {
   appendLinkified(t, text);
   b.appendChild(t);
   m.append(meta, b);
-  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: mine ? 'me' : 'peer', type: opt.type || 'text', text, re: opt.re, react: opt.react, edited: opt.edited, deleted: opt.deleted });
+  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: opt.who || (mine ? 'me' : 'peer'), type: opt.type || 'text', text, re: opt.re, react: opt.react, edited: opt.edited, deleted: opt.deleted });
   (into || conv.box).appendChild(m);
   if (!into) scrollEnd(conv, mine);
   return m;
@@ -2164,7 +2164,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
   stat.innerHTML = '<span></span>';
   b.append(view, prog, stat);
   m.append(head, b);
-  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: mine ? 'me' : 'peer', type: 'file', text: meta.name, react: opt.react, re: opt.re });
+  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: opt.who || (mine ? 'me' : 'peer'), type: 'file', text: meta.name, react: opt.react, re: opt.re });
   (opt.into || conv.box).appendChild(m);
   if (!opt.into) scrollEnd(conv, mine);
   return {
@@ -2231,7 +2231,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
 // запись о файле в историю (картинку — вместе с самой картинкой)
 async function recordFile(conv, mine, meta, blob) {
   if (!conv || meta.p !== 'chat' && meta.p !== 'sound') return;
-  const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : 'peer', nick: mine ? S.nick : conv.nick, type: 'file',
+  const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : (conv.whoId || 'peer'), nick: mine ? S.nick : conv.nick, type: 'file',
     file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p } };
   if (meta.kind === 'image' && meta.size <= HIST_IMG_MAX && conv.id) {
     try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без картинки */ }
@@ -3134,6 +3134,7 @@ function pushTrayState() {
 
 function renderFriends() {
   pushTrayState();
+  if (typeof grpRenderSaved === 'function') grpRenderSaved();
   updateDmHead();
   const box = $('friendsBox');
   box.classList.toggle('hidden', friendsList.length === 0);

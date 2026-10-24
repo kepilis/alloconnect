@@ -1,4 +1,4 @@
-// ТЕСТ группового звонка: четыре экземпляра. Дружба: A↔B, A↔C, B↔D (остальные пары — не друзья,
+﻿// ТЕСТ группового звонка: четыре экземпляра. Дружба: A↔B, A↔C, B↔D (остальные пары — не друзья,
 // их записки идут через участников). A собирает группу и зовёт B и C; потом B (не создатель) зовёт D.
 // Запуск — tests/group/run.js.
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -138,6 +138,39 @@ app.whenReady().then(async () => {
     if (ROLE === 'C') await js(`grpLeave(); true`);
     if (ROLE === 'B' || ROLE === 'D') res.lastTwo = await waitFor(W, `!G.members.has(${J(ids.C)}) && ${nConnected} === 1`, 20000);
     await sync('c10', ALL);
+    await js(`grpLeave(); true`).catch(() => {});
+    await sleep(1500);
+    await sync('c11', ALL);
+
+    // 10. группа сохранилась: B собирает её снова — зовёт своих друзей A и D, а C (не друг B) зовёт его друг A
+    res.savedGroup = await js(`grpSaved().length === 1 && !document.getElementById('groupsBox').classList.contains('hidden')`);
+    if (ROLE === 'B') { await js(`grpCallSaved(grpSaved()[0].gid); true`); }
+    if (ROLE === 'A' || ROLE === 'D') {
+      res.gotInvite2 = await waitFor(W, `!!G.invite`, 40000);
+      await sleep(500);
+      await js(`grpAcceptInvite(); true`);
+    }
+    if (ROLE === 'A') { await waitFor(W, `G.active && [...G.peers.values()].some((p) => p.connected)`, 40000); await js(`grpInvite([${J(ids.C)}]); true`); }
+    if (ROLE === 'C') {
+      res.gotInvite2 = await waitFor(W, `!!G.invite`, 60000);
+      await sleep(500);
+      await js(`grpAcceptInvite(); true`);
+    }
+    res.conn4again = await waitFor(W, `${nConnected} === 3`, 80000);
+    await sleep(1500);
+    res.history = await js(`G.conv.box.textContent`);
+    res.sameGid = await js(`G.gid === grpSaved()[0]?.gid`);
+    await sync('c12', ALL);
+
+    // 11. самозванец: у D «ломается» ключ, B переподключается к нему — B должен его отвергнуть
+    if (ROLE === 'D') { await js(`grpOnCh = async (p) => grpSend(p, { t: 'proof', mac: 'AAAA' }); true`); put('badD'); }
+    if (ROLE === 'B') {
+      await take('badD');
+      await js(`G.peers.get(${J(ids.D)}).pc.close(); true`);
+      res.rejectedD = await waitFor(W, `G.left.has(${J(ids.D)}) && !G.members.has(${J(ids.D)}) && /ключ не его|не подтвердил свой ID/.test(G.conv.box.textContent)`, 60000);
+      res.othersStay = await js(`${nConnected} === 2`);
+    }
+    await sync('c13', ALL);
     await js(`grpLeave(); true`).catch(() => {});
     await sleep(1000);
   } catch (e) { res.exception = String(e && e.stack || e); }

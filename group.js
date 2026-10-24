@@ -20,14 +20,18 @@ const G = {
   connecting: new Set(),
   lostAt: new Map(),    // id → когда пропала связь (переподключаемся)
   tiles: new Map(),     // id → плитка
+  nickCache: new Map(), // ники бывших участников из истории
   conv: null, invite: null, share: null, focus: null, joinTimer: null, stopMyMeter: null,
 };
 
 const grpMe = () => myIdent?.id || '';
+// ID группы — как ID друга (43 знака): по нему же хранится история чата группы
+const grpGid = (x) => (ID_RE.test(String(x || '')) ? String(x) : '');
+const grpNewGid = () => b64uBytes(crypto.getRandomValues(new Uint8Array(32)));
 const grpClean = (s, n = 24) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 function grpNick(id) {
   if (id === 'me' || id === grpMe()) return S.nick || 'Я';
-  return friendsList.find((f) => f.id === id)?.nick || G.members.get(id)?.nick || 'Участник';
+  return friendsList.find((f) => f.id === id)?.nick || G.members.get(id)?.nick || G.nickCache.get(id) || 'Участник';
 }
 function grpRosterList() { return [...G.members.values()].map((m) => ({ id: m.id, nick: m.nick, via: m.via || '' })); }
 function grpBusy() { return G.active || S.inCall || S.busy || !!S.pc || !!S.friendCall; }
@@ -85,16 +89,16 @@ async function grpPickGo() {
   grpInvite(ids.slice(0, Math.max(0, GRP_MAX - G.members.size)));
 }
 
-async function grpStart() {
+async function grpStart(gid) {
   if (grpBusy()) return false;
   if (!(await prepare())) return false;
   grpReset();
   G.active = true;
-  G.gid = newMid();
+  G.gid = grpGid(gid) || grpNewGid();
   G.members.set(grpMe(), { id: grpMe(), nick: S.nick, via: '' });
   L('grp', { start: true });
   grpEnterUi();
-  sysMsg('Групповой звонок создан. Позови друзей — «➕ Позвать».', G.conv);
+  if (!gid) sysMsg('Групповой звонок создан. Позови друзей — «➕ Позвать».', G.conv);
   return true;
 }
 
@@ -110,8 +114,19 @@ function grpInvite(ids) {
 
 /* ---------- Входящее приглашение ---------- */
 function grpOnInvite(id, msg, nick) {
-  const gid = cleanMid(msg.gid);
-  if (!gid || G.invite?.gid === gid || G.gid === gid) return; // повтор
+  const gid = grpGid(msg.gid);
+  if (!gid || G.invite?.gid === gid) return; // повтор
+  if (G.active && G.gid === gid) {
+    // эту же группу (из сохранённых) собрал кто-то ещё — соединяем обе половины
+    if (!G.peers.get(id)?.connected) {
+      grpAddMember({ id, nick, via: '' }, true);
+      window.duo.friendsSend(id, { t: 'grp-roster', gid, members: grpRosterList() });
+      grpSendAll({ t: 'member', id, nick, via: grpMe() });
+      grpRender();
+      grpSyncPeers();
+    }
+    return;
+  }
   if (grpBusy() || G.invite) { window.duo.friendsSend(id, { t: 'grp-busy', gid }); return; }
   const members = (Array.isArray(msg.members) ? msg.members : []).filter((m) => ID_RE.test(String(m?.id || ''))).slice(0, GRP_MAX)
     .map((m) => ({ id: m.id, nick: grpClean(m.nick) || 'Участник', via: ID_RE.test(String(m.via || '')) ? m.via : '' }));
@@ -164,7 +179,7 @@ async function grpAcceptInvite() {
 /* ---------- Канал друзей ---------- */
 function grpOnFriendMsg(id, msg, f, nick) {
   if (msg.t === 'grp-invite') { if (f) grpOnInvite(id, msg, nick); return; }
-  if (!G.active || cleanMid(msg.gid) !== G.gid) return;
+  if (!G.active || grpGid(msg.gid) !== G.gid) return;
   switch (msg.t) {
     case 'grp-join': // друг принял моё приглашение
       if (!f) return;
@@ -178,7 +193,7 @@ function grpOnFriendMsg(id, msg, f, nick) {
     case 'grp-decline': sysMsg(`${nick} отказался`, G.conv); return;
     case 'grp-busy': sysMsg(`${nick} сейчас занят`, G.conv); return;
     case 'grp-full': if (id === G.members.get(grpMe())?.via) grpLeave('В группе уже нет мест'); return;
-    case 'grp-roster': if (G.members.has(id)) grpMergeRoster(msg.members); return;
+    case 'grp-roster': if (f || G.members.has(id)) { grpAddMember({ id, nick, via: '' }, true); grpMergeRoster(msg.members); } return;
     case 'grp-leave': if (G.members.has(id)) { grpMemberGone(id, 'вышел'); grpSendAll({ t: 'gone', id }); } return;
     case 'grp-relay': if (G.members.has(id)) grpRelay(id, msg); return;
     case 'grp-sig': grpOnSig(id, msg, !!f); return;
@@ -264,9 +279,10 @@ function grpMakePeer(id, pid, role, cfg) {
 }
 
 function grpAttachSenders(p) {
-  p.atx?.sender.replaceTrack(micSendTrack()).catch(() => {});
-  p.vtx?.sender.replaceTrack(G.share?.track || null).catch(() => {});
-  p.satx?.sender.replaceTrack(G.share?.atrack || null).catch(() => {});
+  const ok = p.connected; // пока участник не подтвердил свой ID, ему ничего не шлём
+  p.atx?.sender.replaceTrack(ok ? micSendTrack() : null).catch(() => {});
+  p.vtx?.sender.replaceTrack(ok ? G.share?.track || null : null).catch(() => {});
+  p.satx?.sender.replaceTrack(ok ? G.share?.atrack || null : null).catch(() => {});
 }
 
 function grpSend(p, obj) { try { if (p?.dc.readyState === 'open') p.dc.send(JSON.stringify(obj)); } catch { /* */ } }
@@ -383,9 +399,50 @@ function grpMemberGone(id, why) {
   grpRender();
 }
 
+// Записки могли прийти через посредника — поэтому каждый доказывает, что ID его (как в звонке по коду, 1.15.1):
+// ключ пары вычисляется из двух ID и без дружбы, посчитать ответ могут только двое.
 function grpPeerOpen(p) {
   if (p.closed) return;
+  p.ch = b64uBytes(crypto.getRandomValues(new Uint8Array(18)));
+  grpSend(p, { t: 'ch', ch: p.ch });
+  clearTimeout(p.timer);
+  p.timer = setTimeout(() => { if (!p.connected) grpRejectPeer(p, 'не подтвердил свой ID'); }, 15000);
+}
+function grpBinding(pc) {
+  const fps = (sdp) => [...String(sdp || '').matchAll(/^a=fingerprint:(.+)$/gm)].map((m) => m[1].trim().toLowerCase());
+  const all = [...new Set([...fps(pc.localDescription?.sdp), ...fps(pc.remoteDescription?.sdp)])].sort();
+  return all.length >= 2 ? all.join('|') : '';
+}
+async function grpOnCh(p, d) {
+  if (typeof d.ch !== 'string' || d.ch.length < 16 || d.ch.length > 64) return;
+  const bind = grpBinding(p.pc);
+  const mac = bind ? await window.duo.friendsProof(p.id, grpMe(), d.ch, bind).catch(() => null) : null;
+  if (mac) grpSend(p, { t: 'proof', mac });
+}
+async function grpOnProof(p, d) {
+  if (p.connected || !p.ch || typeof d.mac !== 'string') return;
+  const bind = grpBinding(p.pc);
+  const want = bind ? await window.duo.friendsProof(p.id, p.id, p.ch, bind).catch(() => null) : null;
+  if (p.closed || p.connected) return;
+  if (want && want === d.mac) grpVerified(p);
+  else grpRejectPeer(p, 'выдаёт себя за другого (ключ не его)');
+}
+function grpRejectPeer(p, why) {
+  if (p.closed) return;
+  L('grp', { rejected: p.id.slice(0, 8), why });
+  sysMsg(`⚠ Участник «${grpNick(p.id)}» ${why} — отключён`, G.conv);
+  G.members.delete(p.id);
+  G.left.add(p.id);
+  G.lostAt.delete(p.id);
+  grpClosePeer(p);
+  grpRender();
+}
+
+function grpVerified(p) {
   p.connected = true;
+  grpAttachSenders(p);
+  if (p.gain) p.gain.gain.value = grpVol(p.id) / 100;
+  if (p.sgain) p.sgain.gain.value = grpVol(p.id, 'gsvol') / 100;
   G.seen.add(p.id);
   clearTimeout(p.timer);
   clearTimeout(G.joinTimer);
@@ -397,11 +454,16 @@ function grpPeerOpen(p) {
   L('grp', { open: p.id.slice(0, 8), peers: G.peers.size, back });
   sysMsg(back ? `${grpNick(p.id)} снова на связи` : `${grpNick(p.id)} в звонке`, G.conv);
   sound('join');
+  grpSaveCurrent();
   grpRender();
+  for (const d of (p.queue || []).splice(0)) grpOnData(p, d);
 }
 
 function grpOnData(p, d) {
   if (p.closed || !d || typeof d.t !== 'string') return;
+  if (d.t === 'ch') { grpOnCh(p, d); return; }
+  if (d.t === 'proof') { grpOnProof(p, d); return; }
+  if (!p.connected) { p.queue = p.queue || []; if (p.queue.length < 50) p.queue.push(d); return; } // до подтверждения ID — ждём
   switch (d.t) {
     case 'hello':
       if (!isFriend(p.id) && G.members.has(p.id)) G.members.get(p.id).nick = grpClean(d.nick) || G.members.get(p.id).nick;
@@ -424,8 +486,9 @@ function grpOnData(p, d) {
       const mid = cleanMid(d.mid) || newMid();
       let re = reIn(d.re);
       if (re) re.by = d.re.mine ? p.id : (G.conv.msgs.get(re.mid)?.e.who || 'peer');
-      chatMsg(G.conv, grpNick(p.id), text, false, Number(d.ts) || Date.now(), null, { mid, re });
-      grpFixWho(mid, p.id);
+      const ts = Number(d.ts) || Date.now();
+      chatMsg(G.conv, grpNick(p.id), text, false, ts, null, { mid, re, who: p.id });
+      record(G.conv, { mid, ts, who: p.id, nick: grpNick(p.id), type: 'text', text, re: re || undefined });
       sound('msg');
       if (!document.hasFocus()) window.duo?.attention();
       return;
@@ -439,7 +502,7 @@ function grpOnData(p, d) {
 // чьё сообщение: в группе вместо 'peer' — ID автора (править и удалять он может только свои)
 function grpFixWho(mid, id) { const it = G.conv?.msgs.get(mid); if (it && it.e.who === 'peer') it.e.who = id; }
 // разговор для файлов от участника: общий, но с его ником в пузырях
-function grpConvOf(id) { return G.conv ? Object.create(G.conv, { nick: { value: grpNick(id) } }) : null; }
+function grpConvOf(id) { return G.conv ? Object.create(G.conv, { nick: { value: grpNick(id) }, whoId: { value: id } }) : null; }
 
 function grpOnScreen(p, on, name) {
   const was = p.sharing;
@@ -461,7 +524,7 @@ function grpOnTrack(p, e) {
     p.saudioEl = bindEl(p.sastream);
     p.ssrc = c.createMediaStreamSource(p.sastream);
     p.sgain = c.createGain();
-    p.sgain.gain.value = grpVol(p.id, 'gsvol') / 100;
+    p.sgain.gain.value = p.connected ? grpVol(p.id, 'gsvol') / 100 : 0;
     p.ssrc.connect(p.sgain).connect(master);
     return;
   }
@@ -469,7 +532,7 @@ function grpOnTrack(p, e) {
   p.audioEl = bindEl(p.astream);
   p.src = c.createMediaStreamSource(p.astream);
   p.gain = c.createGain();
-  p.gain.gain.value = grpVol(p.id) / 100;
+  p.gain.gain.value = p.connected ? grpVol(p.id) / 100 : 0;
   p.src.connect(p.gain).connect(master);
   p.stopMeter = makeMeter(p.astream, (lvl) => {
     p.lvl = lvl;
@@ -625,14 +688,92 @@ function grpEnterUi() {
   document.body.classList.add('grp-mode');
   $('lobby').classList.remove('active');
   $('group').classList.add('active');
-  G.conv = tempConv('Группа');
-  G.conv.nickOf = (w) => grpNick(w);
+  G.conv = { id: G.gid, nick: 'Группа', box: newConvBox(), loaded: false, histStart: null, unread: 0, blobs: [], pending: [], msgs: new Map(), nickOf: (w) => grpNick(w) };
   mountConv(G.conv, $('gMessages'));
+  grpLoadHistory(G.conv);
   G.tiles.clear();
   $('gGrid').innerHTML = '';
   G.stopMyMeter?.();
   G.stopMyMeter = makeMeter(S.mic, (lvl) => G.tiles.get(grpMe())?.classList.toggle('speaking', lvl > 0.02 && !S.muted && !S.deafened));
   grpUpdateControls();
+}
+
+async function grpLoadHistory(conv) {
+  const r = await window.duo.histLoad(conv.id, 500).catch(() => null);
+  for (const e of r?.items || []) if (e.who && e.who !== 'me' && e.nick && !G.nickCache.has(e.who)) G.nickCache.set(e.who, grpClean(e.nick));
+  if (G.conv === conv) await loadHistory(conv);
+}
+
+/* ---------- Сохранённые группы: позвать тех же ещё раз, история чата общая ---------- */
+function grpSaved() { const l = store.get('groups', []); return Array.isArray(l) ? l.filter((g) => grpGid(g?.gid) && Array.isArray(g.members)) : []; }
+function grpSaveCurrent() {
+  if (!G.active) return;
+  const list = grpSaved();
+  let g = list.find((x) => x.gid === G.gid);
+  if (!g) { g = { gid: G.gid, members: [] }; list.unshift(g); }
+  for (const m of G.members.values()) {
+    if (m.id === grpMe() || !G.seen.has(m.id)) continue;
+    const ex = g.members.find((x) => x.id === m.id);
+    if (ex) ex.nick = m.nick; else g.members.push({ id: m.id, nick: m.nick });
+  }
+  g.members = g.members.slice(0, GRP_MAX + 4);
+  g.last = Date.now();
+  list.sort((a, b) => (b.last || 0) - (a.last || 0));
+  store.set('groups', list.filter((x) => x.members.length).slice(0, 20));
+  grpRenderSaved();
+}
+const grpSavedNick = (m) => friendsList.find((f) => f.id === m.id)?.nick || grpClean(m.nick) || 'Участник';
+
+function grpRenderSaved() {
+  const box = $('groupsBox');
+  if (!box) return;
+  const list = grpSaved().filter((g) => g.members.length);
+  box.classList.toggle('hidden', !list.length);
+  const el = $('groupsList');
+  el.innerHTML = '';
+  for (const g of list) {
+    const online = g.members.filter((m) => friendsList.find((f) => f.id === m.id)?.online).length;
+    const row = document.createElement('div');
+    row.className = 'friend group-row' + (online ? ' online' : '');
+    const av = document.createElement('div');
+    av.className = 'favatar';
+    av.textContent = '👥';
+    const name = document.createElement('div');
+    name.className = 'fname';
+    name.textContent = g.members.map(grpSavedNick).join(', ');
+    name.title = name.textContent;
+    const st = document.createElement('small');
+    st.textContent = online ? `в сети из друзей: ${online}` : 'никого из друзей нет в сети';
+    name.appendChild(st);
+    const call = document.createElement('button');
+    call.className = 'btn primary fcall';
+    call.textContent = 'Собрать';
+    call.title = 'Позвать этих же людей — с прежней историей чата';
+    call.onclick = () => grpCallSaved(g.gid);
+    const del = document.createElement('button');
+    del.className = 'icon-btn fdel';
+    del.title = 'Убрать группу и её историю';
+    del.textContent = '✕';
+    del.onclick = async () => {
+      if (!confirm('Убрать эту группу и историю её чата? Только у тебя.')) return;
+      store.set('groups', grpSaved().filter((x) => x.gid !== g.gid));
+      await window.duo.histClear(g.gid).catch(() => {});
+      grpRenderSaved();
+    };
+    row.append(av, name, call, del);
+    el.appendChild(row);
+  }
+}
+
+async function grpCallSaved(gid) {
+  const g = grpSaved().find((x) => x.gid === gid);
+  if (!g) return;
+  const online = g.members.filter((m) => isFriend(m.id) && friendsList.find((f) => f.id === m.id)?.online);
+  if (!online.length) { toast('Никого из друзей этой группы нет в сети'); return; }
+  if (!(await grpStart(gid))) return;
+  grpInvite(online.map((m) => m.id));
+  const others = g.members.filter((m) => !isFriend(m.id)).map(grpSavedNick);
+  if (others.length) sysMsg(`${others.join(', ')} — не у тебя в друзьях: их позовёт кто-то из группы («➕ Позвать»)`, G.conv);
 }
 
 function grpPaintAvatar(id) {
@@ -720,6 +861,7 @@ function grpReset() {
   G.members.clear(); G.left.clear(); G.seen.clear(); G.peers.clear(); G.connecting.clear(); G.lostAt.clear(); G.tiles.clear();
   for (const t of Object.values(G.lostTimer || {})) clearTimeout(t);
   G.lostTimer = {};
+  G.nickCache.clear();
   G.gid = null; G.focus = null; G.conv = null; G.share = null;
 }
 
@@ -786,6 +928,7 @@ function grpBind() {
     const re = composeTakeReply(composers.grp);
     grpSendAll({ t: 'chat', text, ts, mid, re: reOut(re) });
     chatMsg(G.conv, S.nick, text, true, ts, null, { mid, re });
+    record(G.conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
     $('gChatInput').value = '';
   };
   window.addEventListener('beforeunload', () => { if (G.active) grpSendAll({ t: 'bye' }); });
