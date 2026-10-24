@@ -99,7 +99,18 @@ app.whenReady().then(async () => {
         res.autoFocus = await js(`G.focus === ${J(ids.B)}`);
         await sleep(2500);
         res.shareAudioIn = await js(inBytes(`G.peers.get(${J(ids.B)})`, 'satx'));
-        if (process.env.SHOT && ROLE === 'C') { W.setSize(1280, 800); await sleep(1200); fs.writeFileSync(shf('shotC.png'), (await W.webContents.capturePage()).toPNG()); }
+        // SHOT=1: снимки экрана группы во всех темах, в обычном и в самом маленьком окне
+        if (process.env.SHOT && ROLE === 'C') {
+          for (const [w, h] of [[1280, 800], [640, 480]]) {
+            W.setSize(w, h);
+            for (const th of await js(`THEMES.map((t) => t.id)`)) {
+              await js(`applyTheme(${J(th)}); true`);
+              await sleep(700);
+              fs.writeFileSync(shf(`shot-${th || 'std'}-${w}.png`), (await W.webContents.capturePage()).toPNG());
+            }
+          }
+          await js(`applyTheme(''); true`);
+        }
       }
     });
     await sync('c5', ABC);
@@ -185,13 +196,13 @@ app.whenReady().then(async () => {
         put('realD');
         await take('realSeenA'); await take('realSeenB'); await take('realSeenC');
         // управление: A просит — разрешаю (мышь и клавиатура, без геймпада)
-        res.ctlModal = await waitFor(W, `!document.getElementById('ctlModal').classList.contains('hidden') && CS.peer === ${J(ids.A)}`, 20000);
+        res.ctlModal = await waitFor(W, `!document.getElementById('ctlModal').classList.contains('hidden') && CS.link?.id === ${J(ids.A)}`, 20000);
         await js(`document.getElementById('ctlPad').checked = false; document.getElementById('btnCtlAllow').click(); true`);
-        res.ctlOn = await waitFor(W, `CS.on && CS.peer === ${J(ids.A)} && !G.tiles.get(myIdent.id).querySelector('.gctl').classList.contains('hidden')`, 15000);
+        res.ctlOn = await waitFor(W, `CS.on && CS.link?.id === ${J(ids.A)} && !G.tiles.get(myIdent.id).querySelector('.gctl').classList.contains('hidden')`, 15000);
         put('ctlOnD');
         res.ctlInput = await waitFor(W, `Date.now() - CS.lastMsg < 3000 && CS.released === false`, 15000);
         await take('ctlStopA');
-        res.ctlOff = await waitFor(W, `!CS.on && !CS.peer`, 10000);
+        res.ctlOff = await waitFor(W, `!CS.on && !CS.link`, 10000);
         await js(`grpStopShare(); true`);
         // окно приложения: свернули — заглушка, развернули — снова окно; «развернуть сразу» при старте
         const tw = new BrowserWindow({ width: 640, height: 400, title: 'grp-test-win' });
@@ -227,13 +238,13 @@ app.whenReady().then(async () => {
         if (ROLE === 'A') {
           await waitFor(W, `!!G.peers.get(${J(ids.D)})?.perm?.ctl`, 10000);
           await js(`G.focus = ${J(ids.D)}; grpRender(); grpCtlClick(${J(ids.D)}); true`);
-          res.ctlViewOn = await waitFor(W, `CV.state === 'on' && CV.peer === ${J(ids.D)} && G.tiles.get(${J(ids.D)}).classList.contains('ctl-active')`, 30000);
+          res.ctlViewOn = await waitFor(W, `CV.state === 'on' && CV.link?.id === ${J(ids.D)} && G.tiles.get(${J(ids.D)}).classList.contains('ctl-active')`, 30000);
           await take('ctlOnD');
           for (let i = 0; i < 5; i++) { await js(`ctlSend(['r', 0, 0], true); true`); await sleep(300); } // сдвиг на 0 — курсор на месте
           put('ctlBusyA');
           await take('ctlDeniedC');
           await js(`grpCtlClick(${J(ids.D)}); true`); // отдать управление
-          res.ctlViewOff = await waitFor(W, `CV.state === 'off' && !CV.peer`, 10000);
+          res.ctlViewOff = await waitFor(W, `CV.state === 'off' && !CV.link`, 10000);
           put('ctlStopA');
           // D свернул показываемое окно — у меня его плитка по-прежнему показывает экран (заглушку)
           await take('winOnD');
@@ -244,7 +255,7 @@ app.whenReady().then(async () => {
         if (ROLE === 'C') {
           await take('ctlBusyA');
           await js(`G.focus = ${J(ids.D)}; grpRender(); grpCtlClick(${J(ids.D)}); true`);
-          res.ctlDenied = await waitFor(W, `CV.state === 'off' && !CV.peer`, 15000);
+          res.ctlDenied = await waitFor(W, `CV.state === 'off' && !CV.link`, 15000);
           put('ctlDeniedC');
         }
       }

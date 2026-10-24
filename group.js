@@ -265,7 +265,7 @@ function grpMakePeer(id, pid, role, cfg) {
       let a;
       try { a = JSON.parse(e.data); } catch { return; }
       // ввод принимаю только от того, кому разрешил; ответы (вибрация, подсказки) — только от того, кем управляю
-      if (Array.isArray(a) ? CS.on && CS.peer === p.id : CV.peer === p.id) onCtlMsg(a);
+      if (Array.isArray(a) ? CS.on && CS.link?.id === p.id : CV.link?.id === p.id) onCtlMsg(a);
     };
   }
   pc.ontrack = (e) => grpOnTrack(p, e);
@@ -485,17 +485,17 @@ function grpOnData(p, d) {
     case 'screen': grpOnScreen(p, !!d.on, d.name, d.perm); grpRender(); return;
     case 'gdraw': case 'gptr': case 'gptr-off': case 'gclear': case 'greact': grpOnMark(p, d); return;
     case 'ctl-req':
-      if ((CS.on || CS.req) && CS.peer && CS.peer !== p.id) { grpSend(p, { t: 'ctl-deny', why: 'уже отдал управление другому участнику' }); return; }
-      CS.peer = p.id;
+      if ((CS.on || CS.req) && CS.link && CS.link.id !== p.id) { grpSend(p, { t: 'ctl-deny', why: 'уже отдал управление другому участнику' }); return; }
+      CS.link = grpCtlLink(p.id);
       onCtlReq(d);
-      if (!CS.on && !CS.req) CS.peer = null; // сразу отказал
+      if (!CS.on && !CS.req) CS.link = null; // сразу отказал
       return;
-    case 'ctl-grant': if (CV.peer === p.id && CV.state !== 'off') ctlViewStart(d); return;
+    case 'ctl-grant': if (CV.link?.id === p.id && CV.state !== 'off') ctlViewStart(d); return;
     case 'ctl-deny':
-      if (CV.peer === p.id && CV.state === 'req') { CV.state = 'off'; CV.peer = null; updateToolbar(); toast(`${grpNick(p.id)} ${String(d.why || 'отказал').slice(0, 60)}`); }
+      if (CV.link?.id === p.id && CV.state === 'req') { CV.state = 'off'; CV.link = null; updateToolbar(); toast(`${grpNick(p.id)} ${String(d.why || 'отказал').slice(0, 60)}`); }
       return;
-    case 'ctl-end': if (CV.peer === p.id) ctlViewStop(false, String(d.why || '').slice(0, 60) || `${grpNick(p.id)} забрал управление`); return;
-    case 'ctl-stop': if (CS.peer === p.id) ctlEnd(`${grpNick(p.id)} отдал управление`, false); return;
+    case 'ctl-end': if (CV.link?.id === p.id) ctlViewStop(false, String(d.why || '').slice(0, 60) || `${grpNick(p.id)} забрал управление`); return;
+    case 'ctl-stop': if (CS.link?.id === p.id) ctlEnd(`${grpNick(p.id)} отдал управление`, false); return;
     case 'view': {
       if (!['full', 'thumb', 'off'].includes(d.view) || p.view === d.view) return;
       const br = G.share && grpShareBr();
@@ -531,7 +531,7 @@ function grpOnScreen(p, on, name, perm) {
   const title = grpClean(name, 60);
   if (on && !was) { sysMsg(`${grpNick(p.id)} показывает экран${title ? ' — ' + title : ''}`); if (!G.focus) G.focus = p.id; }
   if (!on && G.focus === p.id) G.focus = null;
-  if (!on && CV.peer === p.id) ctlViewStop(false, 'показ закончился');
+  if (!on && CV.link?.id === p.id) ctlViewStop(false, 'показ закончился');
 }
 
 function grpOnTrack(p, e) {
@@ -768,7 +768,7 @@ function grpAddTools(el, id) {
     }
   });
   // ввод для управления: мышь (обычная или захваченная), колесо; клавиатура — общий обработчик в renderer.js
-  const ctlOn = () => CV.state === 'on' && CV.peer === id;
+  const ctlOn = () => CV.state === 'on' && CV.link?.id === id;
   const pt = (e) => normPt(e, el.querySelector('video'));
   inp.tabIndex = -1;
   inp.addEventListener('mousemove', (e) => {
@@ -840,13 +840,13 @@ function grpUpdateTools() {
   for (const t of G.tiles.values()) t.classList.toggle('tools', on && t === el);
   if (!on) { GT.mode = null; return; }
   const perm = G.peers.get(id).perm || {};
-  const controlling = CV.state === 'on' && CV.peer === id;
+  const controlling = CV.state === 'on' && CV.link?.id === id;
   if (GT.mode && (!perm.draw || controlling)) GT.mode = null;
   for (const b of bar.querySelectorAll('[data-m]')) { b.classList.toggle('on', GT.mode === b.dataset.m); b.disabled = !perm.draw || controlling; b.title = perm.draw ? (b.dataset.m === 'ptr' ? 'Указка' : 'Рисовать') : 'Показывающий не разрешил указку и рисование'; }
   bar.querySelector('[data-a=clear]').disabled = !perm.draw;
   for (const b of bar.querySelectorAll('[data-r]')) { b.disabled = !perm.react; b.title = perm.react ? '' : 'Показывающий не включил реакции в настройках'; }
   const cb = bar.querySelector('[data-a=ctl]');
-  const mine = CV.peer === id;
+  const mine = CV.link?.id === id;
   cb.classList.toggle('on', controlling);
   cb.textContent = controlling ? '⛔ Отдать управление' : mine && CV.state === 'req' ? '⏳ Ждём ответа…' : '🎮 Управление';
   cb.disabled = !controlling && (!perm.ctl || (CV.state !== 'off' && !mine));
@@ -858,27 +858,40 @@ function grpUpdateTools() {
   inp.classList.toggle('active', !!GT.mode || controlling);
 }
 function grpCtlMouseUp(id, e) {
-  if (CV.state === 'on' && CV.peer === id && CV.perm.mouse && MOUSE_BTN[e.button] != null) ctlSend(['b', MOUSE_BTN[e.button], 0]);
+  if (CV.state === 'on' && CV.link?.id === id && CV.perm.mouse && MOUSE_BTN[e.button] != null) ctlSend(['b', MOUSE_BTN[e.button], 0]);
 }
 
+// связь управления с участником (см. CTL_FRIEND в renderer.js)
+function grpCtlLink(id) {
+  const peer = () => G.peers.get(id);
+  return {
+    id,
+    sig: (o) => grpSend(peer(), o),
+    raw: (a, fast) => chSend(fast ? peer()?.cdu : peer()?.cdc, a),
+    nick: () => grpNick(id),
+    focused: () => G.focus === id && !!peer()?.sharing,
+    src: () => G.share?.srcId || null,
+    changed: () => grpRender(),
+  };
+}
 function grpCtlClick(id) {
-  if (CV.state === 'on' && CV.peer === id) { ctlViewStop(true); toast('Управление отдано'); return; }
+  if (CV.state === 'on' && CV.link?.id === id) { ctlViewStop(true); toast('Управление отдано'); return; }
   if (CV.state !== 'off') return;
-  CV.peer = id;
+  CV.link = grpCtlLink(id);
   ctlRequest();
 }
 // участник пропал или вышел — управление с ним заканчивается
 function grpCtlGone(id, why) {
-  if (CV.peer === id && CV.state !== 'off') ctlViewStop(false, why);
-  else if (CV.peer === id) CV.peer = null;
-  if (CS.peer === id) { if (CS.on) ctlEnd(why, false); grpCtlCancelReq(); CS.peer = null; }
+  if (CV.link?.id === id && CV.state !== 'off') ctlViewStop(false, why);
+  else if (CV.link?.id === id) CV.link = null;
+  if (CS.link?.id === id) { if (CS.on) ctlEnd(why, false); grpCtlCancelReq(); CS.link = null; }
 }
 function grpCtlCancelReq() {
   if (!CS.req) return;
   clearTimeout(CS.reqTimer);
   $('ctlModal').classList.add('hidden');
   CS.req = null;
-  if (!CS.on) CS.peer = null;
+  if (!CS.on) CS.link = null;
 }
 
 function grpFlushStroke(done) {
@@ -1135,7 +1148,14 @@ function grpAddVols(el, id) {
   el.appendChild(vols);
 }
 
+// перерисовка экрана группы: все вызовы за один шаг (пачка сообщений) сливаются в одну
+let grpRenderQueued = false;
 function grpRender() {
+  if (grpRenderQueued) return;
+  grpRenderQueued = true;
+  queueMicrotask(() => { grpRenderQueued = false; grpRenderNow(); });
+}
+function grpRenderNow() {
   if (!G.active) return;
   const grid = $('gGrid');
   const me = grpMe();
@@ -1164,19 +1184,20 @@ function grpRender() {
   if (G.focus && !G.tiles.get(G.focus)?.classList.contains('sharing')) G.focus = null;
   grid.classList.toggle('focus', !!G.focus);
   const badge = G.tiles.get(me)?.querySelector('.gctl');
-  if (badge) { badge.classList.toggle('hidden', !CS.on); badge.querySelector('span').textContent = CS.on ? `🎮 ${grpNick(CS.peer)} управляет` : ''; }
+  if (badge) { badge.classList.toggle('hidden', !CS.on); badge.querySelector('span').textContent = CS.on ? `🎮 ${CS.link?.nick()} управляет` : ''; }
   grpUpdateTools();
   const n = 1 + [...G.peers.values()].filter((p) => p.connected).length;
   $('gStatus').querySelector('span').textContent = `В звонке: ${n} из ${G.members.size}`;
   $('gStatus').className = 'status ' + (n > 1 ? 'ok' : 'waiting');
   grpSendViews();
+  pushTrayState();
 }
 
 function grpReset() {
   for (const t of G.lostTimers.values()) clearTimeout(t);
   for (const m of [G.members, G.left, G.seen, G.peers, G.connecting, G.lostAt, G.lostTimers, G.tiles, G.nickCache]) m.clear();
   GT.mode = null; GT.stroke = null; GT.strokes.clear(); GT.ptrs.clear();
-  CV.peer = null; CS.peer = null;
+  CV.link = null; CS.link = null;
   G.gid = null; G.focus = null; G.conv = null; G.share = null;
 }
 

@@ -3149,8 +3149,20 @@ function netCfg() {
   return { noStun: !!o.noStun, stunAlt: !!o.stunAlt, stunCustom: STUN_LISTS.parse(o.stunCustom) };
 }
 
+// значок в трее: в звонке ли (на двоих или в группе), с кем, микрофон; шлём только когда что-то поменялось
+let lastTray = '';
 function pushTrayState() {
-  window.duo?.trayState({ inCall: !!S.connected, friend: S.friendNick || '', online: friendsList.filter((f) => f.online).length, muted: !!(S.muted || S.deafened) });
+  const inGroup = G.active ? 1 + [...G.peers.values()].filter((p) => p.connected).length : 0;
+  const st = {
+    inCall: !!S.connected || inGroup > 1,
+    friend: inGroup ? `группой (${inGroup} чел.)` : S.friendNick || '',
+    online: friendsList.filter((f) => f.online).length,
+    muted: !!(S.muted || S.deafened),
+  };
+  const key = JSON.stringify(st);
+  if (key === lastTray) return;
+  lastTray = key;
+  window.duo?.trayState(st);
 }
 
 function renderFriends() {
@@ -4705,22 +4717,32 @@ async function onScreenImage(blob, meta) {
    Удалённое управление
    Зритель (CV) шлёт мышь/клавиши/геймпад; стримящий (CS) разрешает и передаёт в Windows.
    ========================================================= */
-const CV = { state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: null, reqTimer: null, lastPad: '', lastPadSent: 0, hadPad: false, padObj: null, moveQ: null, rel: [0, 0], raf: 0, rumble: { l: 0, s: 0, iv: null } };
-const CS = { on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null };
+const CV = { link: null, state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: null, reqTimer: null, lastPad: '', lastPadSent: 0, hadPad: false, padObj: null, moveQ: null, rel: [0, 0], raf: 0, rumble: { l: 0, s: 0, iv: null } };
+const CS = { link: null, on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null };
 
-function ctlSend(a, fast) {
-  // в группе: ввод (массивы) — тому, кем я управляю; ответы (объекты) — тому, кто управляет мной
-  const gp = G.active ? G.peers.get(Array.isArray(a) ? CV.peer : CS.peer) : null;
-  const ch = G.active ? (fast ? gp?.cdu : gp?.cdc) : (fast ? S.cdu : S.cdc);
-  try { if (ch?.readyState === 'open') ch.send(JSON.stringify(a)); } catch { /* */ }
-}
-// служебное про управление: 'v' — тому, кем управляю, 's' — тому, кто управляет мной
-function ctlSig(obj, side) { if (G.active) grpSend(G.peers.get(side === 'v' ? CV.peer : CS.peer), obj); else send(obj); }
-function ctlNick(side) { return G.active ? grpNick(side === 'v' ? CV.peer : CS.peer) : S.friendNick; }
+/* С кем идёт управление: CV.link — тот, кем я управляю ('v'), CS.link — тот, кто управляет мной ('s').
+   В звонке на двоих это всегда друг (CTL_FRIEND), в группе — конкретный участник (grpCtlLink).
+   sig — служебное сообщение, raw — ввод и ответы по каналам ctl/ctlu, focused — его экран у меня крупно,
+   src — что я сейчас показываю, changed — перерисовать то, что зависит от управления. */
+const chSend = (ch, a) => { try { if (ch?.readyState === 'open') ch.send(JSON.stringify(a)); } catch { /* */ } };
+const CTL_FRIEND = {
+  id: null,
+  sig: (o) => send(o),
+  raw: (a, fast) => chSend(fast ? S.cdu : S.cdc, a),
+  nick: () => S.friendNick,
+  focused: () => S.connected && !$('remoteScreenWrap').classList.contains('hidden'),
+  src: () => (S.localScreen && S.shareCtx?.srcId) || null,
+  changed: () => {},
+};
+const ctlLink = (side) => (side === 'v' ? CV.link : CS.link) || (G.active ? null : CTL_FRIEND);
+// ввод (массивы) — тому, кем управляю; ответы (объекты) — тому, кто управляет мной
+function ctlSend(a, fast) { ctlLink(Array.isArray(a) ? 'v' : 's')?.raw(a, fast); }
+function ctlSig(obj, side) { ctlLink(side)?.sig(obj); }
+function ctlNick(side) { return ctlLink(side)?.nick() || ''; }
 
 /* ---------- Зритель ---------- */
 function ctlRequest() {
-  if (G.active ? !CV.peer : (!S.connected || $('remoteScreenWrap').classList.contains('hidden'))) return;
+  if (!ctlLink('v')?.focused()) return;
   if (CV.state === 'on') { ctlViewStop(true); toast('Управление отдано'); return; }
   if (CV.state === 'req') return;
   CV.state = 'req';
@@ -4729,7 +4751,7 @@ function ctlRequest() {
   updateToolbar();
   toast(`Запрос отправлен — ${ctlNick('v')} должен нажать «Разрешить»`);
   clearTimeout(CV.reqTimer);
-  CV.reqTimer = setTimeout(() => { if (CV.state === 'req') { const n = ctlNick('v'); CV.state = 'off'; if (G.active) CV.peer = null; updateToolbar(); toast(`${n} не ответил на запрос`); } }, 35000);
+  CV.reqTimer = setTimeout(() => { if (CV.state === 'req') { const n = ctlNick('v'); CV.state = 'off'; CV.link = null; updateToolbar(); toast(`${n} не ответил на запрос`); } }, 35000);
 }
 
 function ctlViewStart(perm) {
@@ -4756,7 +4778,7 @@ function ctlViewStop(notify, why) {
   if (CV.hadPad) ctlSend(['p', 0, 0, 0, 0, 0, 0, 0]);
   if (notify && was === 'on') ctlSig({ t: 'ctl-stop' }, 'v');
   CV.state = 'off';
-  if (G.active) CV.peer = null;
+  CV.link = null;
   clearInterval(CV.hbTimer); clearInterval(CV.padTimer); clearTimeout(CV.reqTimer);
   CV.hbTimer = CV.padTimer = null;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -4891,7 +4913,7 @@ function bindLiveTools() {
     }
     if (placer) return;
     if (CV.state !== 'on' || !CV.perm.kb || !e.code || isTyping()) return;
-    if (G.active ? !(CV.peer && G.focus === CV.peer) : (!S.inCall || $('remoteScreenWrap').classList.contains('hidden'))) return;
+    if (!ctlLink('v')?.focused()) return;
     e.preventDefault();
     e.stopPropagation();
     CV.keys.add(e.code);
@@ -4936,7 +4958,7 @@ function bindLiveTools() {
 }
 
 /* ---------- Стримящий ---------- */
-const ctlSrc = () => (G.active ? G.share?.srcId || null : (S.localScreen && S.shareCtx?.srcId) || null);
+const ctlSrc = () => ctlLink('s')?.src() || null;
 function onCtlReq(d) {
   if (!ctlSrc()) { ctlSig({ t: 'ctl-deny', why: 'сейчас ничего не показывает' }, 's'); return; }
   if (settings().ctlAllow === false) { ctlSig({ t: 'ctl-deny', why: 'выключил запросы на управление' }, 's'); return; }
@@ -4960,7 +4982,7 @@ function ctlDeny() {
   $('ctlModal').classList.add('hidden');
   ctlSig({ t: 'ctl-deny', why: 'отказал' }, 's');
   CS.req = null;
-  if (G.active && !CS.on) CS.peer = null;
+  if (!CS.on) CS.link = null;
 }
 
 async function ctlGrant() {
@@ -4980,7 +5002,7 @@ async function ctlGrant() {
   $('ctlBadge').classList.remove('hidden');
   $('ctlBadgeText').textContent = `🎮 ${ctlNick('s')} управляет`;
   sysMsg(`${ctlNick('s')} управляет твоим компьютером. Забрать — Ctrl+Shift+X или кнопка на превью`);
-  if (G.active) grpRender();
+  ctlLink('s')?.changed();
   // друг пропал (нет сигналов 4 с) — отпускаем все зажатые клавиши
   CS.wd = setInterval(() => { if (CS.on && !CS.released && Date.now() - CS.lastMsg > 4000) { window.duo.inputCmd('rel'); CS.released = true; } }, 1000);
   L('control', { granted: perm, admin: r.admin });
@@ -4995,7 +5017,9 @@ function ctlEnd(why, notify = true) {
   window.duo.ovlMsg({ t: 'pin', on: false });
   $('ctlBadge').classList.add('hidden');
   sysMsg(`Управление закончено${why ? ': ' + why : ''}`);
-  if (G.active) { CS.peer = null; grpRender(); }
+  const l = CS.link;
+  CS.link = null;
+  l?.changed();
   L('control', { ended: why });
 }
 
