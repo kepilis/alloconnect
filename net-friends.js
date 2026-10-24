@@ -109,6 +109,18 @@ class FriendsNet extends EventEmitter {
     return key;
   }
 
+  // доказательство владения ключом в звонке по коду: посчитать его могут только двое — я и владелец id.
+  // prover — чей это ответ (иначе чужой вызов можно отразить обратно), bind — DTLS-отпечатки этого звонка
+  // (иначе ответ можно переслать из другого соединения)
+  proof(id, prover, nonce, bind) {
+    if (![id, prover, nonce, bind].every((s) => typeof s === 'string' && s.length > 0 && s.length < 600)) return null;
+    if (id === this.id || (prover !== id && prover !== this.id)) return null;
+    let key;
+    try { key = this.keyFor(id); } catch { return null; }
+    const k = Buffer.from(crypto.hkdfSync('sha256', key, Buffer.alloc(0), Buffer.from('alloconnect ident proof v1'), 32));
+    return crypto.createHmac('sha256', k).update([prover, nonce, bind].join('\n')).digest('base64url');
+  }
+
   /* ---------- запуск ---------- */
   async start(preferredPort) {
     this.loadIdentity();

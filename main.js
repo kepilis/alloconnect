@@ -639,6 +639,7 @@ async function runUpnp() {
 ipcMain.handle('friends-info', () => (friends ? { id: friends.id, port: friends.port, addrs: friends.localAddrs(), list: friends.list() } : null));
 ipcMain.handle('friends-add', (_e, f) => { const ok = friends?.addFriend(f); if (ok) setTimeout(() => friends.probe(f.id), 1500); return ok; });
 ipcMain.handle('friends-remove', (_e, id) => friends?.removeFriend(id));
+ipcMain.handle('friends-proof', (_e, id, prover, nonce, bind) => friends?.proof(id, prover, nonce, bind) || null);
 ipcMain.handle('friends-send', async (_e, id, msg) => {
   try { await friends.sendBig(id, msg); return { ok: true }; } catch (e) { log('friends', { sendFailed: msg?.t, error: e.message }); return { ok: false, error: e.message }; }
 });

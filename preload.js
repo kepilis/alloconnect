@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('duo', {
   friendsInfo: () => ipcRenderer.invoke('friends-info'),
   friendsAdd: (f) => ipcRenderer.invoke('friends-add', f),
   friendsRemove: (id) => ipcRenderer.invoke('friends-remove', id),
+  friendsProof: (id, prover, nonce, bind) => ipcRenderer.invoke('friends-proof', id, prover, nonce, bind),
   friendsCallPath: (p) => ipcRenderer.invoke('friends-callpath', p),
   friendsSend: (id, msg) => ipcRenderer.invoke('friends-send', id, msg),
   histSearch: (id, q) => ipcRenderer.invoke('hist-search', id, q),

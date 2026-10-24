@@ -845,7 +845,8 @@ function onConnected() {
   if (S.stunUsed === 'alt') sysMsg('STUN: основные серверы не ответили — включены альтернативные');
   L('call', { connected: true, role: S.role, friend: S.friendNick, viaFriends: !!S.friendCall });
   setTimeout(pushTrayState, 300);
-  if (S.friendCall) { hideCallModal(); S.friendCall = null; }
+  // звонок из списка друзей: SDP пришёл по зашифрованному каналу друзей — собеседник уже подтверждён ключом
+  if (S.friendCall) { S.signaledBy = S.friendCall.id; hideCallModal(); S.friendCall = null; }
   S.friendPerm = null;
   sendIdent();
   sendPerm();
@@ -872,6 +873,9 @@ function onData(d) {
       break;
     case 'ident':
       onPeerIdent(d);
+      break;
+    case 'ident-proof':
+      onPeerIdentProof(d);
       break;
     case 'friend-added':
       toast(`${S.friendNick} добавил тебя в друзья`);
@@ -1572,6 +1576,9 @@ function leaveCall() {
   $('btnSoundpad').classList.remove('on-pad');
   $('btnAddFriend').classList.add('hidden');
   S.peerIdent = null;
+  S.peerClaim = null;
+  S.identCh = null;
+  S.signaledBy = null;
   S.callPath = null;
   stopStatsLog();
   if (S.reconnecting) { clearTimeout(S.reconnecting.timer); S.reconnecting = null; $('call').classList.remove('reconnecting'); }
@@ -3430,10 +3437,57 @@ function cancelCall() {
 }
 
 /* ---------- В звонке: обмен ID и «Добавить в друзья» ---------- */
+// ID в 'ident' — только заявка. В звонке по коду собеседник доказывает, что ключ его:
+// мы шлём вызов ch, он отвечает 'ident-proof' (HMAC ключом пары, привязан к DTLS-отпечаткам звонка).
+// Без доказательства звонок не привязывается к другу: ни истории, ни смены его адресов.
 async function sendIdent() {
   const info = await window.duo.friendsInfo().catch(() => null);
-  if (info) send({ t: 'ident', id: info.id, addrs: info.addrs, av: myAvatar?.hash || '' });
+  if (!info) return;
+  const ch = b64uBytes(crypto.getRandomValues(new Uint8Array(18)));
+  S.identCh = ch;
+  send({ t: 'ident', id: info.id, addrs: info.addrs, av: myAvatar?.hash || '', ch });
 }
+function b64uBytes(u8) { return btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+// DTLS-отпечатки обеих сторон этого соединения (одинаковая строка у обоих)
+function callBinding() {
+  const fps = (sdp) => [...String(sdp || '').matchAll(/^a=fingerprint:(.+)$/gm)].map((m) => m[1].trim().toLowerCase());
+  const all = [...new Set([...fps(S.pc?.localDescription?.sdp), ...fps(S.pc?.remoteDescription?.sdp)])].sort();
+  return all.length >= 2 ? all.join('|') : '';
+}
+const ID_RE = /^[A-Za-z0-9_-]{43}$/;
+async function onPeerIdent(d) {
+  if (!d || !ID_RE.test(String(d.id || ''))) return;
+  if (S.peerIdent && S.peerIdent.id !== d.id) { L('friends', { identChanged: true }); return; } // ID посреди звонка не меняется
+  const claim = { id: d.id, addrs: Array.isArray(d.addrs) ? d.addrs : [], av: String(d.av || '').slice(0, 32) };
+  if (S.signaledBy && S.signaledBy === d.id) { acceptPeerIdent(claim); return; }
+  S.peerClaim = claim;
+  // отвечаем на его вызов: доказываем, что мой ключ мой
+  if (typeof d.ch === 'string' && d.ch.length >= 16 && d.ch.length <= 64) {
+    const me = await window.duo.friendsInfo().catch(() => null);
+    const bind = callBinding();
+    const mac = me && bind ? await window.duo.friendsProof(d.id, me.id, d.ch, bind).catch(() => null) : null;
+    if (mac) send({ t: 'ident-proof', mac });
+  } else {
+    L('friends', { peerIdent: 'no-proof', alreadyFriend: isFriend(d.id) });
+    if (isFriend(d.id)) sysMsg(`⚠ Собеседник назвался ${friendNickOf(d.id)}, но не подтвердил это ключом (у него старая alloconnect?). Звонок не привязан к другу.`);
+  }
+}
+async function onPeerIdentProof(d) {
+  const claim = S.peerClaim;
+  if (!claim || !S.identCh || typeof d?.mac !== 'string') return;
+  const bind = callBinding();
+  const want = bind ? await window.duo.friendsProof(claim.id, claim.id, S.identCh, bind).catch(() => null) : null;
+  if (S.peerClaim !== claim) return;
+  if (want && want === d.mac) { S.peerClaim = null; acceptPeerIdent(claim); return; }
+  S.peerClaim = null;
+  if (S.peerIdent?.id === claim.id) return; // уже подтверждён раньше (опоздавший ответ после переподключения)
+  L('friends', { peerIdent: 'bad-proof', alreadyFriend: isFriend(claim.id) });
+  sysMsg(isFriend(claim.id)
+    ? `⚠ Собеседник выдаёт себя за ${friendNickOf(claim.id)}, но ключ не его. Звонок не привязан к другу.`
+    : '⚠ Собеседник не подтвердил свой ID — добавить его в друзья нельзя.');
+}
+function friendNickOf(id) { return friendsList.find((f) => f.id === id)?.nick || 'друга'; }
+
 // реальный путь звонка → подсказка модулю друзей, куда стучаться
 function sendCallPath() {
   if (!S.callPath || !S.peerIdent || !isFriend(S.peerIdent.id)) return;
@@ -3441,12 +3495,11 @@ function sendCallPath() {
   window.duo.friendsCallPath({ id: S.peerIdent.id, ...S.callPath });
 }
 
-function onPeerIdent(d) {
-  if (!d?.id || typeof d.id !== 'string') return;
-  S.peerIdent = { id: d.id, addrs: Array.isArray(d.addrs) ? d.addrs : [] };
+function acceptPeerIdent(d) {
+  S.peerIdent = { id: d.id, addrs: d.addrs };
   adoptCallConv(d.id);
-  onPeerAvatarHash(d.id, String(d.av || '').slice(0, 32), () => send({ t: 'av-want' })).then(refreshAvatars);
-  L('friends', { peerIdent: true, peerAddrKinds: S.peerIdent.addrs.map((a) => a.kind), alreadyFriend: isFriend(d.id) });
+  onPeerAvatarHash(d.id, d.av, () => send({ t: 'av-want' })).then(refreshAvatars);
+  L('friends', { peerIdent: true, verified: true, peerAddrKinds: S.peerIdent.addrs.map((a) => a.kind), alreadyFriend: isFriend(d.id) });
   if (isFriend(d.id)) {
     window.duo.friendsAdd({ id: d.id, nick: friendsList.find((f) => f.id === d.id)?.nick || S.friendNick, addrs: S.peerIdent.addrs })
       .then(() => sendCallPath());
