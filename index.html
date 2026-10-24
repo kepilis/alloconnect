@@ -24,7 +24,7 @@
     <!-- Шаг 0: выбор -->
     <div id="stepHome" class="step active">
       <div id="friendsBox" class="friends hidden">
-        <div class="friends-head">Друзья</div>
+        <div class="friends-head">Друзья <button id="btnGroup" class="btn small grp-btn" title="Тест: звонок на несколько человек">👥 Группа</button></div>
         <div id="friendsList"></div>
         <div id="netVerdictLobby" class="net-verdict wait small"></div>
       </div>
@@ -167,6 +167,61 @@
     </div>
   </footer>
 </section>
+
+<!-- ГРУППОВОЙ ЗВОНОК (тест) -->
+<section id="group" class="screen">
+  <header class="topbar">
+    <div class="room"><b>Групповой звонок</b> <span class="muted small">тест</span></div>
+    <button id="gInviteMore" class="btn small add-friend">➕ Позвать</button>
+    <div id="gStatus" class="status waiting"><i></i><span>Ждём участников…</span></div>
+    <button id="gSettings" class="icon-btn" title="Настройки">⚙</button>
+  </header>
+  <main class="stage">
+    <div class="view gview"><div id="gGrid" class="ggrid"></div></div>
+    <aside class="chat">
+      <div class="chat-head">Чат группы</div>
+      <div id="gMessages" class="messages"></div>
+      <form id="gChatForm" class="chat-form">
+        <input id="gChatInput" placeholder="Сообщение всем" autocomplete="off" maxlength="2000" />
+        <button class="btn primary" type="submit">➤</button>
+      </form>
+    </aside>
+  </main>
+  <footer class="controls">
+    <div class="ctl-group">
+      <button id="gMute" class="ctl" title="Микрофон (Ctrl+Shift+M)"><b>🎙</b><span>Микрофон</span></button>
+      <button id="gDeafen" class="ctl" title="Звук (Ctrl+Shift+D)"><b>🎧</b><span>Звук</span></button>
+      <button id="gNs" class="ctl ns" title="Шумодав (Ctrl+Shift+N)"><b>✨</b><span>Шумодав</span></button>
+    </div>
+    <div class="ctl-group">
+      <button id="gShare" class="ctl share" title="Показать экран всем"><b>🖥</b><span>Показать экран</span></button>
+      <button id="gLeave" class="ctl danger" title="Выйти из группы"><b>✕</b><span>Выйти</span></button>
+    </div>
+  </footer>
+</section>
+
+<!-- КОГО ПОЗВАТЬ В ГРУППУ -->
+<div id="gPick" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head"><h2>Позвать в группу</h2><button id="gPickClose" class="icon-btn">✕</button></div>
+    <div id="gPickList" class="gpick-list"></div>
+    <p id="gPickNote" class="muted small"></p>
+    <button id="gPickGo" class="btn primary big">Позвать</button>
+  </div>
+</div>
+
+<!-- ПРИГЛАШЕНИЕ В ГРУППУ -->
+<div id="gInvModal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar ctl-icon">👥</div>
+    <h2 id="gInvTitle">Зовут в группу</h2>
+    <p id="gInvSub" class="muted small"></p>
+    <div class="call-actions">
+      <button id="gInvAccept" class="btn primary big">Присоединиться</button>
+      <button id="gInvDecline" class="btn big danger-btn">Отклонить</button>
+    </div>
+  </div>
+</div>
 
 <!-- ВЫБОР ИСТОЧНИКА ДЛЯ ДЕМОНСТРАЦИИ -->
 <div id="picker" class="modal hidden">
@@ -464,5 +519,6 @@
 <script src="vendor/mp4-muxer.js"></script>
 <script src="clip.js"></script>
 <script src="renderer.js"></script>
+<script src="group.js"></script>
 </body>
 </html>

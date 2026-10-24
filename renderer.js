@@ -1057,8 +1057,9 @@ let pickerTab = 'window';
 let pickedId = null;
 
 async function openPicker() {
+  if (G.active && G.share) { grpStopShare(); return; }
   if (S.localScreen) { stopShare(); return; }
-  if (!S.connected) return;
+  if (!S.connected && !G.active) return;
   $('picker').classList.remove('hidden');
   const o = settings();
   $('quality').value = o.quality;
@@ -1121,6 +1122,7 @@ function renderSources() {
 }
 
 async function beginShare() {
+  if (G.active && pickedId) return grpBeginShare();
   if (!pickedId || !S.connected) return;
   const qKey = $('quality').value;
   const mode = $('shareMode').value;
@@ -3061,6 +3063,7 @@ function bind() {
   window.duo?.onHotkey((what) => {
     if (what === 'mark') { toast('Метка в логе поставлена'); sound('msg'); return; }
     if (what === 'sound-stop') { spStopAll(); return; }
+    if (G.active && grpHotkey(what)) return;
     if (what === 'leave') { if (S.inCall) leaveCall(); return; }
     if (what === 'ctl-stop') { ctlEnd('ты забрал управление (Ctrl+Shift+X)'); return; }
     if (what === 'clip') { saveClip(); return; }
@@ -3308,7 +3311,7 @@ function endFriendCall(text) {
 }
 
 async function callFriend(id) {
-  if (S.busy || S.pc || S.friendCall || S.inCall) return;
+  if (S.busy || S.pc || S.friendCall || S.inCall || G.active) return;
   const f = friendsList.find((x) => x.id === id);
   if (!f) return;
   S.nick = $('nick').value.trim() || 'Без имени';
@@ -3358,7 +3361,7 @@ function onFriendMsg({ id, msg }) {
         return;
       }
       if (fc?.dir === 'in' && fc.id === id && fc.accepted) return; // повтор того же вызова
-      if (S.inCall || S.busy || S.pc || fc) { window.duo.friendsSend(id, { t: 'busy' }); return; }
+      if (S.inCall || S.busy || S.pc || fc || G.active || G.invite) { window.duo.friendsSend(id, { t: 'busy' }); return; }
       if (!/^ALOI\./.test(String(msg.code || ''))) return;
       S.friendCall = { id, nick, dir: 'in', code: msg.code };
       showCallModal('in', nick);
@@ -3408,6 +3411,7 @@ function onFriendMsg({ id, msg }) {
       onRtcRestartAns(id, msg);
       return;
     default:
+      if (/^grp-/.test(String(msg.t))) grpOnFriendMsg(id, msg, f, nick); // групповой звонок (group.js)
   }
 }
 

@@ -540,3 +540,31 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .theme-card:hover { border-color: var(--accent-2); }
 .theme-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .theme-sw { height: 36px; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); }
+
+/* ТЕСТ: групповой звонок (group.js) */
+#group { flex-direction: column; }
+.friends-head { display: flex; align-items: center; justify-content: space-between; }
+.grp-btn { text-transform: none; letter-spacing: 0; }
+.grp-mode #sysAudioRow { display: none; }
+.gpick-list { max-height: 50vh; overflow-y: auto; margin: 6px 0; }
+.gview { padding: 0; align-items: stretch; }
+.ggrid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; padding: 16px; align-content: center; min-width: 0; overflow: auto; }
+.gtile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; aspect-ratio: 16 / 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; overflow: hidden; min-width: 0; transition: opacity .2s; }
+.gtile.ghost { opacity: .45; }
+.gtile .avatar { width: 76px; height: 76px; font-size: 30px; }
+.gtile.speaking .avatar { border-color: var(--ok); box-shadow: 0 0 0 6px rgba(61,220,132,.18); }
+.gtile.speaking.sharing { box-shadow: inset 0 0 0 2px var(--ok); }
+.gtile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; display: none; }
+.gtile.sharing { cursor: zoom-in; }
+.gtile.sharing.focused { cursor: zoom-out; }
+.gtile.sharing video { display: block; }
+.gtile.sharing .avatar { display: none; }
+.gtile .gname { position: relative; z-index: 1; font-weight: 600; max-width: 92%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gtile.sharing .gname { position: absolute; left: 8px; bottom: 8px; background: rgba(0,0,0,.6); color: #fff; padding: 2px 8px; border-radius: 8px; font-size: 12px; }
+.gtile .gvol { position: absolute; right: 8px; top: 8px; width: 90px; z-index: 2; opacity: 0; transition: opacity .15s; }
+.gtile:hover .gvol { opacity: 1; }
+.ggrid.focus { display: flex; flex-wrap: wrap; align-content: flex-start; }
+.ggrid.focus .gtile { flex: 0 0 150px; }
+.ggrid.focus .gtile .avatar { width: 44px; height: 44px; font-size: 18px; }
+.ggrid.focus .gtile.focused { flex: 1 1 100%; order: -1; aspect-ratio: auto; height: calc(100% - 120px); min-height: 200px; }
+.gtile:fullscreen { border-radius: 0; border: 0; }

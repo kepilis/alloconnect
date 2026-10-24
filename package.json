@@ -25,6 +25,7 @@
       "index.html",
       "style.css",
       "renderer.js",
+      "group.js",
       "pcm-worklet.js",
       "icon.png",
       "net-friends.js",
