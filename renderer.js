@@ -1153,28 +1153,9 @@ async function beginShare() {
         toast('Отдельный захват звука недоступен (' + r.error + ') — пойдёт весь звук компьютера, друг может слышать себя');
       }
     }
-    // Окно приложения: следим, свёрнуто ли оно
-    let winState = 'unknown';
-    if (isWin) {
-      winState = await window.duo.winWatchStart(srcId);
-      if (winState === 'gone') throw new Error('окно уже закрыто');
-      if (winState === 'min' && $('autoRestore').checked) {
-        if (await window.duo.winRestore(srcId)) { await new Promise((r) => setTimeout(r, 450)); winState = 'normal'; }
-      }
-    }
-    S.shareCtx = { srcId, srcName, q, mode, useLoopback, real: null, ph: null };
-    let stream;
-    let vt;
-    if (winState === 'min') {
-      // свёрнутое окно рисовать нечего — шлём заглушку, звук приложения уже идёт
-      S.shareCtx.ph = makePlaceholder(srcName);
-      vt = S.shareCtx.ph.track;
-      stream = new MediaStream([vt]);
-    } else {
-      stream = await captureSource(srcId, q, mode, useLoopback);
-      vt = stream.getVideoTracks()[0];
-      S.shareCtx.real = stream;
-    }
+    const { sc, stream, winState } = await openShareSource(srcId, srcName, q, mode, useLoopback);
+    S.shareCtx = sc;
+    const vt = stream.getVideoTracks()[0];
     L('share', {
       start: true, quality: qKey, mode, source: srcId.split(':')[0], windowState: winState,
       sysAudio: wantAudio ? (sysTrack ? 'helper' : (useLoopback ? 'loopback-fallback' : 'none')) : 'off',
@@ -1213,6 +1194,29 @@ async function beginShare() {
   }
 }
 
+// Источник показа. Окно приложения: следим, свёрнуто ли оно; свёрнутое — разворачиваем сразу (если так выбрано)
+// или шлём заглушку — рисовать нечего, а звук приложения уже идёт. sc — контекст показа для onWinState.
+async function openShareSource(srcId, srcName, q, mode, useLoopback) {
+  let winState = 'unknown';
+  if (srcId.startsWith('window:')) {
+    winState = await window.duo.winWatchStart(srcId);
+    if (winState === 'gone') throw new Error('окно уже закрыто');
+    if (winState === 'min' && $('autoRestore').checked) {
+      if (await window.duo.winRestore(srcId)) { await new Promise((r) => setTimeout(r, 450)); winState = 'normal'; }
+    }
+  }
+  const sc = { srcId, srcName, q, mode, useLoopback, real: null, ph: null };
+  let stream;
+  if (winState === 'min') {
+    sc.ph = makePlaceholder(srcName);
+    stream = new MediaStream([sc.ph.track]);
+  } else {
+    stream = await captureSource(srcId, q, mode, useLoopback);
+    sc.real = stream;
+  }
+  return { sc, stream, winState };
+}
+
 // Захват выбранного экрана/окна
 async function captureSource(srcId, q, mode, useLoopback) {
   await window.duo.selectSource({ id: srcId, audio: useLoopback });
@@ -1224,7 +1228,11 @@ async function captureSource(srcId, q, mode, useLoopback) {
   if (!vt) throw new Error('нет видео');
   vt.contentHint = mode === 'text' ? 'detail' : 'motion';
   try { await vt.applyConstraints({ width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps, max: q.fps } }); } catch { /* не страшно */ }
-  vt.addEventListener('ended', () => { L('share', 'track ended by system'); if (S.shareCtx?.real === stream) stopShare(); });
+  vt.addEventListener('ended', () => {
+    L('share', 'track ended by system');
+    if (S.shareCtx?.real === stream) stopShare();
+    else if (G.share?.win?.real === stream) grpStopShare();
+  });
   return stream;
 }
 
@@ -1252,25 +1260,29 @@ function makePlaceholder(name) {
 
 // Окно свернули/развернули/закрыли во время показа
 async function onWinState(st) {
-  const ctx = S.shareCtx;
-  if (!ctx || !S.localScreen || !S.tx) return;
+  const grp = G.active;
+  const cur = () => (grp ? G.share?.win : S.shareCtx);
+  const ctx = cur();
+  if (!ctx || (!grp && (!S.localScreen || !S.tx))) return;
+  // что показывать вместо прежней картинки: в группе — всем участникам, в звонке — другу
+  const show = grp ? (vt) => grpSetShareTrack(vt) : async (vt, real) => {
+    await S.tx.video.sender.replaceTrack(vt);
+    if (real) await tuneSender(S.tx.video.sender, { video: ctx.q, mode: ctx.mode, codec: pickCodec()?.codec });
+    $('localScreen').srcObject = new MediaStream([vt]);
+  };
   try {
-    if (st === 'gone') { toast('Окно закрыто — показ остановлен'); stopShare(); return; }
+    if (st === 'gone') { toast('Окно закрыто — показ остановлен'); if (grp) grpStopShare(); else stopShare(); return; }
     if (st === 'min') {
       if (!ctx.ph) ctx.ph = makePlaceholder(ctx.srcName);
-      await S.tx.video.sender.replaceTrack(ctx.ph.track);
-      $('localScreen').srcObject = new MediaStream([ctx.ph.track]);
+      await show(ctx.ph.track, false);
       L('share', { switched: 'placeholder' });
     } else if (st === 'normal') {
       if (!ctx.real) {
         await new Promise((r) => setTimeout(r, 300)); // дать окну отрисоваться
-        if (S.shareCtx !== ctx) return;
+        if (cur() !== ctx) return;
         ctx.real = await captureSource(ctx.srcId, ctx.q, ctx.mode, false);
       }
-      const vt = ctx.real.getVideoTracks()[0];
-      await S.tx.video.sender.replaceTrack(vt);
-      await tuneSender(S.tx.video.sender, { video: ctx.q, mode: ctx.mode, codec: pickCodec()?.codec });
-      $('localScreen').srcObject = new MediaStream([vt]);
+      await show(ctx.real.getVideoTracks()[0], true);
       L('share', { switched: 'window' });
     }
   } catch (e) {

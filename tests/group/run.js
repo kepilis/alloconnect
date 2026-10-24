@@ -39,6 +39,8 @@ const R = (role) => readRes(dirs.SH, role);
   t('управление: A попросил у D, D разрешил — ввод доходит', d.ctlModal && d.ctlOn && a.ctlViewOn && d.ctlInput, [d.ctlModal, d.ctlOn, a.ctlViewOn, d.ctlInput, d.realError, a.realError]);
   t('C не получил управление, пока управляет A', c.ctlDenied, [c.ctlDenied, c.realError]);
   t('A отдал управление — у D всё выключилось', a.ctlViewOff && d.ctlOff, [a.ctlViewOff, d.ctlOff]);
+  t('показ окна: свернули — заглушка (A видит), развернули — снова окно', d.winShare?.real && d.winPh && a.winMinSeen && d.winBack, [d.winShare, d.winPh, a.winMinSeen, d.winBack, d.realError]);
+  t('«развернуть сразу»: свёрнутое окно развернулось и показалось', d.winAuto === true, [d.winAuto]);
   t('обрыв B–C: переподключились сами', b.reconnected && c.reconnected && b.backMsg && c.backMsg, [b.reconnected, c.reconnected, b.backMsg, c.backMsg]);
   t('создатель A ушёл — B, C, D продолжают', a.leftOk && b.afterHostLeft && c.afterHostLeft && d.afterHostLeft, [a.leftOk, b.afterHostLeft, c.afterHostLeft, d.afterHostLeft]);
   t('C ушёл — B и D вдвоём', b.lastTwo && d.lastTwo);

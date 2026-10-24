@@ -193,6 +193,31 @@ app.whenReady().then(async () => {
         await take('ctlStopA');
         res.ctlOff = await waitFor(W, `!CS.on && !CS.peer`, 10000);
         await js(`grpStopShare(); true`);
+        // окно приложения: свернули — заглушка, развернули — снова окно; «развернуть сразу» при старте
+        const tw = new BrowserWindow({ width: 640, height: 400, title: 'grp-test-win' });
+        await tw.loadURL('data:text/html;charset=utf-8,<title>grp-test-win</title><body style="background:%233a7;font:40px sans-serif">окно для теста</body>');
+        await sleep(1500);
+        const pickWin = `pickerSources = await window.duo.getSources(); pickedId = pickerSources.find((x) => x.name === 'grp-test-win')?.id || null;
+          document.getElementById('quality').value = '720p30'; document.getElementById('sysAudio').checked = false;`;
+        res.winShare = await js(`(async () => { ${pickWin} if (!pickedId) return { src: false };
+          window.__winSrc = pickedId; document.getElementById('autoRestore').checked = false; await grpBeginShare();
+          return { src: true, on: !!G.share, real: !!G.share?.win?.real && G.share.track === G.share.win.real.getVideoTracks()[0] }; })()`);
+        put('winOnD');
+        tw.minimize();
+        res.winPh = await waitFor(W, `!!G.share?.win?.ph && G.share.track === G.share.win.ph.track`, 15000);
+        put('winMinD');
+        await take('winMinSeenA');
+        tw.restore();
+        res.winBack = await waitFor(W, `!!G.share?.win?.real && G.share.track === G.share.win.real.getVideoTracks()[0] && G.share.track.readyState === 'live'`, 15000);
+        await js(`grpStopShare(); true`);
+        tw.minimize();
+        await sleep(1200);
+        // своё свёрнутое окно система в список не отдаёт — берём номер, запомненный при первом показе
+        res.winAuto = await js(`(async () => { pickedId = window.__winSrc; if (!pickedId) return false;
+          document.getElementById('autoRestore').checked = true; await grpBeginShare();
+          return !!G.share && !G.share.win.ph && !!G.share.win.real; })()`);
+        await js(`grpStopShare(); true`);
+        tw.destroy();
       } else {
         await take('realD');
         res.seeRealD = await waitFor(W, seesShare('D'), 25000);
@@ -210,6 +235,11 @@ app.whenReady().then(async () => {
           await js(`grpCtlClick(${J(ids.D)}); true`); // отдать управление
           res.ctlViewOff = await waitFor(W, `CV.state === 'off' && !CV.peer`, 10000);
           put('ctlStopA');
+          // D свернул показываемое окно — у меня его плитка по-прежнему показывает экран (заглушку)
+          await take('winOnD');
+          await take('winMinD');
+          res.winMinSeen = await waitFor(W, seesShare('D'), 15000);
+          put('winMinSeenA');
         }
         if (ROLE === 'C') {
           await take('ctlBusyA');

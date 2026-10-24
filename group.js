@@ -654,10 +654,16 @@ async function grpBeginShare() {
   const qKey = $('quality').value;
   const mode = $('shareMode').value;
   const wantAudio = $('sysAudio').checked && S.platform === 'win32';
-  store.set('settings', { ...settings(), quality: qKey, shareMode: mode, sysAudio: $('sysAudio').checked });
+  store.set('settings', { ...settings(), quality: qKey, shareMode: mode, sysAudio: $('sysAudio').checked, autoRestore: $('autoRestore').checked });
   $('picker').classList.add('hidden');
   const srcId = pickedId;
-  const name = srcId.startsWith('window:') ? (pickerSources.find((x) => x.id === srcId)?.name || '').slice(0, 60) : '';
+  const srcName = (pickerSources.find((x) => x.id === srcId)?.name || 'Окно').slice(0, 60);
+  let q = QUALITY[qKey];
+  // видеокарта ничего не кодирует — выше 1080p процессор не потянет (кодеки участники согласуют сами)
+  if (q.h > 1080 && !Object.values(S.caps?.enc || {}).includes('hw')) {
+    q = QUALITY['1080p60'];
+    toast('Видеокарта не кодирует видео для стрима — снизил до 1080p, чтобы не грузить процессор');
+  }
   let atrack = null, loopback = false;
   try {
     if (wantAudio) {
@@ -665,21 +671,34 @@ async function grpBeginShare() {
       if (r.ok) atrack = await startPcmTrack();
       else { loopback = true; toast('Отдельный захват звука недоступен (' + r.error + ') — пойдёт весь звук компьютера'); }
     }
-    const stream = await captureSource(srcId, QUALITY[qKey], mode, loopback);
-    await grpShareStream(stream, { q: QUALITY[qKey], mode, name, atrack: atrack || stream.getAudioTracks()[0] || null, srcId });
+    const { sc, stream, winState } = await openShareSource(srcId, srcName, q, mode, loopback);
+    L('grp', { share: 'start', quality: qKey, source: srcId.split(':')[0], windowState: winState });
+    await grpShareStream(stream, { q, mode, name: srcId.startsWith('window:') ? srcName : '', atrack: atrack || stream.getAudioTracks()[0] || null, srcId, win: sc });
     window.duo.ovlOpen(srcId).catch(() => {}); // рисунки, указки и реакции зрителей — поверх окна (в захват не попадает)
   } catch (e) {
     console.warn('grp share', e);
     stopPcm();
+    window.duo.winWatchStop();
     toast('Не удалось начать демонстрацию: ' + (e.message || e.name));
   }
 }
 
-async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', name = '', atrack = null, srcId = null } = {}) {
+// окно свернули или развернули (onWinState): всем участникам — заглушка или снова окно
+async function grpSetShareTrack(vt) {
+  if (!G.share) return;
+  G.share.track = vt;
+  G.share.stream = new MediaStream([vt]); // превью на моей плитке
+  for (const p of G.peers.values()) grpAttachSenders(p);
+  await grpTuneAll();
+  grpRender();
+}
+
+// win — контекст окна от openShareSource (заглушка/настоящий захват), нет — поток без слежения за окном
+async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', name = '', atrack = null, srcId = null, win = null } = {}) {
   if (G.share) grpStopShare(true);
   const track = stream.getVideoTracks()[0];
   if (!track) throw new Error('нет видео');
-  G.share = { stream, track, atrack, q, mode, name, srcId };
+  G.share = { stream, track, atrack, q, mode, name, srcId, win };
   track.addEventListener('ended', () => { if (G.share?.stream === stream) grpStopShare(); });
   for (const p of G.peers.values()) grpAttachSenders(p);
   await grpTuneAll();
@@ -696,6 +715,9 @@ function grpStopShare(silent) {
   grpCtlCancelReq();
   G.share = null;
   sh.stream.getTracks().forEach((t) => t.stop());
+  sh.win?.real?.getTracks().forEach((t) => t.stop());
+  sh.win?.ph?.stop();
+  if (sh.win) window.duo?.winWatchStop();
   window.duo?.ovlClose();
   stopPcm();
   for (const p of G.peers.values()) grpAttachSenders(p);
