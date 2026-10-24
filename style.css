@@ -474,3 +474,38 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .row-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .placer-bar span, .placer-bar b { white-space: nowrap; }
 .placer.has-vid .placer-hint { display: none; }
+
+/* действия с сообщениями */
+.chat-head { display: flex; align-items: center; justify-content: space-between; }
+.msg .quote { border-left: 3px solid var(--accent); background: rgba(255,255,255,.06); border-radius: 6px; padding: 3px 8px; margin-bottom: 5px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.msg .quote b { color: var(--text); font-weight: 600; }
+.bubble.file .quote { margin: 2px 2px 6px; }
+.msg .meta .edited { font-style: italic; }
+.msg.deleted .bubble { opacity: .55; font-size: 13px; }
+.reacts { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.msg.me .reacts { justify-content: flex-end; }
+.react-chip { border: 1px solid var(--line); background: var(--panel-2); border-radius: 12px; padding: 1px 7px; font-size: 13px; cursor: pointer; color: var(--text); }
+.react-chip.mine { border-color: var(--accent); background: rgba(124,92,255,.18); }
+.msg-acts { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.45); padding: 3px; }
+.msg-acts .ma-row { display: flex; align-items: center; gap: 1px; }
+.msg-acts button { background: none; border: 0; border-radius: 7px; padding: 3px 5px; font-size: 15px; cursor: pointer; color: var(--text); line-height: 1.2; }
+.msg-acts button:hover, .msg-acts button.on { background: var(--panel-2); }
+.msg-acts .ma-sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 3px; }
+.msg-acts .hidden { display: none; }
+.msg.flash .bubble { animation: msgflash 1.6s ease; }
+@keyframes msgflash { 0%, 30% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
+.compose-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel-2); }
+.compose-bar .cb-ico { color: var(--accent); font-size: 16px; }
+.compose-bar .cb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.compose-bar .cb-text b { font-size: 12px; }
+.compose-bar .cb-text small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-search { padding: 8px 10px; border-bottom: 1px solid var(--line); position: relative; }
+.msg-search input { width: 100%; box-sizing: border-box; }
+.ms-results { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.ms-results:empty { display: none; }
+.ms-row { text-align: left; background: none; border: 0; border-radius: 8px; padding: 6px 8px; cursor: pointer; color: var(--text); }
+.ms-row:hover { background: var(--panel-2); }
+.ms-row small { color: var(--muted); display: block; }
+.ms-row mark { background: rgba(124,92,255,.45); color: inherit; border-radius: 3px; }
+.ms-none { color: var(--muted); font-size: 13px; padding: 4px 8px; }
+.icon-btn.small { font-size: 13px; padding: 2px 6px; }

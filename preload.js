@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('duo', {
   friendsRemove: (id) => ipcRenderer.invoke('friends-remove', id),
   friendsCallPath: (p) => ipcRenderer.invoke('friends-callpath', p),
   friendsSend: (id, msg) => ipcRenderer.invoke('friends-send', id, msg),
+  histSearch: (id, q) => ipcRenderer.invoke('hist-search', id, q),
   onFriends: (fn) => ipcRenderer.on('friends-update', (_e, l) => fn(l)),
   onFriendMsg: (fn) => ipcRenderer.on('friends-msg', (_e, m) => fn(m)),
   netConfig: (c) => ipcRenderer.invoke('net-config', c),

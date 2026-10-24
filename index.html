@@ -17,7 +17,7 @@
 
     <label class="field">
       <span>Твой ник</span>
-      <input id="nick" maxlength="24" placeholder="Например, Райден" />
+      <input id="nick" maxlength="24" placeholder="Твой ник" />
     </label>
 
     <!-- Шаг 0: выбор -->
@@ -139,7 +139,7 @@
     </div>
 
     <aside class="chat">
-      <div class="chat-head">Чат</div>
+      <div class="chat-head">Чат <button type="button" id="chatSearchBtn" class="icon-btn small" title="Поиск по переписке">🔍</button></div>
       <div id="messages" class="messages"></div>
       <form id="chatForm" class="chat-form">
         <button type="button" id="btnAttach" class="btn attach" title="Отправить файл (или Ctrl+V / перетащи в окно)">📎</button>
@@ -274,6 +274,7 @@
       <div class="favatar big" id="dmAvatar"><span>?</span></div>
       <div class="dm-who"><b id="dmTitle">Друг</b><small id="dmSub" class="muted"></small></div>
       <button id="dmCall" class="btn primary small">📞 Позвонить</button>
+      <button id="dmSearchBtn" class="icon-btn" title="Поиск по переписке">🔍</button>
       <button id="dmClear" class="icon-btn" title="Очистить историю с этим другом">🗑</button>
       <button id="dmClose" class="icon-btn" title="Закрыть">✕</button>
     </div>

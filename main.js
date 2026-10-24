@@ -1004,6 +1004,14 @@ function histRead(id) {
     let e;
     try { e = JSON.parse(l); } catch { continue; }
     if (e.type === 'status') { const t = byMid.get(e.ref); if (t) t.st = e.st; continue; }
+    if (e.type === 'op') { // реакции, правки, удаление
+      const t = byMid.get(e.ref);
+      if (!t || t.deleted) continue;
+      if (e.op === 'react') { t.react = { ...(t.react || {}) }; if (e.e) t.react[e.who] = e.e; else delete t.react[e.who]; }
+      else if (e.who === t.who && e.op === 'edit' && t.type === 'text') { t.text = String(e.text || '').slice(0, 2000); t.edited = e.ts; }
+      else if (e.who === t.who && e.op === 'del') { t.deleted = true; t.text = ''; t.react = {}; if (t.file) t.file = { ...t.file, name: '', stored: undefined }; }
+      continue;
+    }
     out.push(e);
     if (e.mid) byMid.set(e.mid, e);
   }
@@ -1019,8 +1027,26 @@ ipcMain.handle('hist-append', (_e, id, entry) => {
   const line = JSON.stringify(entry);
   if (line.length > 20000) return false;
   fs.mkdirSync(histDir(id), { recursive: true });
+  // удаление: сохранённую картинку стираем с диска сразу
+  if (entry?.type === 'op' && entry.op === 'del') {
+    const t = histRead(id).find((x) => x.mid === entry.ref);
+    if (t?.file?.stored && t.who === entry.who && /^media\/[a-f0-9]{16}\.[a-z0-9]{1,5}$/.test(t.file.stored)) { try { fs.unlinkSync(path.join(histDir(id), t.file.stored)); } catch { /* */ } }
+  }
   fs.appendFileSync(path.join(histDir(id), 'log.jsonl'), line + '\n');
   return true;
+});
+ipcMain.handle('hist-search', (_e, id, q) => {
+  const s = String(q || '').trim().toLowerCase().slice(0, 100);
+  if (s.length < 2) return [];
+  const all = histRead(id);
+  const out = [];
+  for (let i = all.length - 1; i >= 0 && out.length < 100; i--) {
+    const e = all[i];
+    if (e.deleted) continue;
+    const t = e.type === 'text' ? e.text : e.type === 'file' ? e.file?.name : '';
+    if (t && String(t).toLowerCase().includes(s)) out.push({ i, mid: e.mid, ts: e.ts, who: e.who, nick: e.nick, text: String(t).slice(0, 300), file: e.type === 'file' });
+  }
+  return out;
 });
 ipcMain.handle('hist-media-save', (_e, id, bytes, name) => {
   const buf = Buffer.from(bytes);

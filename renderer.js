@@ -846,12 +846,18 @@ function onData(d) {
       S.friendCaps = d.dec || {};
       L('caps', { friendDecode: d.dec, friendEncode: d.enc });
       break;
-    case 'chat':
-      chatMsg(S.callConv, S.friendNick, String(d.text || '').slice(0, 2000), false, d.ts);
-      record(S.callConv, { mid: String(d.mid || newMid()).slice(0, 20), ts: Number(d.ts) || Date.now(), who: 'peer', nick: S.friendNick, type: 'text', text: String(d.text || '').slice(0, 2000) });
+    case 'chat': {
+      const mid = cleanMid(d.mid) || newMid();
+      const re = reIn(d.re);
+      chatMsg(S.callConv, S.friendNick, String(d.text || '').slice(0, 2000), false, d.ts, null, { mid, re });
+      record(S.callConv, { mid, ts: Number(d.ts) || Date.now(), who: 'peer', nick: S.friendNick, type: 'text', text: String(d.text || '').slice(0, 2000), re: re || undefined });
       sound('msg');
       window.duo?.notify({ title: S.friendNick, body: String(d.text || '').slice(0, 200), kind: 'msg' });
       if (!document.hasFocus()) window.duo?.attention();
+      break;
+    }
+    case 'chat-op':
+      if (S.callConv) applyOp(S.callConv, d, 'peer');
       break;
     case 'screen-start':
       L('watch', { friendStarted: d.quality });
@@ -870,7 +876,7 @@ function onData(d) {
       friendGone(`${S.friendNick} завершил звонок`);
       break;
     case 'perm':
-      S.friendPerm = { draw: d.draw !== false, react: !!d.react, ctl: d.ctl !== false, vid: d.vid === 1 };
+      S.friendPerm = { draw: d.draw !== false, react: !!d.react, ctl: d.ctl !== false, vid: d.vid === 1, ops: d.ops === 1 };
       if (!S.friendPerm.draw && tools.mode) tools.mode = null;
       updateToolbar();
       break;
@@ -1613,7 +1619,7 @@ function getConv(id, nick) {
   if (!id) return null;
   let c = convs.get(id);
   if (!c) {
-    c = { id, nick: nick || 'Друг', box: newConvBox(), loaded: false, histStart: null, unread: 0, blobs: [], pending: [] };
+    c = { id, nick: nick || 'Друг', box: newConvBox(), loaded: false, histStart: null, unread: 0, blobs: [], pending: [], msgs: new Map() };
     convs.set(id, c);
   }
   if (nick) c.nick = nick;
@@ -1622,7 +1628,7 @@ function getConv(id, nick) {
 
 // разговор звонка до того, как узнали ID собеседника
 function tempConv(nick) {
-  return { id: null, nick: nick || 'Друг', box: newConvBox(), loaded: true, histStart: 0, unread: 0, blobs: [], pending: [] };
+  return { id: null, nick: nick || 'Друг', box: newConvBox(), loaded: true, histStart: 0, unread: 0, blobs: [], pending: [], msgs: new Map() };
 }
 
 function mountConv(conv, host) {
@@ -1654,6 +1660,7 @@ function adoptConv(temp, id, nick) {
   const conv = getConv(id, nick);
   for (const el of [...temp.box.children]) conv.box.appendChild(el);
   conv.blobs.push(...temp.blobs);
+  for (const [k, v] of temp.msgs || []) conv.msgs.set(k, v);
   for (const e of temp.pending) window.duo.histAppend(id, e).catch(() => {});
   temp.pending = [];
   return conv;
@@ -1689,12 +1696,15 @@ async function loadHistory(conv, more) {
 function renderHistEntry(conv, e, into) {
   const mine = e.who === 'me';
   const who = mine ? (S.nick || store.get('nick', '') || 'Я') : (e.nick || conv.nick);
-  if (e.type === 'text') {
-    const m = chatMsg(conv, who, String(e.text || ''), mine, e.ts, into);
+  const opt = { mid: e.mid, re: e.re, react: e.react, edited: e.edited, deleted: e.deleted, type: e.type };
+  if (e.deleted && (e.type === 'text' || e.type === 'file')) {
+    chatMsg(conv, who, '', mine, e.ts, into, opt);
+  } else if (e.type === 'text') {
+    const m = chatMsg(conv, who, String(e.text || ''), mine, e.ts, into, opt);
     if (e.st === 'fail') markUndelivered(m);
   } else if (e.type === 'file' && e.file) {
     const meta = { ...e.file, kind: e.file.kind || fileKind(e.file.mime || '') };
-    const ui = fileBubble(conv, who, meta, mine, { ts: e.ts, into });
+    const ui = fileBubble(conv, who, meta, mine, { ts: e.ts, into, ...opt });
     if (e.file.stored) {
       ui.loading();
       window.duo.histMediaRead(conv.id, e.file.stored).then((b) => {
@@ -1714,7 +1724,7 @@ function timeStr(ts) {
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
 
-function chatMsg(conv, who, text, mine, ts, into) {
+function chatMsg(conv, who, text, mine, ts, into, opt = {}) {
   const m = document.createElement('div');
   m.className = 'msg' + (mine ? ' me' : '');
   const meta = document.createElement('div');
@@ -1722,8 +1732,12 @@ function chatMsg(conv, who, text, mine, ts, into) {
   meta.textContent = `${who} · ${timeStr(ts)}`;
   const b = document.createElement('div');
   b.className = 'bubble';
-  appendLinkified(b, text);
+  const t = document.createElement('span');
+  t.className = 'btext';
+  appendLinkified(t, text);
+  b.appendChild(t);
   m.append(meta, b);
+  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: mine ? 'me' : 'peer', type: opt.type || 'text', text, re: opt.re, react: opt.react, edited: opt.edited, deleted: opt.deleted });
   (into || conv.box).appendChild(m);
   if (!into) scrollEnd(conv, mine);
   return m;
@@ -1744,6 +1758,324 @@ function sysMsg(text, conv = S.callConv) {
   m.textContent = text;
   conv.box.appendChild(m);
   scrollEnd(conv, true);
+}
+
+/* =========================================================
+   Действия с сообщениями: реакции, ответ с цитатой, правка и удаление своих, поиск по истории.
+   Сообщения и файлы адресуются по mid (у файлов — 'f' + номер передачи, он общий у обоих).
+   Правки идут по тому же каналу, что и текст: в звонке — канал звонка, без звонка — канал друзей.
+   ========================================================= */
+const MSG_REACTS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+const fmid = (fid) => 'f' + (Number(fid) >>> 0).toString(36);
+const cleanMid = (m) => (typeof m === 'string' && /^[a-z0-9]{1,24}$/i.test(m) ? m : '');
+const snip = (s, n = 90) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+
+// цитата: в сети — «mine» с точки зрения отправителя, в истории — by: me/peer с моей
+function reOut(re) { return re ? { mid: re.mid, mine: re.by === 'me', text: re.text } : undefined; }
+function reIn(r) {
+  if (!r || typeof r !== 'object' || !cleanMid(r.mid)) return null;
+  return { mid: r.mid, by: r.mine ? 'peer' : 'me', text: snip(r.text) };
+}
+
+function regMsg(conv, el, e) {
+  el.dataset.mid = e.mid;
+  conv.msgs ??= new Map();
+  conv.msgs.set(e.mid, { el, e });
+  if (e.re) {
+    const q = document.createElement('div');
+    q.className = 'quote';
+    const b = document.createElement('b');
+    b.textContent = e.re.by === 'me' ? (S.nick || 'Я') : conv.nick;
+    q.append(b, document.createTextNode(' ' + (e.re.text || '…')));
+    q.title = 'Показать сообщение';
+    q.onclick = (ev) => { ev.stopPropagation(); jumpToMsg(conv, e.re.mid); };
+    el.querySelector('.bubble').prepend(q);
+  }
+  if (e.edited) markEdited(el);
+  if (e.deleted) renderDeleted(el, e);
+  renderReacts(conv, el, e);
+}
+
+function markEdited(el) {
+  const meta = el.querySelector('.meta');
+  if (meta && !meta.querySelector('.edited')) { const s = document.createElement('span'); s.className = 'edited'; s.textContent = ' · изменено'; meta.appendChild(s); }
+}
+
+function renderDeleted(el, e) {
+  e.deleted = true;
+  e.react = {};
+  el.classList.add('deleted');
+  const b = el.querySelector('.bubble');
+  b.className = 'bubble';
+  b.replaceChildren(Object.assign(document.createElement('i'), { textContent: 'Сообщение удалено' }));
+  el.querySelector('.reacts')?.remove();
+  el.querySelector('.meta .edited')?.remove();
+}
+
+function renderReacts(conv, el, e) {
+  el.querySelector('.reacts')?.remove();
+  const r = e.react || {};
+  const list = Object.entries(r).filter(([, v]) => MSG_REACTS.includes(v));
+  if (!list.length || e.deleted) return;
+  const row = document.createElement('div');
+  row.className = 'reacts';
+  const by = new Map();
+  for (const [who, v] of list) { if (!by.has(v)) by.set(v, []); by.get(v).push(who); }
+  for (const [v, whos] of by) {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'react-chip' + (whos.includes('me') ? ' mine' : '');
+    c.textContent = v + (whos.length > 1 ? ' 2' : '');
+    c.title = whos.map((w) => (w === 'me' ? 'ты' : conv.nick)).join(', ');
+    c.onclick = (ev) => { ev.stopPropagation(); sendMsgOp(conv, { op: 'react', ref: e.mid, e: r.me === v ? '' : v }); };
+    row.appendChild(c);
+  }
+  el.querySelector('.bubble').after(row);
+}
+
+function canOps(conv) {
+  if (S.inCall && S.callConv === conv) return !!S.friendPerm?.ops;
+  const f = friendsList.find((x) => x.id === conv.id);
+  return !f?.ver || verCmpR(f.ver, '1.14.0') >= 0;
+}
+
+async function sendMsgOp(conv, raw) {
+  const op = cleanOp({ ...raw, ts: Date.now() });
+  if (!op || !conv) return false;
+  if (!canOps(conv)) { toast(`У ${conv.nick} старая версия alloconnect — это заработает, когда он обновится`); return false; }
+  let ok = false;
+  if (S.inCall && S.callConv === conv && S.dc?.readyState === 'open') { send({ t: 'chat-op', ...op }); ok = true; }
+  else if (conv.id) { const r = await window.duo.friendsSend(conv.id, { t: 'dm-op', ...op }).catch(() => ({ ok: false })); ok = !!r.ok; }
+  if (!ok) { toast(`Не доставлено — ${conv.nick} не в сети`); return false; }
+  applyOp(conv, op, 'me');
+  return true;
+}
+
+function cleanOp(o) {
+  if (!o || typeof o !== 'object' || !['react', 'edit', 'del'].includes(o.op) || !cleanMid(o.ref)) return null;
+  const op = { op: o.op, ref: o.ref, ts: Number(o.ts) || Date.now() };
+  if (o.op === 'react') { op.e = MSG_REACTS.includes(o.e) ? o.e : ''; }
+  if (o.op === 'edit') { op.text = String(o.text || '').slice(0, 2000); if (!op.text.trim()) return null; }
+  return op;
+}
+
+// применить действие (своё или друга): на экране, если сообщение загружено, и в историю
+function applyOp(conv, raw, by) {
+  const op = cleanOp(raw);
+  if (!op) return;
+  const it = conv.msgs?.get(op.ref);
+  if (it) {
+    if (op.op !== 'react' && it.e.who !== by) return; // править и удалять можно только свои
+    if (it.e.deleted) return;
+    if (op.op === 'react') {
+      it.e.react = { ...(it.e.react || {}) };
+      if (op.e) it.e.react[by] = op.e; else delete it.e.react[by];
+      renderReacts(conv, it.el, it.e);
+      if (by === 'peer' && op.e && it.e.who === 'me') {
+        const visible = (dmOpen === conv && !$('dm').classList.contains('hidden')) || (S.inCall && S.callConv === conv);
+        if (!visible) toast(`${conv.nick}: ${op.e} на «${snip(it.e.text, 40)}»`);
+      }
+    } else if (op.op === 'edit') {
+      if (it.e.type !== 'text') return;
+      it.e.text = op.text;
+      it.e.edited = op.ts;
+      const t = it.el.querySelector('.btext');
+      if (t) { t.replaceChildren(); appendLinkified(t, op.text); }
+      markEdited(it.el);
+    } else if (op.op === 'del') {
+      renderDeleted(it.el, it.e);
+    }
+  }
+  record(conv, { type: 'op', op: op.op, ref: op.ref, who: by, e: op.e, text: op.text, ts: op.ts });
+}
+
+/* ---------- Ответ и правка: полоска над полем ввода ---------- */
+const composers = {
+  call: { input: 'chatInput', form: 'chatForm', conv: () => S.callConv, mode: null, item: null, bar: null },
+  dm: { input: 'dmInput', form: 'dmForm', conv: () => dmOpen, mode: null, item: null, bar: null },
+};
+const composerFor = (el) => (el.closest('#dmMessages') ? composers.dm : composers.call);
+
+function setCompose(cp, mode, item) {
+  cp.mode = mode;
+  cp.item = item || null;
+  if (!cp.bar) {
+    cp.bar = document.createElement('div');
+    cp.bar.className = 'compose-bar hidden';
+    cp.bar.innerHTML = '<span class="cb-ico"></span><div class="cb-text"><b></b><small></small></div><button type="button" class="icon-btn cb-x" title="Отмена (Esc)">✕</button>';
+    cp.bar.querySelector('.cb-x').onclick = () => cancelCompose(cp);
+    $(cp.form).before(cp.bar);
+  }
+  cp.bar.classList.toggle('hidden', !mode);
+  if (!mode) return;
+  const conv = cp.conv();
+  cp.bar.querySelector('.cb-ico').textContent = mode === 'edit' ? '✏' : '↩';
+  cp.bar.querySelector('b').textContent = mode === 'edit' ? 'Редактирование' : 'Ответ ' + (item.e.who === 'me' ? 'себе' : conv?.nick || '');
+  cp.bar.querySelector('small').textContent = snip(item.e.type === 'file' ? '📎 ' + item.e.text : item.e.text, 80);
+  const inp = $(cp.input);
+  if (mode === 'edit') inp.value = item.e.text;
+  inp.focus();
+}
+
+function cancelCompose(cp) {
+  const wasEdit = cp.mode === 'edit';
+  setCompose(cp, null);
+  if (wasEdit) $(cp.input).value = '';
+}
+
+function composeTakeReply(cp) {
+  if (cp.mode !== 'reply' || !cp.item) return null;
+  const e = cp.item.e;
+  setCompose(cp, null);
+  return { mid: e.mid, by: e.who, text: snip(e.type === 'file' ? '📎 ' + e.text : e.text) };
+}
+
+// режим правки: отправка = изменить сообщение
+function composeSubmitEdit(cp, conv, text) {
+  if (cp.mode !== 'edit' || !cp.item) return false;
+  const it = cp.item;
+  setCompose(cp, null);
+  $(cp.input).value = '';
+  if (text !== it.e.text) sendMsgOp(conv, { op: 'edit', ref: it.e.mid, text });
+  return true;
+}
+
+/* ---------- Кнопки у сообщения (при наведении) ---------- */
+let actFor = null;
+function bindMsgUi() {
+  const bar = document.createElement('div');
+  bar.id = 'msgActs';
+  bar.className = 'msg-acts hidden';
+  bar.innerHTML = '<div class="ma-row">' + MSG_REACTS.map((r) => `<button type="button" class="ma-react" data-r="${r}">${r}</button>`).join('') +
+    '<span class="ma-sep"></span><button type="button" class="ma-btn" data-a="reply" title="Ответить">↩</button><button type="button" class="ma-btn" data-a="edit" title="Изменить">✏</button><button type="button" class="ma-btn" data-a="del" title="Удалить у обоих">🗑</button></div>';
+  document.body.appendChild(bar);
+  const hide = () => { bar.classList.add('hidden'); actFor = null; };
+  const show = (el) => {
+    const host = el.closest('.messages');
+    const cp = composerFor(el);
+    const conv = cp.conv();
+    const it = conv?.msgs?.get(el.dataset.mid);
+    if (!it || it.e.deleted) { hide(); return; }
+    actFor = { el, conv, it, cp };
+    bar.querySelector('[data-a=edit]').classList.toggle('hidden', !(it.e.who === 'me' && it.e.type === 'text'));
+    bar.querySelector('[data-a=del]').classList.toggle('hidden', it.e.who !== 'me');
+    for (const b of bar.querySelectorAll('.ma-react')) b.classList.toggle('on', it.e.react?.me === b.dataset.r);
+    bar.classList.remove('hidden');
+    const r = el.querySelector('.bubble').getBoundingClientRect();
+    const hr = host.getBoundingClientRect();
+    const bw = bar.offsetWidth, bh = bar.offsetHeight;
+    let x = it.e.who === 'me' ? r.right - bw : r.left;
+    x = Math.max(hr.left + 4, Math.min(hr.right - bw - 4, x));
+    let y = r.top - bh - 2;
+    if (y < hr.top) y = r.bottom + 2;
+    Object.assign(bar.style, { left: x + 'px', top: y + 'px' });
+  };
+  for (const id of ['messages', 'dmMessages']) {
+    const host = $(id);
+    host.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('.msg[data-mid]');
+      if (el && el !== actFor?.el) show(el);
+    });
+    host.addEventListener('mouseleave', (e) => { if (!bar.contains(e.relatedTarget)) hide(); });
+    host.addEventListener('scroll', hide, { passive: true });
+  }
+  bar.addEventListener('mouseleave', (e) => { if (!e.relatedTarget?.closest?.('.messages')) hide(); });
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || !actFor) return;
+    const { conv, it, cp } = actFor;
+    if (b.dataset.r) sendMsgOp(conv, { op: 'react', ref: it.e.mid, e: it.e.react?.me === b.dataset.r ? '' : b.dataset.r });
+    else if (b.dataset.a === 'reply') setCompose(cp, 'reply', it);
+    else if (b.dataset.a === 'edit') setCompose(cp, 'edit', it);
+    else if (b.dataset.a === 'del') sendMsgOp(conv, { op: 'del', ref: it.e.mid });
+    hide();
+  });
+  for (const cp of Object.values(composers)) {
+    $(cp.input).addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && cp.mode) { e.preventDefault(); e.stopPropagation(); cancelCompose(cp); }
+      // стрелка вверх в пустом поле — изменить своё последнее сообщение
+      if (e.key === 'ArrowUp' && !e.target.value && !cp.mode) {
+        const conv = cp.conv();
+        const mine = [...(conv?.msgs?.values() || [])].filter((x) => x.e.who === 'me' && x.e.type === 'text' && !x.e.deleted && x.el.isConnected);
+        const last = mine[mine.length - 1];
+        if (last) { e.preventDefault(); setCompose(cp, 'edit', last); }
+      }
+    });
+  }
+  $('chatSearchBtn').onclick = () => toggleSearch('call');
+  $('dmSearchBtn').onclick = () => toggleSearch('dm');
+}
+
+function jumpToMsg(conv, mid) {
+  const it = conv.msgs?.get(mid);
+  if (!it || !it.el.isConnected) { toast('Это сообщение не загружено — пролистай историю выше или найди его через 🔍'); return false; }
+  it.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  it.el.classList.remove('flash');
+  void it.el.offsetWidth;
+  it.el.classList.add('flash');
+  return true;
+}
+
+/* ---------- Поиск по истории ---------- */
+const searches = {
+  call: { host: 'messages', conv: () => S.callConv, el: null, t: 0 },
+  dm: { host: 'dmMessages', conv: () => dmOpen, el: null, t: 0 },
+};
+function toggleSearch(kind) {
+  const sr = searches[kind];
+  if (sr.el && !sr.el.classList.contains('hidden')) { sr.el.classList.add('hidden'); return; }
+  const conv = sr.conv();
+  if (!conv?.id) { toast('Поиск работает в чате с другом из списка друзей'); return; }
+  if (!sr.el) {
+    sr.el = document.createElement('div');
+    sr.el.className = 'msg-search';
+    sr.el.innerHTML = '<input type="search" placeholder="Поиск по переписке" maxlength="100" /><div class="ms-results"></div>';
+    $(sr.host).before(sr.el);
+    const inp = sr.el.querySelector('input');
+    inp.addEventListener('input', () => { clearTimeout(sr.t); sr.t = setTimeout(() => runSearch(sr), 250); });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); sr.el.classList.add('hidden'); } });
+  }
+  sr.el.classList.remove('hidden');
+  sr.el.querySelector('.ms-results').replaceChildren();
+  const inp = sr.el.querySelector('input');
+  inp.value = '';
+  inp.focus();
+}
+
+async function runSearch(sr) {
+  const conv = sr.conv();
+  const q = sr.el.querySelector('input').value.trim();
+  const box = sr.el.querySelector('.ms-results');
+  if (!conv?.id || q.length < 2) { box.replaceChildren(); return; }
+  const list = await window.duo.histSearch(conv.id, q).catch(() => []);
+  box.replaceChildren();
+  if (!list.length) { box.appendChild(Object.assign(document.createElement('div'), { className: 'ms-none', textContent: 'Ничего не нашлось' })); return; }
+  for (const r of list) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'ms-row';
+    const head = document.createElement('small');
+    head.textContent = `${r.who === 'me' ? (S.nick || 'Я') : (r.nick || conv.nick)} · ${timeStr(r.ts)}`;
+    const body = document.createElement('div');
+    const txt = (r.file ? '📎 ' : '') + r.text;
+    const i = txt.toLowerCase().indexOf(q.toLowerCase());
+    if (i >= 0) {
+      const from = Math.max(0, i - 40);
+      body.append(document.createTextNode((from ? '…' : '') + txt.slice(from, i)), Object.assign(document.createElement('mark'), { textContent: txt.slice(i, i + q.length) }), document.createTextNode(txt.slice(i + q.length, i + q.length + 80)));
+    } else body.textContent = txt;
+    row.append(head, body);
+    row.onclick = () => jumpToHist(conv, r, sr);
+    box.appendChild(row);
+  }
+}
+
+async function jumpToHist(conv, r, sr) {
+  await loadHistory(conv);
+  for (let n = 0; n < 40 && conv.histStart > r.i; n++) {
+    conv.box.querySelector('.hist-more')?.remove();
+    await loadHistory(conv, true);
+  }
+  if (jumpToMsg(conv, r.mid)) sr.el.classList.add('hidden');
 }
 
 /* =========================================================
@@ -1783,6 +2115,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
   stat.innerHTML = '<span></span>';
   b.append(view, prog, stat);
   m.append(head, b);
+  if (opt.mid) regMsg(conv, m, { mid: opt.mid, who: mine ? 'me' : 'peer', type: 'file', text: meta.name, react: opt.react, re: opt.re });
   (opt.into || conv.box).appendChild(m);
   if (!opt.into) scrollEnd(conv, mine);
   return {
@@ -1849,7 +2182,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
 // запись о файле в историю (картинку — вместе с самой картинкой)
 async function recordFile(conv, mine, meta, blob) {
   if (!conv || meta.p !== 'chat' && meta.p !== 'sound') return;
-  const entry = { mid: newMid(), ts: Date.now(), who: mine ? 'me' : 'peer', nick: mine ? S.nick : conv.nick, type: 'file',
+  const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : 'peer', nick: mine ? S.nick : conv.nick, type: 'file',
     file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p } };
   if (meta.kind === 'image' && meta.size <= HIST_IMG_MAX && conv.id) {
     try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без картинки */ }
@@ -1893,7 +2226,7 @@ class FileChan {
       if (p === 'screenvid') { meta.vol = extra.vol; meta.snd = extra.snd ? 1 : 0; }
       meta.kind = fileKind(meta.mime);
       const conv = this.getConv();
-      const ui = extra.ui || ((p === 'chat' || p === 'sound') && conv ? fileBubble(conv, S.nick || 'Я', meta, true) : NOUI);
+      const ui = extra.ui || ((p === 'chat' || p === 'sound') && conv ? fileBubble(conv, S.nick || 'Я', meta, true, { mid: fmid(meta.fid) }) : NOUI);
       ui.progress(0);
       this.outgoing.push({ file: f, meta, ui });
       L('file', { queued: meta.kind, size: meta.size, p });
@@ -1955,7 +2288,7 @@ class FileChan {
         if (p === 'screenvid' && meta.size > SVID_MAX) { this.handlers.screenvidBig?.(); return; }
         meta.kind = fileKind(meta.mime);
         const conv = this.getConv();
-        const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, conv.nick, meta, false) : NOUI;
+        const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, conv.nick, meta, false, { mid: fmid(meta.fid) }) : NOUI;
         ui.progress(0);
         this.incoming.set(meta.fid, { meta, parts: [], got: 0, ui, last: 0 });
       } else if (m.t === 'file-end') {
@@ -2555,11 +2888,13 @@ function bind() {
     const text = $('chatInput').value.trim();
     if (!text) return;
     if (!S.connected) { toast('Друг не в звонке'); return; }
+    if (composeSubmitEdit(composers.call, S.callConv, text)) return;
     const ts = Date.now();
     const mid = newMid();
-    send({ t: 'chat', text, ts, mid });
-    chatMsg(S.callConv, S.nick, text, true, ts);
-    record(S.callConv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text });
+    const re = composeTakeReply(composers.call);
+    send({ t: 'chat', text, ts, mid, re: reOut(re) });
+    chatMsg(S.callConv, S.nick, text, true, ts, null, { mid, re });
+    record(S.callConv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
     $('chatInput').value = '';
   };
 
@@ -2642,6 +2977,7 @@ function bind() {
     toast('История очищена');
   };
   $('dmForm').onsubmit = (e) => { e.preventDefault(); dmSendText(); };
+  bindMsgUi();
   $('dmAttach').onclick = () => $('dmFile').click();
   $('dmFile').onchange = (e) => { dmSendFiles([...e.target.files]); e.target.value = ''; };
   $('dm').addEventListener('mousedown', (e) => { if (e.target.id === 'dm') closeDm(); });
@@ -3009,6 +3345,9 @@ function onFriendMsg({ id, msg }) {
       return;
     case 'dm':
       if (f) onDmText(id, nick, msg);
+      return;
+    case 'dm-op':
+      if (f) { const conv = getConv(id, nick); loadHistory(conv).then(() => applyOp(conv, msg, 'peer')); }
       return;
     case 'link-offer':
       if (f) onLinkOffer(id, msg);
@@ -3483,14 +3822,16 @@ async function dmSendText() {
   const conv = dmOpen;
   const text = $('dmInput').value.trim();
   if (!conv || !text) return;
+  if (composeSubmitEdit(composers.dm, conv, text)) return;
   $('dmInput').value = '';
   S.nick = $('nick').value.trim() || 'Без имени';
   const ts = Date.now();
   const mid = newMid();
-  const m = chatMsg(conv, S.nick, text, true, ts);
+  const re = composeTakeReply(composers.dm);
+  const m = chatMsg(conv, S.nick, text, true, ts, null, { mid, re });
   m.classList.add('sending');
-  record(conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text });
-  const r = await window.duo.friendsSend(conv.id, { t: 'dm', mid, text, ts, nick: S.nick });
+  record(conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
+  const r = await window.duo.friendsSend(conv.id, { t: 'dm', mid, text, ts, nick: S.nick, re: reOut(re) });
   m.classList.remove('sending');
   if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); }
 }
@@ -3500,8 +3841,10 @@ async function onDmText(id, nick, msg) {
   await loadHistory(conv);
   const text = String(msg.text || '').slice(0, 2000);
   const ts = Number(msg.ts) || Date.now();
-  chatMsg(conv, nick, text, false, ts);
-  record(conv, { mid: String(msg.mid || newMid()).slice(0, 20), ts, who: 'peer', nick, type: 'text', text });
+  const mid = cleanMid(msg.mid) || newMid();
+  const re = reIn(msg.re);
+  chatMsg(conv, nick, text, false, ts, null, { mid, re });
+  record(conv, { mid, ts, who: 'peer', nick, type: 'text', text, re: re || undefined });
   dmNotice(conv, text);
 }
 
@@ -3787,7 +4130,7 @@ function myPerm() {
   const o = settings();
   return { draw: o.ovlDraw !== false, react: !!o.ovlReact, ctl: o.ctlAllow !== false };
 }
-function sendPerm() { send({ t: 'perm', ...myPerm(), vid: 1 }); }
+function sendPerm() { send({ t: 'perm', ...myPerm(), vid: 1, ops: 1 }); }
 
 // где на экране настоящая картинка видео (без чёрных полос)
 function videoRect() {
