@@ -509,3 +509,28 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .ms-row mark { background: rgba(124,92,255,.45); color: inherit; border-radius: 3px; }
 .ms-none { color: var(--muted); font-size: 13px; padding: 4px 8px; }
 .icon-btn.small { font-size: 13px; padding: 2px 6px; }
+
+/* ---------- Узкое и низкое окно: ничего не прячется и не наезжает ---------- */
+.chat { width: clamp(230px, 30vw, 300px); flex-shrink: 0; }
+.view { container-type: size; }
+.people { gap: clamp(14px, 6cqw, 48px); max-width: 100%; }
+.person { min-width: 0; }
+.avatar { width: clamp(56px, min(26cqw, 34cqh), 120px); height: clamp(56px, min(26cqw, 34cqh), 120px); font-size: clamp(22px, min(10cqw, 13cqh), 46px); }
+.pname { font-size: clamp(12px, 3.2cqw, 15px); max-width: 30cqw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.local-preview:not(.solo) { width: clamp(140px, 32cqw, 240px); right: 12px; top: 12px; }
+.controls { gap: 8px; flex-wrap: wrap; row-gap: 8px; }
+.ctl-group { flex-wrap: wrap; }
+@media (max-width: 960px) {
+  .ctl:not(.vol-ctl) span { display: none; }
+  .ctl { padding: 9px 12px; }
+}
+@media (max-width: 760px) {
+  .controls { padding: 8px 10px; }
+  .vol-ctl input[type=range] { width: 70px; }
+  .vol-ctl span { display: none; }
+  .topbar { gap: 8px; padding: 8px 10px; }
+}
+@media (max-height: 560px) {
+  .ctl { padding: 7px 11px; }
+  .chat-head { padding: 8px 12px; }
+}

@@ -1152,6 +1152,7 @@ async function beginShare() {
     $('localScreenWrap').classList.remove('hidden');
     $('btnShare').classList.add('on');
     $('btnShare').querySelector('span').textContent = 'Остановить показ';
+    $('btnShare').title = 'Остановить показ';
     layout();
     startSendStats();
     sound('stream');
@@ -1348,6 +1349,7 @@ function stopShare(silent) {
   $('localScreenWrap').classList.add('hidden');
   $('btnShare').classList.remove('on');
   $('btnShare').querySelector('span').textContent = 'Показать экран';
+  $('btnShare').title = 'Показать экран';
   layout();
   S.localShareName = '';
   refreshClip();
