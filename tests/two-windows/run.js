@@ -1,5 +1,5 @@
-// node tests/two-windows/run.js [рабочая папка] [папка с исходниками] — harness4.js на Windows (без Xvfb).
-// Код приглашения идёт через системный буфер обмена (как у пользователя) — на время теста он перезаписывается.
+﻿// node tests/two-windows/run.js [рабочая папка] [папка с исходниками] — harness4.js на Windows (без Xvfb).
+// Код приглашения идёт через общий файл-«буфер обмена» двух копий (системный буфер пользователя не трогается).
 // Результат — res{A,B}.json: сравнивать с прогоном прошлой версии, а не с нулём (часть пунктов зависит от среды).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -17,7 +17,16 @@ for (const d of [APP, SH, UD + '/A', UD + '/B']) fs.mkdirSync(d, { recursive: tr
 const skip = new Set(['node_modules', 'tests', 'dist', '.git']);
 for (const n of fs.readdirSync(SRC)) if (!skip.has(n)) fs.cpSync(path.join(SRC, n), path.join(APP, n), { recursive: true });
 fs.copyFileSync(path.join(HERE, 'harness4.js'), path.join(APP, 'harness4.js'));
-fs.writeFileSync(path.join(APP, 'package.json'), JSON.stringify({ name: 'alloconnect-it', version: '1.10.0', main: 'harness4.js' }));
+// общий «буфер обмена» двух копий — файл в SHARED, системный буфер пользователя не трогаем
+fs.writeFileSync(path.join(APP, 'harness-win.js'), `const { ipcMain } = require('electron');
+const fs = require('fs'), path = require('path');
+require('./harness4.js');
+const F = path.join(process.env.SHARED, 'clipboard.txt');
+for (const ch of ['clip-write', 'clip-read']) ipcMain.removeHandler(ch);
+ipcMain.handle('clip-write', (_e, t) => { fs.writeFileSync(F, String(t)); return true; });
+ipcMain.handle('clip-read', () => { try { return fs.readFileSync(F, 'utf-8'); } catch { return ''; } });
+`);
+fs.writeFileSync(path.join(APP, 'package.json'), JSON.stringify({ name: 'alloconnect-it', version: '1.10.0', main: 'harness-win.js' }));
 const E = require(path.join(ELECTRON_FROM, 'node_modules', 'electron'));
 
 const stun = spawn(process.execPath, [path.join(HERE, '..', 'stun', 'fake-stun.js'), '3478,3480,3482', path.join(SH, 'stuncounts.json')], { stdio: 'ignore' });
