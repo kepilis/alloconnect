@@ -7,12 +7,14 @@
 ## Принципы (обязательно соблюдать)
 - Никаких своих серверов: соединение напрямую (WebRTC), сигналинг — кодами через мессенджер или через свой UDP-канал друзей.
 - В логах нет IP-адресов, переписки и кодов приглашения.
-- GitHub (github.com/kepilis/alloconnect) — только для кода и раздачи обновлений (по согласию пользователя).
-  Ветка `main` — исходники. Ветка `updates` — файлы автообновления: app.asar, alloconnect-helper.exe и
-  подписанный update.json. Программа читает их с raw.githubusercontent.com (`GH_REPO` в main.js) и ставит
-  только после проверки подписи Ed25519. Раздел Releases из облачной сессии Claude создавать нельзя.
-  Полный zip (>100 МБ) в репозиторий не кладётся — его пользователь получает в чате.
-  Секретный ключ подписи не класть в репозиторий/исходники.
+- GitHub (github.com/kepilis/alloconnect) — код, файлы автообновления и релизы (по согласию пользователя).
+  Ветка `main` — исходники. Ветка `updates` — файлы автообновления: app.asar, alloconnect-helper.exe,
+  подписанный update.json и README. Программа читает их с raw.githubusercontent.com (`GH_REPO` в main.js)
+  и ставит только после проверки подписи Ed25519 (раздел Releases — запасной путь для проверки).
+- Секретный ключ подписи обновлений (`alloconnect-update-private.pem`) — только у пользователя, в репозиторий и
+  в чат не попадает. Подписывает пользователь сам (см. «Выпуск версии») или указывает путь к ключу.
+- В коммитах и релизах: подпись `Co-Authored-By: Claude …` можно, ссылку на сессию/чат Claude — НИКОГДА.
+- README — только короткий список возможностей последней версии, нейтрально, без имён и истории.
 - Совместимость протокола между версиями и платформами: коды `ALOI.`/`ALOA.`, магия пакетов `ALC1`,
   HKDF info `'alocalls friends v1'` — НЕ менять (иначе старые друзья перестанут соединяться).
 - Перед выдачей сборки — автотесты двух экземпляров и перепроверка собранного архива.
@@ -73,3 +75,23 @@ Electron 44 + electron-builder (zip), иконка/версия вшиваютс
 ## Как проверять
 Две копии на одном ПК: переменная окружения `ALOCALLS_USERDATA` задаёт отдельную папку данных
 (второй экземпляр тогда не блокируется). `ALOCALLS_FAKE_HELPER` — подставной помощник для тестов.
+Готовые автотесты (запускались на Linux под Xvfb) — в `tests/`, описание в `tests/README.md`.
+
+## Выпуск версии (Windows)
+1. Поднять `version` в package.json (и строку «Текущая версия» здесь). Если менялся `native/alloconnect-helper.cpp` —
+   пересобрать exe командой из README (zig), иначе берётся готовый `native/alloconnect-helper.exe`.
+2. `npm install` (один раз), `npm run dist` → `dist/win-unpacked` и zip.
+3. Подпись: `node build/sign-update.js dist/win-unpacked/resources <путь к alloconnect-update-private.pem>`
+   (можно с `NOTES="что нового"`). Скрипт кладёт `update.json` в resources и печатает открытый ключ —
+   он должен совпасть с `build/update-public.pem` / `UPDATE_PUBKEY` в main.js.
+   Электрон-версия в manifest берётся из package-lock; если Electron обновлялся — такая версия ставится только вручную.
+4. Пересобрать zip уже С `update.json`: electron-builder упаковывает zip до подписи. Содержимое `dist/win-unpacked`
+   (не саму папку) запаковать в `dist/alloconnect-X.Y.Z-win.zip`.
+5. Проверка: распаковать zip, сверить подпись update.json открытым ключом и sha256 файлов; извлечь app.asar
+   (`npx @electron/asar extract`) и сравнить с исходниками; прогнать тесты.
+6. Публикация:
+   - `main`: закоммитить исходники, запушить;
+   - `updates`: заменить app.asar, alloconnect-helper.exe, update.json (из `dist/win-unpacked/resources`),
+     поправить версию в README ветки, запушить — с этого момента установленные копии 1.13.1+ обновятся сами;
+   - релиз: `gh release create vX.Y.Z dist/alloconnect-X.Y.Z-win.zip --target main --title "alloconnect X.Y.Z" --notes "…"`.
+7. Пользователю — коротко что нового.
