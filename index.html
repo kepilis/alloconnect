@@ -182,6 +182,8 @@
       <div class="chat-head">Чат группы</div>
       <div id="gMessages" class="messages"></div>
       <form id="gChatForm" class="chat-form">
+        <button type="button" id="gAttach" class="btn attach" title="Отправить файл всем (или Ctrl+V / перетащи в окно)">📎</button>
+        <input type="file" id="gFileInput" multiple class="hidden" />
         <input id="gChatInput" placeholder="Сообщение всем" autocomplete="off" maxlength="2000" />
         <button class="btn primary" type="submit">➤</button>
       </form>
@@ -194,6 +196,7 @@
       <button id="gNs" class="ctl ns" title="Шумодав (Ctrl+Shift+N)"><b>✨</b><span>Шумодав</span></button>
     </div>
     <div class="ctl-group">
+      <button id="gSoundpad" class="ctl" title="Саундпад — слышат все"><b>🎵</b><span>Саундпад</span></button>
       <button id="gShare" class="ctl share" title="Показать экран всем"><b>🖥</b><span>Показать экран</span></button>
       <button id="gLeave" class="ctl danger" title="Выйти из группы"><b>✕</b><span>Выйти</span></button>
     </div>

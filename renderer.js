@@ -1831,7 +1831,7 @@ function regMsg(conv, el, e) {
     const q = document.createElement('div');
     q.className = 'quote';
     const b = document.createElement('b');
-    b.textContent = e.re.by === 'me' ? (S.nick || 'Я') : conv.nick;
+    b.textContent = e.re.by === 'me' ? (S.nick || 'Я') : (conv.nickOf?.(e.re.by) || conv.nick);
     q.append(b, document.createTextNode(' ' + (e.re.text || '…')));
     q.title = 'Показать сообщение';
     q.onclick = (ev) => { ev.stopPropagation(); jumpToMsg(conv, e.re.mid); };
@@ -1871,8 +1871,8 @@ function renderReacts(conv, el, e) {
     const c = document.createElement('button');
     c.type = 'button';
     c.className = 'react-chip' + (whos.includes('me') ? ' mine' : '');
-    c.textContent = v + (whos.length > 1 ? ' 2' : '');
-    c.title = whos.map((w) => (w === 'me' ? 'ты' : conv.nick)).join(', ');
+    c.textContent = v + (whos.length > 1 ? ' ' + whos.length : '');
+    c.title = whos.map((w) => (w === 'me' ? 'ты' : (conv.nickOf?.(w) || conv.nick))).join(', ');
     c.onclick = (ev) => { ev.stopPropagation(); sendMsgOp(conv, { op: 'react', ref: e.mid, e: r.me === v ? '' : v }); };
     row.appendChild(c);
   }
@@ -1880,6 +1880,7 @@ function renderReacts(conv, el, e) {
 }
 
 function canOps(conv) {
+  if (G.active && G.conv === conv) return true;
   if (S.inCall && S.callConv === conv) return !!S.friendPerm?.ops;
   const f = friendsList.find((x) => x.id === conv.id);
   return !f?.ver || verCmpR(f.ver, '1.14.0') >= 0;
@@ -1890,7 +1891,8 @@ async function sendMsgOp(conv, raw) {
   if (!op || !conv) return false;
   if (!canOps(conv)) { toast(`У ${conv.nick} старая версия alloconnect — это заработает, когда он обновится`); return false; }
   let ok = false;
-  if (S.inCall && S.callConv === conv && S.dc?.readyState === 'open') { send({ t: 'chat-op', ...op }); ok = true; }
+  if (G.active && G.conv === conv) { grpSendAll({ t: 'chat-op', ...op }); ok = true; }
+  else if (S.inCall && S.callConv === conv && S.dc?.readyState === 'open') { send({ t: 'chat-op', ...op }); ok = true; }
   else if (conv.id) { const r = await window.duo.friendsSend(conv.id, { t: 'dm-op', ...op }).catch(() => ({ ok: false })); ok = !!r.ok; }
   if (!ok) { toast(`Не доставлено — ${conv.nick} не в сети`); return false; }
   applyOp(conv, op, 'me');
@@ -1939,8 +1941,9 @@ function applyOp(conv, raw, by) {
 const composers = {
   call: { input: 'chatInput', form: 'chatForm', conv: () => S.callConv, mode: null, item: null, bar: null },
   dm: { input: 'dmInput', form: 'dmForm', conv: () => dmOpen, mode: null, item: null, bar: null },
+  grp: { input: 'gChatInput', form: 'gChatForm', conv: () => G.conv, mode: null, item: null, bar: null },
 };
-const composerFor = (el) => (el.closest('#dmMessages') ? composers.dm : composers.call);
+const composerFor = (el) => (el.closest('#dmMessages') ? composers.dm : el.closest('#gMessages') ? composers.grp : composers.call);
 
 function setCompose(cp, mode, item) {
   cp.mode = mode;
@@ -1956,7 +1959,7 @@ function setCompose(cp, mode, item) {
   if (!mode) return;
   const conv = cp.conv();
   cp.bar.querySelector('.cb-ico').textContent = mode === 'edit' ? '✏' : '↩';
-  cp.bar.querySelector('b').textContent = mode === 'edit' ? 'Редактирование' : 'Ответ ' + (item.e.who === 'me' ? 'себе' : conv?.nick || '');
+  cp.bar.querySelector('b').textContent = mode === 'edit' ? 'Редактирование' : 'Ответ ' + (item.e.who === 'me' ? 'себе' : conv?.nickOf?.(item.e.who) || conv?.nick || '');
   cp.bar.querySelector('small').textContent = snip(item.e.type === 'file' ? '📎 ' + item.e.text : item.e.text, 80);
   const inp = $(cp.input);
   if (mode === 'edit') inp.value = item.e.text;
@@ -2016,7 +2019,7 @@ function bindMsgUi() {
     if (y < hr.top) y = r.bottom + 2;
     Object.assign(bar.style, { left: x + 'px', top: y + 'px' });
   };
-  for (const id of ['messages', 'dmMessages']) {
+  for (const id of ['messages', 'dmMessages', 'gMessages']) {
     const host = $(id);
     host.addEventListener('mouseover', (e) => {
       const el = e.target.closest('.msg[data-mid]');
@@ -2267,7 +2270,7 @@ class FileChan {
       if (!f) continue;
       if (f.size > MAX_FILE) { toast(`${f.name}: больше 2 ГБ — не отправлю`); continue; }
       const name = f.name || `картинка-${Date.now()}.${((f.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
-      const meta = { fid: crypto.getRandomValues(new Uint32Array(1))[0], name, size: f.size, mime: f.type || 'application/octet-stream', p };
+      const meta = { fid: extra.fid ?? crypto.getRandomValues(new Uint32Array(1))[0], name, size: f.size, mime: f.type || 'application/octet-stream', p };
       if (extra.pl) meta.pl = extra.pl;
       if (p === 'screenvid') { meta.vol = extra.vol; meta.snd = extra.snd ? 1 : 0; }
       meta.kind = fileKind(meta.mime);
@@ -2375,6 +2378,7 @@ class FileChan {
 
 // файлы в звонке
 function queueFiles(list, p = 'chat', extra) {
+  if (G.active) { grpQueueFiles(list, p); return; }
   if (!S.connected || !S.fileChan) { toast('Файлы можно отправить только в звонке'); return; }
   S.fileChan.queue(list, p, extra);
 }
@@ -2505,6 +2509,7 @@ function spStopAll() {
 let spHighBr = false;
 function spBitrate() {
   const want = spPlaying.size > 0;
+  if (G.active && want !== spHighBr) { spHighBr = want; grpMicBitrate(want ? 128_000 : 64_000); return; }
   if (want === spHighBr || !S.tx) return;
   spHighBr = want;
   tuneSender(S.tx.mic.sender, { audio: want ? 128_000 : 64_000 });
@@ -2899,14 +2904,14 @@ function bind() {
   $('fileInput').onchange = (e) => { queueFiles([...e.target.files]); e.target.value = ''; };
   document.addEventListener('paste', (e) => {
     const dmVisible = !$('dm').classList.contains('hidden');
-    if (!S.inCall && !dmVisible) return;
+    if (!S.inCall && !G.active && !dmVisible) return;
     const files = filesFromEvent(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
     if (dmVisible) dmSendFiles(files); else queueFiles(files);
   });
   let dragDepth = 0;
-  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((S.inCall || !$('dm').classList.contains('hidden')) && [...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((S.inCall || G.active || !$('dm').classList.contains('hidden')) && [...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
   document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropOverlay').classList.add('hidden'); });
   const overStreamForImage = (e) => S.inCall && S.friendPerm?.react && !$('remoteScreenWrap').classList.contains('hidden') &&
     !!e.target.closest?.('#remoteScreenWrap') && [...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type)));
@@ -2926,7 +2931,7 @@ function bind() {
     }
     if (e.target.closest?.('#soundpad')) { $('soundpad').classList.remove('drag'); spAddFiles(filesFromEvent(e.dataTransfer)); return; }
     if (!$('dm').classList.contains('hidden')) { dmSendFiles(filesFromEvent(e.dataTransfer)); return; }
-    if (S.inCall) queueFiles(filesFromEvent(e.dataTransfer));
+    if (S.inCall || G.active) queueFiles(filesFromEvent(e.dataTransfer));
   });
   $('lightbox').onclick = () => $('lightbox').classList.add('hidden');
   spBind();
@@ -3067,7 +3072,7 @@ function bind() {
     if (what === 'leave') { if (S.inCall) leaveCall(); return; }
     if (what === 'ctl-stop') { ctlEnd('ты забрал управление (Ctrl+Shift+X)'); return; }
     if (what === 'clip') { saveClip(); return; }
-    if (what.startsWith('sound:')) { if (S.inCall) spPlay(what.slice(6)); return; }
+    if (what.startsWith('sound:')) { if (S.inCall || G.active) spPlay(what.slice(6)); return; }
     if (!S.inCall) return;
     if (what === 'mute') $('btnMute').click();
     if (what === 'deafen') setDeafened(!S.deafened);
@@ -4077,11 +4082,11 @@ const SOUND_MIME = { mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', opus
 async function spShare(id) {
   const s = spList.find((x) => x.id === id);
   if (!s) return;
-  if (!S.connected || !S.fileChan) { toast('Поделиться звуком можно в звонке'); return; }
+  if (!G.active && (!S.connected || !S.fileChan)) { toast('Поделиться звуком можно в звонке'); return; }
   const bytes = await window.duo.soundsRead(id);
   const ext = (/\.(\w+)$/.exec(s.file || '') || [, 'mp3'])[1].toLowerCase();
   queueFiles([new File([bytesBlob(bytes, SOUND_MIME[ext] || 'audio/mpeg')], `${s.name}.${ext}`, { type: SOUND_MIME[ext] || 'audio/mpeg' })], 'sound');
-  toast(`«${s.name}» отправлен ${S.friendNick} — он сможет добавить его в свой саундпад`);
+  toast(`«${s.name}» отправлен ${G.active ? 'всем в группе' : S.friendNick} — можно добавить его в свой саундпад`);
 }
 
 /* =========================================================

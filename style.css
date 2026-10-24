@@ -545,7 +545,6 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 #group { flex-direction: column; }
 .friends-head { display: flex; align-items: center; justify-content: space-between; }
 .grp-btn { text-transform: none; letter-spacing: 0; }
-.grp-mode #sysAudioRow { display: none; }
 .gpick-list { max-height: 50vh; overflow-y: auto; margin: 6px 0; }
 .gview { padding: 0; align-items: stretch; }
 .ggrid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; padding: 16px; align-content: center; min-width: 0; overflow: auto; }
@@ -561,8 +560,11 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .gtile.sharing .avatar { display: none; }
 .gtile .gname { position: relative; z-index: 1; font-weight: 600; max-width: 92%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gtile.sharing .gname { position: absolute; left: 8px; bottom: 8px; background: rgba(0,0,0,.6); color: #fff; padding: 2px 8px; border-radius: 8px; font-size: 12px; }
-.gtile .gvol { position: absolute; right: 8px; top: 8px; width: 90px; z-index: 2; opacity: 0; transition: opacity .15s; }
-.gtile:hover .gvol { opacity: 1; }
+.gvols { position: absolute; right: 8px; top: 8px; z-index: 2; display: flex; flex-direction: column; gap: 4px; opacity: 0; transition: opacity .15s; background: rgba(0,0,0,.55); border-radius: 8px; padding: 4px 6px; color: #fff; font-size: 12px; }
+.gvols label { display: flex; align-items: center; gap: 4px; }
+.gvols input { width: 80px; }
+.gtile:hover .gvols { opacity: 1; }
+.gtile:not(.sharing) .gv-gsvol { display: none; }
 .ggrid.focus { display: flex; flex-wrap: wrap; align-content: flex-start; }
 .ggrid.focus .gtile { flex: 0 0 150px; }
 .ggrid.focus .gtile .avatar { width: 44px; height: 44px; font-size: 18px; }
