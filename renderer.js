@@ -1797,7 +1797,7 @@ function markUndelivered(m) {
   m.querySelector('.meta').appendChild(s);
 }
 
-function sysMsg(text, conv = S.callConv) {
+function sysMsg(text, conv = typeof G !== 'undefined' && G.active ? G.conv : S.callConv) {
   if (!conv) return;
   const m = document.createElement('div');
   m.className = 'msg sys';
@@ -4276,6 +4276,7 @@ function updateToolbar() {
   $('inputLayer').classList.toggle('active', !!tools.mode || controlling);
   $('remoteScreenWrap').classList.toggle('ctl-active', controlling);
   $('inputLayer').dataset.mode = controlling ? 'ctl' : (tools.mode || '');
+  if (typeof G !== 'undefined' && G.active) grpUpdateTools(); // group.js грузится позже — при первом вызове G ещё нет
 }
 
 /* ---------- Локальный слой у зрителя (оверлей друга исключён из захвата, рисуем у себя) ---------- */
@@ -4684,22 +4685,27 @@ const CV = { state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: n
 const CS = { on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null };
 
 function ctlSend(a, fast) {
-  const ch = fast ? S.cdu : S.cdc;
+  // в группе: ввод (массивы) — тому, кем я управляю; ответы (объекты) — тому, кто управляет мной
+  const gp = G.active ? G.peers.get(Array.isArray(a) ? CV.peer : CS.peer) : null;
+  const ch = G.active ? (fast ? gp?.cdu : gp?.cdc) : (fast ? S.cdu : S.cdc);
   try { if (ch?.readyState === 'open') ch.send(JSON.stringify(a)); } catch { /* */ }
 }
+// служебное про управление: 'v' — тому, кем управляю, 's' — тому, кто управляет мной
+function ctlSig(obj, side) { if (G.active) grpSend(G.peers.get(side === 'v' ? CV.peer : CS.peer), obj); else send(obj); }
+function ctlNick(side) { return G.active ? grpNick(side === 'v' ? CV.peer : CS.peer) : S.friendNick; }
 
 /* ---------- Зритель ---------- */
 function ctlRequest() {
-  if (!S.connected || $('remoteScreenWrap').classList.contains('hidden')) return;
+  if (G.active ? !CV.peer : (!S.connected || $('remoteScreenWrap').classList.contains('hidden'))) return;
   if (CV.state === 'on') { ctlViewStop(true); toast('Управление отдано'); return; }
   if (CV.state === 'req') return;
   CV.state = 'req';
   tools.mode = null;
-  send({ t: 'ctl-req', mouse: true, kb: true, pad: true });
+  ctlSig({ t: 'ctl-req', mouse: true, kb: true, pad: true }, 'v');
   updateToolbar();
-  toast(`Запрос отправлен — ${S.friendNick} должен нажать «Разрешить»`);
+  toast(`Запрос отправлен — ${ctlNick('v')} должен нажать «Разрешить»`);
   clearTimeout(CV.reqTimer);
-  CV.reqTimer = setTimeout(() => { if (CV.state === 'req') { CV.state = 'off'; updateToolbar(); toast(`${S.friendNick} не ответил на запрос`); } }, 35000);
+  CV.reqTimer = setTimeout(() => { if (CV.state === 'req') { const n = ctlNick('v'); CV.state = 'off'; if (G.active) CV.peer = null; updateToolbar(); toast(`${n} не ответил на запрос`); } }, 35000);
 }
 
 function ctlViewStart(perm) {
@@ -4707,10 +4713,10 @@ function ctlViewStart(perm) {
   CV.state = 'on';
   CV.perm = { mouse: !!perm.mouse, kb: !!perm.kb, pad: !!perm.pad };
   tools.mode = null;
-  send({ t: 'ptr-off' });
+  if (!G.active) send({ t: 'ptr-off' });
   const what = [CV.perm.mouse && 'мышь', CV.perm.kb && 'клавиатура', CV.perm.pad && 'геймпад'].filter(Boolean).join(', ');
   toast(`Управление разрешено: ${what}. Кликни по экрану друга`);
-  sysMsg(`Ты управляешь компьютером ${S.friendNick} (${what})`);
+  sysMsg(`Ты управляешь компьютером ${ctlNick('v')} (${what})`);
   L('control', { view: 'start', perm: CV.perm });
   CV.hbTimer = setInterval(() => ctlSend(['hb']), 1000);
   if (CV.perm.pad) { CV.hadPad = false; CV.padTimer = setInterval(padPoll, 8); }
@@ -4724,8 +4730,9 @@ function ctlViewStop(notify, why) {
   for (const code of CV.keys) ctlSend(['k', code, 0]);
   CV.keys.clear();
   if (CV.hadPad) ctlSend(['p', 0, 0, 0, 0, 0, 0, 0]);
-  if (notify && was === 'on') send({ t: 'ctl-stop' });
+  if (notify && was === 'on') ctlSig({ t: 'ctl-stop' }, 'v');
   CV.state = 'off';
+  if (G.active) CV.peer = null;
   clearInterval(CV.hbTimer); clearInterval(CV.padTimer); clearTimeout(CV.reqTimer);
   CV.hbTimer = CV.padTimer = null;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -4782,7 +4789,7 @@ function setRumble(l, s) {
 
 function isTyping() {
   const a = document.activeElement;
-  return !!a && a !== document.body && a.id !== 'inputLayer' && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+  return !!a && a !== document.body && a.id !== 'inputLayer' && !a.classList?.contains('ginput') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
 }
 
 function bindLiveTools() {
@@ -4860,7 +4867,7 @@ function bindLiveTools() {
     }
     if (placer) return;
     if (CV.state !== 'on' || !CV.perm.kb || !e.code || isTyping()) return;
-    if (!S.inCall || $('remoteScreenWrap').classList.contains('hidden')) return;
+    if (G.active ? !(CV.peer && G.focus === CV.peer) : (!S.inCall || $('remoteScreenWrap').classList.contains('hidden'))) return;
     e.preventDefault();
     e.stopPropagation();
     CV.keys.add(e.code);
@@ -4905,19 +4912,20 @@ function bindLiveTools() {
 }
 
 /* ---------- Стримящий ---------- */
+const ctlSrc = () => (G.active ? G.share?.srcId || null : (S.localScreen && S.shareCtx?.srcId) || null);
 function onCtlReq(d) {
-  if (!S.localScreen || !S.shareCtx) { send({ t: 'ctl-deny', why: 'сейчас ничего не показывает' }); return; }
-  if (settings().ctlAllow === false) { send({ t: 'ctl-deny', why: 'выключил запросы на управление' }); return; }
-  if (CS.on) { send({ t: 'ctl-grant', ...CS.perm }); return; }
+  if (!ctlSrc()) { ctlSig({ t: 'ctl-deny', why: 'сейчас ничего не показывает' }, 's'); return; }
+  if (settings().ctlAllow === false) { ctlSig({ t: 'ctl-deny', why: 'выключил запросы на управление' }, 's'); return; }
+  if (CS.on) { ctlSig({ t: 'ctl-grant', ...CS.perm }, 's'); return; }
   CS.req = d;
-  $('ctlTitle').textContent = `${S.friendNick} просит управление`;
+  $('ctlTitle').textContent = `${ctlNick('s')} просит управление`;
   $('ctlMouse').checked = d.mouse !== false;
   $('ctlKb').checked = d.kb !== false;
   $('ctlPad').checked = d.pad !== false;
   $('ctlModal').classList.remove('hidden');
   sound('stream');
   window.duo.focusWindow();
-  window.duo.notify({ title: `${S.friendNick} просит управление`, body: 'Открой alloconnect, чтобы разрешить или отказать', kind: 'call' });
+  window.duo.notify({ title: `${ctlNick('s')} просит управление`, body: 'Открой alloconnect, чтобы разрешить или отказать', kind: 'call' });
   clearTimeout(CS.reqTimer);
   CS.reqTimer = setTimeout(() => { if (!$('ctlModal').classList.contains('hidden')) ctlDeny(); }, 30000);
   L('control', { request: true });
@@ -4926,8 +4934,9 @@ function onCtlReq(d) {
 function ctlDeny() {
   clearTimeout(CS.reqTimer);
   $('ctlModal').classList.add('hidden');
-  send({ t: 'ctl-deny', why: 'отказал' });
+  ctlSig({ t: 'ctl-deny', why: 'отказал' }, 's');
   CS.req = null;
+  if (G.active && !CS.on) CS.peer = null;
 }
 
 async function ctlGrant() {
@@ -4935,18 +4944,19 @@ async function ctlGrant() {
   $('ctlModal').classList.add('hidden');
   const perm = { mouse: $('ctlMouse').checked, kb: $('ctlKb').checked, pad: $('ctlPad').checked };
   if (!perm.mouse && !perm.kb && !perm.pad) { ctlDeny(); return; }
-  if (!S.localScreen || !S.shareCtx) { send({ t: 'ctl-deny', why: 'показ уже закончился' }); return; }
-  const r = await window.duo.inputStart(S.shareCtx.srcId, perm);
-  if (!r.ok) { toast('Управление не запустилось: ' + r.error); send({ t: 'ctl-deny', why: 'не запустилось у него' }); return; }
+  if (!ctlSrc()) { ctlSig({ t: 'ctl-deny', why: 'показ уже закончился' }, 's'); return; }
+  const r = await window.duo.inputStart(ctlSrc(), perm);
+  if (!r.ok) { toast('Управление не запустилось: ' + r.error); ctlSig({ t: 'ctl-deny', why: 'не запустилось у него' }, 's'); return; }
   CS.on = true;
   CS.perm = perm;
   CS.lastMsg = Date.now();
   CS.released = true;
-  send({ t: 'ctl-grant', ...perm });
-  window.duo.ovlMsg({ t: 'pin', on: true, text: `🎮 ${S.friendNick} управляет` });
+  ctlSig({ t: 'ctl-grant', ...perm }, 's');
+  window.duo.ovlMsg({ t: 'pin', on: true, text: `🎮 ${ctlNick('s')} управляет` });
   $('ctlBadge').classList.remove('hidden');
-  $('ctlBadgeText').textContent = `🎮 ${S.friendNick} управляет`;
-  sysMsg(`${S.friendNick} управляет твоим компьютером. Забрать — Ctrl+Shift+X или кнопка на превью`);
+  $('ctlBadgeText').textContent = `🎮 ${ctlNick('s')} управляет`;
+  sysMsg(`${ctlNick('s')} управляет твоим компьютером. Забрать — Ctrl+Shift+X или кнопка на превью`);
+  if (G.active) grpRender();
   // друг пропал (нет сигналов 4 с) — отпускаем все зажатые клавиши
   CS.wd = setInterval(() => { if (CS.on && !CS.released && Date.now() - CS.lastMsg > 4000) { window.duo.inputCmd('rel'); CS.released = true; } }, 1000);
   L('control', { granted: perm, admin: r.admin });
@@ -4957,10 +4967,11 @@ function ctlEnd(why, notify = true) {
   CS.on = false;
   clearInterval(CS.wd);
   window.duo.inputStop();
-  if (notify) send({ t: 'ctl-end', why });
+  if (notify) ctlSig({ t: 'ctl-end', why }, 's');
   window.duo.ovlMsg({ t: 'pin', on: false });
   $('ctlBadge').classList.add('hidden');
   sysMsg(`Управление закончено${why ? ': ' + why : ''}`);
+  if (G.active) { CS.peer = null; grpRender(); }
   L('control', { ended: why });
 }
 

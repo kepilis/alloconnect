@@ -182,6 +182,14 @@ app.whenReady().then(async () => {
           await grpBeginShare(); return { src: true, on: !!G.share, audio: !!G.share?.atrack, helper: !!pcmNode }; })()`);
         put('realD');
         await take('realSeenA'); await take('realSeenB'); await take('realSeenC');
+        // управление: A просит — разрешаю (мышь и клавиатура, без геймпада)
+        res.ctlModal = await waitFor(W, `!document.getElementById('ctlModal').classList.contains('hidden') && CS.peer === ${J(ids.A)}`, 20000);
+        await js(`document.getElementById('ctlPad').checked = false; document.getElementById('btnCtlAllow').click(); true`);
+        res.ctlOn = await waitFor(W, `CS.on && CS.peer === ${J(ids.A)} && !G.tiles.get(myIdent.id).querySelector('.gctl').classList.contains('hidden')`, 15000);
+        put('ctlOnD');
+        res.ctlInput = await waitFor(W, `Date.now() - CS.lastMsg < 3000 && CS.released === false`, 15000);
+        await take('ctlStopA');
+        res.ctlOff = await waitFor(W, `!CS.on && !CS.peer`, 10000);
         await js(`grpStopShare(); true`);
       } else {
         await take('realD');
@@ -189,6 +197,24 @@ app.whenReady().then(async () => {
         await sleep(2500);
         res.realAudioIn = await js(`(async () => { const p = G.peers.get(${J(ids.D)}); let b = 0; (await p.pc.getStats(p.satx.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; })()`);
         put('realSeen' + ROLE);
+        if (ROLE === 'A') {
+          await waitFor(W, `!!G.peers.get(${J(ids.D)})?.perm?.ctl`, 10000);
+          await js(`G.focus = ${J(ids.D)}; grpRender(); grpCtlClick(${J(ids.D)}); true`);
+          res.ctlViewOn = await waitFor(W, `CV.state === 'on' && CV.peer === ${J(ids.D)} && G.tiles.get(${J(ids.D)}).classList.contains('ctl-active')`, 30000);
+          await take('ctlOnD');
+          for (let i = 0; i < 5; i++) { await js(`ctlSend(['r', 0, 0], true); true`); await sleep(300); } // сдвиг на 0 — курсор на месте
+          put('ctlBusyA');
+          await take('ctlDeniedC');
+          await js(`grpCtlClick(${J(ids.D)}); true`); // отдать управление
+          res.ctlViewOff = await waitFor(W, `CV.state === 'off' && !CV.peer`, 10000);
+          put('ctlStopA');
+        }
+        if (ROLE === 'C') {
+          await take('ctlBusyA');
+          await js(`G.focus = ${J(ids.D)}; grpRender(); grpCtlClick(${J(ids.D)}); true`);
+          res.ctlDenied = await waitFor(W, `CV.state === 'off' && !CV.peer`, 15000);
+          put('ctlDeniedC');
+        }
       }
     });
     await sync('c7b', ALL);
@@ -236,7 +262,7 @@ app.whenReady().then(async () => {
     await sync('c12', ALL);
 
     // 11. самозванец: у D «ломается» ключ, B переподключается к нему — B должен его отвергнуть
-    if (ROLE === 'D') { await js(`grpOnCh = async (p) => grpSend(p, { t: 'proof', mac: 'AAAA' }); true`); put('badD'); }
+    if (ROLE === 'D') { await js(`window.__okCh = grpOnCh; grpOnCh = async (p) => grpSend(p, { t: 'proof', mac: 'AAAA' }); true`); put('badD'); }
     if (ROLE === 'B') {
       await take('badD');
       await js(`G.peers.get(${J(ids.D)}).pc.close(); true`);
@@ -244,6 +270,21 @@ app.whenReady().then(async () => {
       res.othersStay = await js(`${nConnected} === 2`);
     }
     await sync('c13', ALL);
+    await js(`grpLeave(); true`).catch(() => {});
+    if (ROLE === 'D') await js(`grpOnCh = window.__okCh; true`); // снова честный
+    await sleep(1500);
+    await sync('c14', ALL);
+
+    // 12. встречная сборка: A и B одновременно собирают ту же сохранённую группу — половины соединяются
+    if (ROLE === 'A' || ROLE === 'B') await js(`grpCallSaved(grpSaved()[0].gid); true`);
+    else {
+      res.gotInvite3 = await waitFor(W, `!!G.invite`, 60000);
+      await sleep(500);
+      await js(`grpAcceptInvite(); true`);
+    }
+    res.merged = await waitFor(W, `${nConnected} === 3`, 90000);
+    res.mergedGid = await js(`G.gid === grpSaved()[0]?.gid`);
+    await sync('c15', ALL);
     await js(`grpLeave(); true`).catch(() => {});
     await sleep(1000);
   } catch (e) { res.exception = String(e && e.stack || e); }

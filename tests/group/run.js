@@ -55,6 +55,9 @@ const R = (role) => { try { return JSON.parse(fs.readFileSync(path.join(SH, `res
   t('A и B видят, что C выключил микрофон', a.seeMuteC && b.seeMuteC);
   t('B (не создатель) позвал D — все четверо соединены', [a, b, c, d].every((r) => r.conn4) && d.gotInvite, [a, b, c, d].map((r) => r.conn4));
   t('D показал настоящий экран со звуком — видят все', d.realShare?.on && d.realShare.audio && abc.every((r) => r.seeRealD && r.realAudioIn > 1000), [d.realShare, d.realError, abc.map((r) => [r.seeRealD, r.realAudioIn])]);
+  t('управление: A попросил у D, D разрешил — ввод доходит', d.ctlModal && d.ctlOn && a.ctlViewOn && d.ctlInput, [d.ctlModal, d.ctlOn, a.ctlViewOn, d.ctlInput, d.realError, a.realError]);
+  t('C не получил управление, пока управляет A', c.ctlDenied, [c.ctlDenied, c.realError]);
+  t('A отдал управление — у D всё выключилось', a.ctlViewOff && d.ctlOff, [a.ctlViewOff, d.ctlOff]);
   t('обрыв B–C: переподключились сами', b.reconnected && c.reconnected && b.backMsg && c.backMsg, [b.reconnected, c.reconnected, b.backMsg, c.backMsg]);
   t('создатель A ушёл — B, C, D продолжают', a.leftOk && b.afterHostLeft && c.afterHostLeft && d.afterHostLeft, [a.leftOk, b.afterHostLeft, c.afterHostLeft, d.afterHostLeft]);
   t('C ушёл — B и D вдвоём', b.lastTwo && d.lastTwo);
@@ -62,6 +65,7 @@ const R = (role) => { try { return JSON.parse(fs.readFileSync(path.join(SH, `res
   t('B собрал группу снова, A позвал C — все четверо', [a, b, c, d].every((r) => r.conn4again && r.sameGid), [a, b, c, d].map((r) => [r.conn4again, r.sameGid]));
   t('история чата группы на месте', [a, b, c].every((r) => /edited by A/.test(r.history || '') && /reply from C/.test(r.history || '')), [a, b, c].map((r) => (r.history || '').slice(0, 300)));
   t('самозванец отвергнут, остальные на связи', b.rejectedD && b.othersStay, [b.rejectedD, b.othersStay]);
+  t('A и B собрали группу одновременно — половины соединились', [a, b, c, d].every((r) => r.merged && r.mergedGid), [a, b, c, d].map((r) => [r.merged, r.mergedGid]));
   const errs = ROLES.flatMap((r) => (R(r).errors || []).map((e) => `${r}: ${e}`));
   if (errs.length) console.log('Ошибки в консоли окна:\n  ' + errs.slice(0, 15).join('\n  '));
   console.log(`${ok} ok, ${bad} fail · ${T}`);

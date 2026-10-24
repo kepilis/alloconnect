@@ -260,6 +260,17 @@ function grpMakePeer(id, pid, role, cfg) {
     chatIn: (conv, meta) => { grpFixWho(fmid(meta.fid), id); sound('msg'); if (!document.hasFocus()) window.duo?.attention(); },
     avatar: (b, m) => { if (isFriend(id)) onAvatarFile(id, b, m).then(() => grpPaintAvatar(id)); },
   });
+  p.cdc = pc.createDataChannel('ctl', { negotiated: true, id: 2, ordered: true });
+  p.cdu = pc.createDataChannel('ctlu', { negotiated: true, id: 3, ordered: false, maxRetransmits: 0 });
+  for (const ch of [p.cdc, p.cdu]) {
+    ch.onmessage = (e) => {
+      if (!p.connected || p.closed) return;
+      let a;
+      try { a = JSON.parse(e.data); } catch { return; }
+      // ввод принимаю только от того, кому разрешил; ответы (вибрация, подсказки) — только от того, кем управляю
+      if (Array.isArray(a) ? CS.on && CS.peer === p.id : CV.peer === p.id) onCtlMsg(a);
+    };
+  }
   pc.ontrack = (e) => grpOnTrack(p, e);
   pc.addEventListener('connectionstatechange', () => {
     const st = pc.connectionState;
@@ -348,6 +359,7 @@ async function grpOnAnswer(from, msg) {
 }
 
 function grpClosePeer(p) {
+  if (G.peers.get(p.id) === p) grpCtlGone(p.id, 'связь с участником пропала');
   if (G.peers.get(p.id) === p) G.peers.delete(p.id);
   p.closed = true;
   clearTimeout(p.timer);
@@ -481,6 +493,18 @@ function grpOnData(p, d) {
     case 'state': p.muted = !!d.muted; p.deaf = !!d.deaf; grpRender(); return;
     case 'screen': grpOnScreen(p, !!d.on, d.name, d.perm); grpRender(); return;
     case 'gdraw': case 'gptr': case 'gptr-off': case 'gclear': case 'greact': grpOnMark(p, d); return;
+    case 'ctl-req':
+      if ((CS.on || CS.req) && CS.peer && CS.peer !== p.id) { grpSend(p, { t: 'ctl-deny', why: 'уже отдал управление другому участнику' }); return; }
+      CS.peer = p.id;
+      onCtlReq(d);
+      if (!CS.on && !CS.req) CS.peer = null; // сразу отказал
+      return;
+    case 'ctl-grant': if (CV.peer === p.id && CV.state !== 'off') ctlViewStart(d); return;
+    case 'ctl-deny':
+      if (CV.peer === p.id && CV.state === 'req') { CV.state = 'off'; CV.peer = null; updateToolbar(); toast(`${grpNick(p.id)} ${String(d.why || 'отказал').slice(0, 60)}`); }
+      return;
+    case 'ctl-end': if (CV.peer === p.id) ctlViewStop(false, String(d.why || '').slice(0, 60) || `${grpNick(p.id)} забрал управление`); return;
+    case 'ctl-stop': if (CS.peer === p.id) ctlEnd(`${grpNick(p.id)} отдал управление`, false); return;
     case 'view':
       if (!['full', 'thumb', 'off'].includes(d.view) || p.view === d.view) return;
       p.view = d.view;
@@ -515,9 +539,10 @@ function grpOnScreen(p, on, name, perm) {
   const was = p.sharing;
   p.sharing = on;
   p.shareName = grpClean(name, 60);
-  p.perm = { draw: !!perm?.draw, react: !!perm?.react };
+  p.perm = { draw: !!perm?.draw, react: !!perm?.react, ctl: !!perm?.ctl };
   if (on && !was) { sysMsg(`${grpNick(p.id)} показывает экран${p.shareName ? ' — ' + p.shareName : ''}`, G.conv); if (!G.focus) G.focus = p.id; }
   if (!on && G.focus === p.id) G.focus = null;
+  if (!on && CV.peer === p.id) ctlViewStop(false, 'показ закончился');
 }
 
 function grpOnTrack(p, e) {
@@ -688,7 +713,7 @@ async function grpBeginShare() {
       else { loopback = true; toast('Отдельный захват звука недоступен (' + r.error + ') — пойдёт весь звук компьютера'); }
     }
     const stream = await captureSource(srcId, QUALITY[qKey], mode, loopback);
-    await grpShareStream(stream, { q: QUALITY[qKey], mode, name, atrack: atrack || stream.getAudioTracks()[0] || null });
+    await grpShareStream(stream, { q: QUALITY[qKey], mode, name, atrack: atrack || stream.getAudioTracks()[0] || null, srcId });
     window.duo.ovlOpen(srcId).catch(() => {}); // рисунки, указки и реакции зрителей — поверх окна (в захват не попадает)
   } catch (e) {
     console.warn('grp share', e);
@@ -697,11 +722,11 @@ async function grpBeginShare() {
   }
 }
 
-async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', name = '', atrack = null } = {}) {
+async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', name = '', atrack = null, srcId = null } = {}) {
   if (G.share) grpStopShare(true);
   const track = stream.getVideoTracks()[0];
   if (!track) throw new Error('нет видео');
-  G.share = { stream, track, atrack, q, mode, name };
+  G.share = { stream, track, atrack, q, mode, name, srcId };
   track.addEventListener('ended', () => { if (G.share?.stream === stream) grpStopShare(); });
   for (const p of G.peers.values()) grpAttachSenders(p);
   await grpTuneAll();
@@ -714,6 +739,8 @@ async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', n
 function grpStopShare(silent) {
   const sh = G.share;
   if (!sh) return;
+  ctlEnd('показ остановлен');
+  grpCtlCancelReq();
   G.share = null;
   sh.stream.getTracks().forEach((t) => t.stop());
   window.duo?.ovlClose();
@@ -731,7 +758,7 @@ const GRP_COLORS = ['#ff3c50', '#3ddc84', '#4fd1ff', '#ffcd1f', '#ff2bd6', '#ff8
 function grpColor(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return GRP_COLORS[h % GRP_COLORS.length]; }
 // настройки «поверх моего стрима» поменялись — зрители узнают сразу
 function grpPermChanged() { if (G.active && G.share) grpSendAll({ t: 'screen', on: true, name: G.share.name, perm: grpMyPerm() }); }
-function grpMyPerm() { const o = settings(); return { draw: o.ovlDraw !== false, react: !!o.ovlReact }; }
+function grpMyPerm() { const o = settings(); return { draw: o.ovlDraw !== false, react: !!o.ovlReact, ctl: o.ctlAllow !== false && !!G.share?.srcId }; }
 const GT = { mode: null, stroke: null, ptrAt: 0, flushAt: 0, react: [], strokes: new Map(), ptrs: new Map(), raf: 0, lastOvl: null, ovlLog: [] };
 function grpOvl(m) { GT.lastOvl = m; GT.ovlLog.push({ t: m.t, c: m.c, nick: m.nick }); GT.ovlLog.splice(0, GT.ovlLog.length - 30); window.duo.ovlMsg(m); }
 
@@ -745,7 +772,8 @@ function grpAddTools(el, id) {
   bar.innerHTML = '<button class="tbtn" data-m="ptr" title="Указка">👆</button><button class="tbtn" data-m="draw" title="Рисовать">✏️</button>'
     + '<button class="tbtn" data-a="clear" title="Стереть рисунки">🧹</button><span class="tsep"></span>'
     + REACTIONS.map((r) => `<button class="tbtn" data-r="${r}">${r}</button>`).join('')
-    + '<span class="tsep"></span><button class="tbtn" data-a="full" title="На весь экран / обратно">⛶</button>';
+    + '<span class="tsep"></span><button class="tbtn wide" data-a="ctl">🎮 Управление</button><button class="tbtn wide hidden" data-a="lock" title="Для игр, где мышь крутит камеру">🖱 Захват мыши</button>'
+    + '<button class="tbtn" data-a="full" title="На весь экран / обратно">⛶</button>';
   for (const x of [bar, inp]) { x.onclick = (e) => e.stopPropagation(); x.ondblclick = (e) => e.stopPropagation(); }
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -754,10 +782,43 @@ function grpAddTools(el, id) {
     else if (b.dataset.r) grpReact(id, b.dataset.r);
     else if (b.dataset.a === 'clear') { grpSendAll({ t: 'gclear', to: id }); GT.strokes.clear(); grpKickMarks(); }
     else if (b.dataset.a === 'full') { if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen().catch(() => {}); }
+    else if (b.dataset.a === 'ctl') grpCtlClick(id);
+    else if (b.dataset.a === 'lock') {
+      try { const r = inp.requestPointerLock({ unadjustedMovement: true }); r?.catch?.(() => inp.requestPointerLock()); } catch { inp.requestPointerLock(); }
+      toast('Мышь захвачена для игры — Esc, чтобы отпустить');
+    }
   });
+  // ввод для управления: мышь (обычная или захваченная), колесо; клавиатура — общий обработчик в renderer.js
+  const ctlOn = () => CV.state === 'on' && CV.peer === id;
+  inp.tabIndex = -1;
+  inp.addEventListener('mousemove', (e) => {
+    if (!ctlOn() || !CV.perm.mouse) return;
+    if (document.pointerLockElement === inp) { CV.rel[0] += e.movementX; CV.rel[1] += e.movementY; } else CV.moveQ = grpNormPt(el, e);
+    queueMoveFlush();
+  });
+  inp.addEventListener('mousedown', (e) => {
+    inp.focus();
+    if (!ctlOn()) return;
+    e.preventDefault();
+    if (!CV.perm.mouse || MOUSE_BTN[e.button] == null) return;
+    if (document.pointerLockElement !== inp) ctlSend(['m', ...grpNormPt(el, e).map(n4)]);
+    ctlSend(['b', MOUSE_BTN[e.button], 1]);
+  });
+  const up = (e) => { if (ctlOn() && CV.perm.mouse && MOUSE_BTN[e.button] != null) ctlSend(['b', MOUSE_BTN[e.button], 0]); };
+  inp.addEventListener('mouseup', up);
+  document.addEventListener('mouseup', (e) => { if (document.pointerLockElement === inp) up(e); });
+  inp.addEventListener('wheel', (e) => {
+    if (!ctlOn() || !CV.perm.mouse) return;
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
+    const dy = Math.max(-1200, Math.min(1200, Math.round((-e.deltaY * k / 100) * 120)));
+    const dx = Math.max(-1200, Math.min(1200, Math.round((e.deltaX * k / 100) * 120)));
+    if (dy || dx) ctlSend(['w', dy, dx]);
+  }, { passive: false });
+  inp.addEventListener('contextmenu', (e) => { if (ctlOn() || GT.mode) e.preventDefault(); });
   const pt = (e) => grpNormPt(el, e);
   inp.addEventListener('pointerdown', (e) => {
-    if (GT.mode !== 'draw') return;
+    if (GT.mode !== 'draw' || CV.state === 'on') return;
     try { inp.setPointerCapture(e.pointerId); } catch { /* */ }
     GT.stroke = { id: newMid(), to: id, pending: [pt(e)] };
     GT.strokes.set('me:' + GT.stroke.id, { c: grpColor(grpMe()), pts: [pt(e)], done: false, ts: Date.now() });
@@ -796,7 +857,8 @@ function grpSetTool(mode) {
 function grpUpdateTools() {
   const p = G.peers.get(G.focus);
   const perm = p?.perm || {};
-  if (GT.mode && !perm.draw) GT.mode = null;
+  const controlling = CV.state === 'on' && CV.peer === G.focus;
+  if (GT.mode && (!perm.draw || controlling)) GT.mode = null;
   for (const [id, el] of G.tiles) {
     const bar = el.querySelector('.gtools');
     if (!bar) continue;
@@ -806,9 +868,38 @@ function grpUpdateTools() {
     for (const b of bar.querySelectorAll('[data-m]')) { b.classList.toggle('on', GT.mode === b.dataset.m); b.disabled = !perm.draw; b.title = perm.draw ? (b.dataset.m === 'ptr' ? 'Указка' : 'Рисовать') : 'Показывающий не разрешил указку и рисование'; }
     bar.querySelector('[data-a=clear]').disabled = !perm.draw;
     for (const b of bar.querySelectorAll('[data-r]')) { b.disabled = !perm.react; b.title = perm.react ? '' : 'Показывающий не включил реакции в настройках'; }
-    el.querySelector('.ginput').dataset.mode = GT.mode || '';
-    el.querySelector('.ginput').classList.toggle('active', !!GT.mode);
+    for (const b of bar.querySelectorAll('[data-m]')) if (controlling) b.disabled = true;
+    const cb = bar.querySelector('[data-a=ctl]');
+    const mine = CV.peer === id;
+    cb.classList.toggle('on', controlling);
+    cb.textContent = controlling ? '⛔ Отдать управление' : mine && CV.state === 'req' ? '⏳ Ждём ответа…' : '🎮 Управление';
+    cb.disabled = !controlling && (!perm.ctl || (CV.state !== 'off' && !mine));
+    cb.title = !perm.ctl ? 'Показывающий выключил запросы на управление (или показывает не окно и не экран)' : 'Попросить управление мышью, клавиатурой и геймпадом';
+    bar.querySelector('[data-a=lock]').classList.toggle('hidden', !(controlling && CV.perm.mouse));
+    el.classList.toggle('ctl-active', controlling);
+    el.querySelector('.ginput').dataset.mode = controlling ? 'ctl' : GT.mode || '';
+    el.querySelector('.ginput').classList.toggle('active', !!GT.mode || controlling);
   }
+}
+
+function grpCtlClick(id) {
+  if (CV.state === 'on' && CV.peer === id) { ctlViewStop(true); toast('Управление отдано'); return; }
+  if (CV.state !== 'off') return;
+  CV.peer = id;
+  ctlRequest();
+}
+// участник пропал или вышел — управление с ним заканчивается
+function grpCtlGone(id, why) {
+  if (CV.peer === id && CV.state !== 'off') ctlViewStop(false, why);
+  else if (CV.peer === id) CV.peer = null;
+  if (CS.peer === id) { if (CS.on) ctlEnd(why, false); grpCtlCancelReq(); CS.peer = null; }
+}
+function grpCtlCancelReq() {
+  if (!CS.req) return;
+  clearTimeout(CS.reqTimer);
+  $('ctlModal').classList.add('hidden');
+  CS.req = null;
+  if (!CS.on) CS.peer = null;
 }
 
 function grpFlushStroke(done) {
@@ -1056,6 +1147,17 @@ function grpTile(id) {
   nm.append(n, ' ', b);
   el.append(v, av, nm);
   if (id !== grpMe()) grpAddTools(el, id);
+  else {
+    const badge = document.createElement('div');
+    badge.className = 'ctl-badge gctl hidden';
+    const t = document.createElement('span');
+    const b = document.createElement('button');
+    b.className = 'btn small danger-btn';
+    b.textContent = 'Забрать';
+    b.onclick = (e) => { e.stopPropagation(); ctlEnd('ты забрал управление'); };
+    badge.append(t, ' ', b);
+    el.appendChild(badge);
+  }
   if (id !== grpMe()) {
     const vols = document.createElement('div');
     vols.className = 'gvols';
@@ -1108,6 +1210,8 @@ function grpRender() {
   });
   if (G.focus && !G.tiles.get(G.focus)?.classList.contains('sharing')) G.focus = null;
   grid.classList.toggle('focus', !!G.focus);
+  const badge = G.tiles.get(me)?.querySelector('.gctl');
+  if (badge) { badge.classList.toggle('hidden', !CS.on); badge.querySelector('span').textContent = CS.on ? `🎮 ${grpNick(CS.peer)} управляет` : ''; }
   grpUpdateTools();
   const n = 1 + [...G.peers.values()].filter((p) => p.connected).length;
   $('gStatus').querySelector('span').textContent = `В звонке: ${n} из ${G.members.size}`;
@@ -1121,6 +1225,7 @@ function grpReset() {
   G.lostTimer = {};
   G.nickCache.clear();
   GT.mode = null; GT.stroke = null; GT.strokes.clear(); GT.ptrs.clear();
+  CV.peer = null; CS.peer = null;
   G.gid = null; G.focus = null; G.conv = null; G.share = null;
 }
 
@@ -1130,6 +1235,7 @@ function grpLeave(text) {
   grpSendAll({ t: 'bye' });
   // до кого нет прямой связи — сообщаем по каналу друзей
   for (const id of G.members.keys()) if (id !== grpMe() && !grpOpen(id) && isFriend(id)) window.duo.friendsSend(id, { t: 'grp-leave', gid: G.gid });
+  ctlViewStop(true);
   grpStopShare(true);
   spStopAll();
   $('soundpad').classList.add('hidden');
