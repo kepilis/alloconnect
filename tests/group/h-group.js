@@ -1,4 +1,4 @@
-﻿// ТЕСТ группового звонка: четыре экземпляра. Дружба: A↔B, A↔C, B↔D (остальные пары — не друзья,
+// ТЕСТ группового звонка: четыре экземпляра. Дружба: A↔B, A↔C, B↔D (остальные пары — не друзья,
 // их записки идут через участников). A собирает группу и зовёт B и C; потом B (не создатель) зовёт D.
 // Запуск — tests/group/run.js.
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -41,6 +41,10 @@ app.whenReady().then(async () => {
     const J = (x) => JSON.stringify(x);
     const nConnected = `[...G.peers.values()].filter((p) => p.connected).length`;
     const tileOf = (r) => `G.tiles.get(${J(ids[r])})`;
+    // байты, пришедшие по трансиверу участника (atx — голос, satx — звук экрана)
+    const inBytes = (pExpr, tx) => `(async (p) => { let b = 0; (await p.pc.getStats(p.${tx}.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; })(${pExpr})`;
+    const seesShare = (r) => `(() => { const t = ${tileOf(r)}; return !!t && t.classList.contains('sharing') && t.querySelector('video').videoWidth > 0; })()`;
+    const acceptInvite = async (key, t = 40000) => { res[key] = await waitFor(W, `!!G.invite`, t); await sleep(500); await js(`grpAcceptInvite(); true`); };
     const ABC = ['A', 'B', 'C'];
 
     // 1. A собирает группу, зовёт B и C
@@ -48,12 +52,12 @@ app.whenReady().then(async () => {
     if (ROLE === 'B' || ROLE === 'C') {
       res.gotInvite = await waitFor(W, `!!G.invite && !document.getElementById('gInvModal').classList.contains('hidden')`, 40000);
       await sleep(500);
-      await js(`document.getElementById('gInvAccept').click(); true`);
+      await js(`document.getElementById('gInvAccept').click(); true`); // здесь — через кнопку окна
     }
     if (ROLE !== 'D') {
       res.conn3 = await waitFor(W, `${nConnected} === 2`, 70000);
       await sleep(3000);
-      res.audioIn = await js(`Promise.all([...G.peers.values()].map(async (p) => { let b = 0; (await p.pc.getStats(p.atx.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; }))`);
+      res.audioIn = await js(`Promise.all([...G.peers.values()].map((p) => ${inBytes('p', 'atx')}))`);
     }
     await sync('c3', ALL);
 
@@ -83,6 +87,7 @@ app.whenReady().then(async () => {
     // 3. B показывает экран со звуком (canvas + генератор)
     if (ROLE !== 'D') await step('share', async () => {
       if (ROLE === 'B') {
+        await js(`GT.ovlLog = []; true`); // что уходит в оверлей — для проверки рисунков ниже
         await js(`(() => { const c = document.createElement('canvas'); c.width = 1280; c.height = 720; const g = c.getContext('2d'); let i = 0;
           setInterval(() => { g.fillStyle = 'hsl(' + (i++ * 7 % 360) + ',70%,50%)'; g.fillRect(0, 0, 1280, 720); }, 33);
           const ac = audio(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start();
@@ -90,10 +95,10 @@ app.whenReady().then(async () => {
         put('shareB');
       } else {
         await take('shareB');
-        res.seeShare = await waitFor(W, `(() => { const t = ${tileOf('B')}; return !!t && t.classList.contains('sharing') && t.querySelector('video').videoWidth > 0; })()`, 20000);
+        res.seeShare = await waitFor(W, seesShare('B'), 20000);
         res.autoFocus = await js(`G.focus === ${J(ids.B)}`);
         await sleep(2500);
-        res.shareAudioIn = await js(`(async () => { const p = G.peers.get(${J(ids.B)}); let b = 0; (await p.pc.getStats(p.satx.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; })()`);
+        res.shareAudioIn = await js(inBytes(`G.peers.get(${J(ids.B)})`, 'satx'));
         if (process.env.SHOT && ROLE === 'C') { W.setSize(1280, 800); await sleep(1200); fs.writeFileSync(shf('shotC.png'), (await W.webContents.capturePage()).toPNG()); }
       }
     });
@@ -113,7 +118,6 @@ app.whenReady().then(async () => {
         await js(`store.set('settings', { ...settings(), ovlReact: true }); grpPermChanged(); true`);
         put('permB');
       }
-      if (ROLE === 'A') { await take('thumbOk'); await take('permB'); }
       await take('permB');
       if (ROLE === 'A') {
         res.permSeen = await waitFor(W, `!!${pB}?.perm?.react && !!${pB}?.perm?.draw`, 10000);
@@ -159,16 +163,14 @@ app.whenReady().then(async () => {
       if (ROLE !== 'A') res.fileFrom = await js(`[...G.conv.box.querySelectorAll('.msg')].find((m) => m.textContent.includes('test.txt'))?.querySelector('.meta')?.textContent || ''`);
     });
     // 5. C выключает микрофон
-    if (ROLE === 'C') { await js(`grpSetMuted(true); true`); put('muteC'); }
+    if (ROLE === 'C') { await js(`setMuted(true); true`); put('muteC'); }
     else if (ROLE !== 'D') { await take('muteC'); res.seeMuteC = await waitFor(W, `!!G.peers.get(${J(ids.C)})?.muted`, 10000); }
     await sync('c6', ALL);
 
     // 6. B (не создатель) зовёт своего друга D; D не друг A и C — записки через участников
     if (ROLE === 'B') await js(`grpInvite([${J(ids.D)}]); true`);
     if (ROLE === 'D') {
-      res.gotInvite = await waitFor(W, `!!G.invite`, 40000);
-      await sleep(500);
-      await js(`grpAcceptInvite(); true`);
+      await acceptInvite('gotInvite', 40000);
     }
     res.conn4 = await waitFor(W, `${nConnected} === 3`, 80000);
     await sync('c7', ALL);
@@ -193,9 +195,9 @@ app.whenReady().then(async () => {
         await js(`grpStopShare(); true`);
       } else {
         await take('realD');
-        res.seeRealD = await waitFor(W, `(() => { const t = ${tileOf('D')}; return !!t && t.classList.contains('sharing') && t.querySelector('video').videoWidth > 0; })()`, 25000);
+        res.seeRealD = await waitFor(W, seesShare('D'), 25000);
         await sleep(2500);
-        res.realAudioIn = await js(`(async () => { const p = G.peers.get(${J(ids.D)}); let b = 0; (await p.pc.getStats(p.satx.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; })()`);
+        res.realAudioIn = await js(inBytes(`G.peers.get(${J(ids.D)})`, 'satx'));
         put('realSeen' + ROLE);
         if (ROLE === 'A') {
           await waitFor(W, `!!G.peers.get(${J(ids.D)})?.perm?.ctl`, 10000);
@@ -245,15 +247,11 @@ app.whenReady().then(async () => {
     res.savedGroup = await js(`grpSaved().length === 1 && !document.getElementById('groupsBox').classList.contains('hidden')`);
     if (ROLE === 'B') { await js(`grpCallSaved(grpSaved()[0].gid); true`); }
     if (ROLE === 'A' || ROLE === 'D') {
-      res.gotInvite2 = await waitFor(W, `!!G.invite`, 40000);
-      await sleep(500);
-      await js(`grpAcceptInvite(); true`);
+      await acceptInvite('gotInvite2', 40000);
     }
     if (ROLE === 'A') { await waitFor(W, `G.active && [...G.peers.values()].some((p) => p.connected)`, 40000); await js(`grpInvite([${J(ids.C)}]); true`); }
     if (ROLE === 'C') {
-      res.gotInvite2 = await waitFor(W, `!!G.invite`, 60000);
-      await sleep(500);
-      await js(`grpAcceptInvite(); true`);
+      await acceptInvite('gotInvite2', 60000);
     }
     res.conn4again = await waitFor(W, `${nConnected} === 3`, 80000);
     await sleep(1500);
@@ -278,9 +276,7 @@ app.whenReady().then(async () => {
     // 12. встречная сборка: A и B одновременно собирают ту же сохранённую группу — половины соединяются
     if (ROLE === 'A' || ROLE === 'B') await js(`grpCallSaved(grpSaved()[0].gid); true`);
     else {
-      res.gotInvite3 = await waitFor(W, `!!G.invite`, 60000);
-      await sleep(500);
-      await js(`grpAcceptInvite(); true`);
+      await acceptInvite('gotInvite3', 60000);
     }
     res.merged = await waitFor(W, `${nConnected} === 3`, 90000);
     res.mergedGid = await js(`G.gid === grpSaved()[0]?.gid`);

@@ -331,11 +331,12 @@ async function setNs(on) {
 }
 
 function updateNsBtn() {
-  const b = $('btnNs');
-  if (!b) return;
   const on = rnnOn();
-  b.classList.toggle('on', on);
-  b.querySelector('span').textContent = on ? 'Шумодав вкл' : 'Шумодав выкл';
+  for (const b of [$('btnNs'), $('gNs')]) {
+    if (!b) continue;
+    b.classList.toggle('on', on);
+    b.querySelector('span').textContent = on ? 'Шумодав вкл' : 'Шумодав выкл';
+  }
 }
 
 async function restartMic() {
@@ -1481,9 +1482,10 @@ function setMuted(v) {
   S.muted = v;
   applyMicEnabled();
   updateMyControls();
-  send({ t: 'state', muted: S.muted, deaf: S.deafened });
+  sendMyState();
   sound(v ? 'mute' : 'unmute');
 }
+function sendMyState() { (G.active ? grpSendAll : send)({ t: 'state', muted: S.muted, deaf: S.deafened }); }
 
 function setDeafened(v) {
   S.deafened = v;
@@ -1491,19 +1493,22 @@ function setDeafened(v) {
   $('remoteScreen').muted = v;
   applyMicEnabled();
   updateMyControls();
-  send({ t: 'state', muted: S.muted, deaf: S.deafened });
+  sendMyState();
   sound(v ? 'mute' : 'unmute');
 }
 
 function updateMyControls() {
   if (typeof pushTrayState === 'function') setTimeout(pushTrayState, 0);
   const micOff = S.muted || S.deafened;
-  $('btnMute').classList.toggle('off', micOff);
-  $('btnMute').querySelector('span').textContent = micOff ? 'Микрофон выкл' : 'Микрофон';
-  $('btnDeafen').classList.toggle('off', S.deafened);
-  $('btnDeafen').querySelector('span').textContent = S.deafened ? 'Звук выкл' : 'Звук';
+  for (const [mute, deaf] of [['btnMute', 'btnDeafen'], ['gMute', 'gDeafen']]) {
+    $(mute).classList.toggle('off', micOff);
+    $(mute).querySelector('span').textContent = micOff ? 'Микрофон выкл' : 'Микрофон';
+    $(deaf).classList.toggle('off', S.deafened);
+    $(deaf).querySelector('span').textContent = S.deafened ? 'Звук выкл' : 'Звук';
+  }
   $('meBadges').textContent = (S.deafened ? '🔇' : '') + (micOff ? '🎙̸' : '');
   if (micOff) $('meCard').classList.remove('speaking');
+  if (G.active) grpRender();
 }
 
 function setFriendBadges(muted, deaf) {
@@ -1797,7 +1802,7 @@ function markUndelivered(m) {
   m.querySelector('.meta').appendChild(s);
 }
 
-function sysMsg(text, conv = typeof G !== 'undefined' && G.active ? G.conv : S.callConv) {
+function sysMsg(text, conv = G.active ? G.conv : S.callConv) {
   if (!conv) return;
   const m = document.createElement('div');
   m.className = 'msg sys';
@@ -1823,6 +1828,7 @@ function reIn(r) {
   return { mid: r.mid, by: r.mine ? 'peer' : 'me', text: snip(r.text) };
 }
 
+const whoNick = (conv, who) => (who === 'me' ? S.nick || 'Я' : conv?.nickOf?.(who) || conv?.nick || '');
 function regMsg(conv, el, e) {
   el.dataset.mid = e.mid;
   conv.msgs ??= new Map();
@@ -1831,7 +1837,7 @@ function regMsg(conv, el, e) {
     const q = document.createElement('div');
     q.className = 'quote';
     const b = document.createElement('b');
-    b.textContent = e.re.by === 'me' ? (S.nick || 'Я') : (conv.nickOf?.(e.re.by) || conv.nick);
+    b.textContent = whoNick(conv, e.re.by);
     q.append(b, document.createTextNode(' ' + (e.re.text || '…')));
     q.title = 'Показать сообщение';
     q.onclick = (ev) => { ev.stopPropagation(); jumpToMsg(conv, e.re.mid); };
@@ -1872,7 +1878,7 @@ function renderReacts(conv, el, e) {
     c.type = 'button';
     c.className = 'react-chip' + (whos.includes('me') ? ' mine' : '');
     c.textContent = v + (whos.length > 1 ? ' ' + whos.length : '');
-    c.title = whos.map((w) => (w === 'me' ? 'ты' : (conv.nickOf?.(w) || conv.nick))).join(', ');
+    c.title = whos.map((w) => (w === 'me' ? 'ты' : whoNick(conv, w))).join(', ');
     c.onclick = (ev) => { ev.stopPropagation(); sendMsgOp(conv, { op: 'react', ref: e.mid, e: r.me === v ? '' : v }); };
     row.appendChild(c);
   }
@@ -1959,7 +1965,7 @@ function setCompose(cp, mode, item) {
   if (!mode) return;
   const conv = cp.conv();
   cp.bar.querySelector('.cb-ico').textContent = mode === 'edit' ? '✏' : '↩';
-  cp.bar.querySelector('b').textContent = mode === 'edit' ? 'Редактирование' : 'Ответ ' + (item.e.who === 'me' ? 'себе' : conv?.nickOf?.(item.e.who) || conv?.nick || '');
+  cp.bar.querySelector('b').textContent = mode === 'edit' ? 'Редактирование' : 'Ответ ' + (item.e.who === 'me' ? 'себе' : whoNick(conv, item.e.who));
   cp.bar.querySelector('small').textContent = snip(item.e.type === 'file' ? '📎 ' + item.e.text : item.e.text, 80);
   const inp = $(cp.input);
   if (mode === 'edit') inp.value = item.e.text;
@@ -2229,9 +2235,9 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
 }
 
 // запись о файле в историю (картинку — вместе с самой картинкой)
-async function recordFile(conv, mine, meta, blob) {
+async function recordFile(conv, mine, meta, blob, from = {}) {
   if (!conv || meta.p !== 'chat' && meta.p !== 'sound') return;
-  const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : (conv.whoId || 'peer'), nick: mine ? S.nick : conv.nick, type: 'file',
+  const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : (from.who || 'peer'), nick: mine ? S.nick : (from.nick || conv.nick), type: 'file',
     file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p } };
   if (meta.kind === 'image' && meta.size <= HIST_IMG_MAX && conv.id) {
     try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без картинки */ }
@@ -2337,7 +2343,8 @@ class FileChan {
         if (p === 'screenvid' && meta.size > SVID_MAX) { this.handlers.screenvidBig?.(); return; }
         meta.kind = fileKind(meta.mime);
         const conv = this.getConv();
-        const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, conv.nick, meta, false, { mid: fmid(meta.fid) }) : NOUI;
+        const from = this.handlers.from?.() || {}; // в группе — кто прислал
+        const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, from.nick || conv.nick, meta, false, { mid: fmid(meta.fid), who: from.who }) : NOUI;
         ui.progress(0);
         this.incoming.set(meta.fid, { meta, parts: [], got: 0, ui, last: 0 });
       } else if (m.t === 'file-end') {
@@ -2354,7 +2361,7 @@ class FileChan {
         const url = URL.createObjectURL(blob);
         conv?.blobs.push(url);
         e.ui.done(url);
-        recordFile(conv, false, e.meta, blob);
+        recordFile(conv, false, e.meta, blob, this.handlers.from?.());
         this.handlers.chatIn?.(conv, e.meta);
       }
       return;
@@ -2773,7 +2780,7 @@ function closeSettings() {
   settingsMicStream?.getTracks().forEach((t) => t.stop());
   settingsMicStream = null;
   $('micMeter').style.width = '0';
-  if (typeof grpPermChanged === 'function') grpPermChanged();
+  grpPermChanged();
 }
 
 async function saveSettings() {
@@ -2905,14 +2912,14 @@ function bind() {
   $('fileInput').onchange = (e) => { queueFiles([...e.target.files]); e.target.value = ''; };
   document.addEventListener('paste', (e) => {
     const dmVisible = !$('dm').classList.contains('hidden');
-    if (!S.inCall && !G.active && !dmVisible) return;
+    if (!inAnyCall() && !dmVisible) return;
     const files = filesFromEvent(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
     if (dmVisible) dmSendFiles(files); else queueFiles(files);
   });
   let dragDepth = 0;
-  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((S.inCall || G.active || !$('dm').classList.contains('hidden')) && [...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((inAnyCall() || !$('dm').classList.contains('hidden')) && [...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
   document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropOverlay').classList.add('hidden'); });
   const overStreamForImage = (e) => S.inCall && S.friendPerm?.react && !$('remoteScreenWrap').classList.contains('hidden') &&
     !!e.target.closest?.('#remoteScreenWrap') && [...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type)));
@@ -2932,7 +2939,7 @@ function bind() {
     }
     if (e.target.closest?.('#soundpad')) { $('soundpad').classList.remove('drag'); spAddFiles(filesFromEvent(e.dataTransfer)); return; }
     if (!$('dm').classList.contains('hidden')) { dmSendFiles(filesFromEvent(e.dataTransfer)); return; }
-    if (S.inCall || G.active) queueFiles(filesFromEvent(e.dataTransfer));
+    if (inAnyCall()) queueFiles(filesFromEvent(e.dataTransfer));
   });
   $('lightbox').onclick = () => $('lightbox').classList.add('hidden');
   spBind();
@@ -3069,12 +3076,11 @@ function bind() {
   window.duo?.onHotkey((what) => {
     if (what === 'mark') { toast('Метка в логе поставлена'); sound('msg'); return; }
     if (what === 'sound-stop') { spStopAll(); return; }
-    if (G.active && grpHotkey(what)) return;
-    if (what === 'leave') { if (S.inCall) leaveCall(); return; }
+    if (what === 'leave') { if (G.active) grpLeave(); else if (S.inCall) leaveCall(); return; }
     if (what === 'ctl-stop') { ctlEnd('ты забрал управление (Ctrl+Shift+X)'); return; }
     if (what === 'clip') { saveClip(); return; }
-    if (what.startsWith('sound:')) { if (S.inCall || G.active) spPlay(what.slice(6)); return; }
-    if (!S.inCall) return;
+    if (what.startsWith('sound:')) { if (inAnyCall()) spPlay(what.slice(6)); return; }
+    if (!inAnyCall()) return;
     if (what === 'mute') $('btnMute').click();
     if (what === 'deafen') setDeafened(!S.deafened);
     if (what === 'ns') setNs(!(settings().rnn !== false));
@@ -3109,6 +3115,8 @@ let myIdent = null;
 let ringTimer = null;
 
 const isFriend = (id) => friendsList.some((f) => f.id === id);
+const friendById = (id) => friendsList.find((f) => f.id === id);
+const inAnyCall = () => S.inCall || G.active;
 
 async function initFriends() {
   window.duo.netConfig(netCfg());
@@ -3135,7 +3143,7 @@ function pushTrayState() {
 
 function renderFriends() {
   pushTrayState();
-  if (typeof grpRenderSaved === 'function') grpRenderSaved();
+  grpRenderSaved();
   updateDmHead();
   const box = $('friendsBox');
   box.classList.toggle('hidden', friendsList.length === 0);
@@ -3460,9 +3468,9 @@ async function sendIdent() {
 }
 function b64uBytes(u8) { return btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 // DTLS-отпечатки обеих сторон этого соединения (одинаковая строка у обоих)
-function callBinding() {
+function callBinding(pc = S.pc) {
   const fps = (sdp) => [...String(sdp || '').matchAll(/^a=fingerprint:(.+)$/gm)].map((m) => m[1].trim().toLowerCase());
-  const all = [...new Set([...fps(S.pc?.localDescription?.sdp), ...fps(S.pc?.remoteDescription?.sdp)])].sort();
+  const all = [...new Set([...fps(pc?.localDescription?.sdp), ...fps(pc?.remoteDescription?.sdp)])].sort();
   return all.length >= 2 ? all.join('|') : '';
 }
 const ID_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -4236,16 +4244,15 @@ function myPerm() {
 function sendPerm() { send({ t: 'perm', ...myPerm(), vid: 1, ops: 1 }); }
 
 // где на экране настоящая картинка видео (без чёрных полос)
-function videoRect() {
-  const v = $('remoteScreen');
+function videoRect(v = $('remoteScreen')) {
   const r = v.getBoundingClientRect();
   const vw = v.videoWidth || 16, vh = v.videoHeight || 9;
   const s = Math.min(r.width / vw, r.height / vh);
   const w = vw * s, h = vh * s;
   return { x: r.left + (r.width - w) / 2, y: r.top + (r.height - h) / 2, w, h };
 }
-function normPt(e) {
-  const r = videoRect();
+function normPt(e, v) {
+  const r = videoRect(v);
   return [Math.max(0, Math.min(1, (e.clientX - r.x) / r.w)), Math.max(0, Math.min(1, (e.clientY - r.y) / r.h))];
 }
 const n4 = (x) => Math.round(x * 10000) / 10000;
@@ -4276,7 +4283,7 @@ function updateToolbar() {
   $('inputLayer').classList.toggle('active', !!tools.mode || controlling);
   $('remoteScreenWrap').classList.toggle('ctl-active', controlling);
   $('inputLayer').dataset.mode = controlling ? 'ctl' : (tools.mode || '');
-  if (typeof G !== 'undefined' && G.active) grpUpdateTools(); // group.js грузится позже — при первом вызове G ещё нет
+  if (G.active) grpUpdateTools();
 }
 
 /* ---------- Локальный слой у зрителя (оверлей друга исключён из захвата, рисуем у себя) ---------- */
@@ -4295,11 +4302,21 @@ function drawLocal() {
   const r = videoRect();
   const X = (x) => r.x - wr.left + x * r.w, Y = (y) => r.y - wr.top + y * r.h;
   const now = Date.now();
+  let alive = paintStrokes(g, tools.local, X, Y, now);
+  if (tools.myPtr && now - tools.myPtr.ts < 1500) {
+    alive = true;
+    g.fillStyle = 'rgba(255,60,80,.3)'; g.beginPath(); g.arc(X(tools.myPtr.x), Y(tools.myPtr.y), 14, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ff3c50'; g.beginPath(); g.arc(X(tools.myPtr.x), Y(tools.myPtr.y), 6, 0, Math.PI * 2); g.fill();
+  }
+  if (alive) tools.raf = requestAnimationFrame(drawLocal);
+}
+// штрихи { c, pts, done, ts } — держатся 2.5 с после окончания и гаснут за 1.5 с; true — ещё есть что рисовать
+function paintStrokes(g, strokes, X, Y, now) {
   let alive = false;
-  for (const [id, s] of tools.local) {
+  for (const [id, s] of strokes) {
     const age = s.done ? now - s.ts : 0;
     const a = age < 2500 ? 1 : 1 - (age - 2500) / 1500;
-    if (a <= 0) { tools.local.delete(id); continue; }
+    if (a <= 0) { strokes.delete(id); continue; }
     alive = true;
     g.globalAlpha = a; g.strokeStyle = s.c; g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round';
     g.beginPath();
@@ -4308,12 +4325,7 @@ function drawLocal() {
     g.stroke();
   }
   g.globalAlpha = 1;
-  if (tools.myPtr && now - tools.myPtr.ts < 1500) {
-    alive = true;
-    g.fillStyle = 'rgba(255,60,80,.3)'; g.beginPath(); g.arc(X(tools.myPtr.x), Y(tools.myPtr.y), 14, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#ff3c50'; g.beginPath(); g.arc(X(tools.myPtr.x), Y(tools.myPtr.y), 6, 0, Math.PI * 2); g.fill();
-  }
-  if (alive) tools.raf = requestAnimationFrame(drawLocal);
+  return alive;
 }
 function kickLocal() { if (!tools.raf) tools.raf = requestAnimationFrame(drawLocal); }
 
@@ -4789,7 +4801,7 @@ function setRumble(l, s) {
 
 function isTyping() {
   const a = document.activeElement;
-  return !!a && a !== document.body && a.id !== 'inputLayer' && !a.classList?.contains('ginput') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+  return !!a && a !== document.body && a.id !== 'inputLayer' && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
 }
 
 function bindLiveTools() {
