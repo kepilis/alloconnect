@@ -2773,6 +2773,7 @@ function closeSettings() {
   settingsMicStream?.getTracks().forEach((t) => t.stop());
   settingsMicStream = null;
   $('micMeter').style.width = '0';
+  if (typeof grpPermChanged === 'function') grpPermChanged();
 }
 
 async function saveSettings() {

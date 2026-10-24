@@ -46,9 +46,15 @@ const R = (role) => { try { return JSON.parse(fs.readFileSync(path.join(SH, `res
   t('экран B видят A и C', a.seeShare && c.seeShare, [a.seeShare, c.seeShare, a.shareError, b.shareError, c.shareError]);
   t('экран B сам развернулся', a.autoFocus && c.autoFocus);
   t('звук экрана B доходит', a.shareAudioIn > 1000 && c.shareAudioIn > 1000, [a.shareAudioIn, c.shareAudioIn]);
+  t('маленькая плитка — уменьшенное видео, крупно — полное', b.thumbC && b.fullC, [b.thumbC, b.fullC, b.toolsError]);
+  t('A видит инструменты и разрешения B', a.permSeen && a.toolsShown, [a.permSeen, a.toolsShown, a.toolsError]);
+  t('рисунок, указка и реакция A — в оверлее у B, цвет A', ['stroke', 'ptr', 'react'].every((x) => b.ovl?.types?.includes(x)) && b.ovl.strokeColor === b.ovl.wantColor && b.ovl.ptrNick === 'userA', b.ovl);
+  t('C видит рисунок и реакцию A на экране B', c.seeStrokeA && c.seeReactA, [c.seeStrokeA, c.seeReactA, c.toolsError]);
+  t('саундпад: пока звучит, голос шире, потом обратно', a.spWide && a.spNarrow, [a.spWide, a.spNarrow]);
   t('файл от A дошёл до всех', abc.every((r) => r.fileOk) && /userA/.test(b.fileFrom || '') && /userA/.test(c.fileFrom || ''), abc.map((r) => [r.fileOk, r.fileFrom, r.fileError]));
   t('A и B видят, что C выключил микрофон', a.seeMuteC && b.seeMuteC);
   t('B (не создатель) позвал D — все четверо соединены', [a, b, c, d].every((r) => r.conn4) && d.gotInvite, [a, b, c, d].map((r) => r.conn4));
+  t('D показал настоящий экран со звуком — видят все', d.realShare?.on && d.realShare.audio && abc.every((r) => r.seeRealD && r.realAudioIn > 1000), [d.realShare, d.realError, abc.map((r) => [r.seeRealD, r.realAudioIn])]);
   t('обрыв B–C: переподключились сами', b.reconnected && c.reconnected && b.backMsg && c.backMsg, [b.reconnected, c.reconnected, b.backMsg, c.backMsg]);
   t('создатель A ушёл — B, C, D продолжают', a.leftOk && b.afterHostLeft && c.afterHostLeft && d.afterHostLeft, [a.leftOk, b.afterHostLeft, c.afterHostLeft, d.afterHostLeft]);
   t('C ушёл — B и D вдвоём', b.lastTwo && d.lastTwo);

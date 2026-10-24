@@ -448,7 +448,7 @@ function grpVerified(p) {
   clearTimeout(G.joinTimer);
   const back = G.lostAt.has(p.id);
   G.lostAt.delete(p.id);
-  grpSend(p, { t: 'hello', nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', av: myAvatar?.hash || '', members: grpRosterList() });
+  grpSend(p, { t: 'hello', nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', perm: grpMyPerm(), av: myAvatar?.hash || '', members: grpRosterList() });
   if (G.share) grpTuneAll();
   if (spHighBr) grpMicBitrate(128_000);
   L('grp', { open: p.id.slice(0, 8), peers: G.peers.size, back });
@@ -468,7 +468,7 @@ function grpOnData(p, d) {
     case 'hello':
       if (!isFriend(p.id) && G.members.has(p.id)) G.members.get(p.id).nick = grpClean(d.nick) || G.members.get(p.id).nick;
       p.muted = !!d.muted; p.deaf = !!d.deaf;
-      grpOnScreen(p, !!d.sharing, d.name);
+      grpOnScreen(p, !!d.sharing, d.name, d.perm);
       if (isFriend(p.id)) onPeerAvatarHash(p.id, String(d.av || '').slice(0, 32), () => grpSend(p, { t: 'av-want' })).then(() => grpPaintAvatar(p.id)).catch(() => {});
       grpMergeRoster(d.members);
       grpRender();
@@ -479,7 +479,14 @@ function grpOnData(p, d) {
     case 'relay': grpRelay(p.id, d); return;
     case 'sig': grpOnSig(p.id, d, false); return;
     case 'state': p.muted = !!d.muted; p.deaf = !!d.deaf; grpRender(); return;
-    case 'screen': grpOnScreen(p, !!d.on, d.name); grpRender(); return;
+    case 'screen': grpOnScreen(p, !!d.on, d.name, d.perm); grpRender(); return;
+    case 'gdraw': case 'gptr': case 'gptr-off': case 'gclear': case 'greact': grpOnMark(p, d); return;
+    case 'view':
+      if (!['full', 'thumb', 'off'].includes(d.view) || p.view === d.view) return;
+      p.view = d.view;
+      L('grp', { view: d.view, peer: p.id.slice(0, 8) });
+      grpTuneAll();
+      return;
     case 'chat': {
       const text = String(d.text || '').slice(0, 2000);
       if (!text) return;
@@ -504,10 +511,11 @@ function grpFixWho(mid, id) { const it = G.conv?.msgs.get(mid); if (it && it.e.w
 // разговор для файлов от участника: общий, но с его ником в пузырях
 function grpConvOf(id) { return G.conv ? Object.create(G.conv, { nick: { value: grpNick(id) }, whoId: { value: id } }) : null; }
 
-function grpOnScreen(p, on, name) {
+function grpOnScreen(p, on, name, perm) {
   const was = p.sharing;
   p.sharing = on;
   p.shareName = grpClean(name, 60);
+  p.perm = { draw: !!perm?.draw, react: !!perm?.react };
   if (on && !was) { sysMsg(`${grpNick(p.id)} показывает экран${p.shareName ? ' — ' + p.shareName : ''}`, G.conv); if (!G.focus) G.focus = p.id; }
   if (!on && G.focus === p.id) G.focus = null;
 }
@@ -620,15 +628,47 @@ function grpQueueFiles(list, p = 'chat') {
 }
 
 /* ---------- Показ экрана в группу (видео + звук приложения/компьютера) ---------- */
+// Каждый зритель сообщает, как смотрит экран ('view'): full — крупно, thumb — маленькой плиткой,
+// off — окно свёрнуто. Полное качество идёт только тем, кто смотрит крупно; канал делится между ними.
+const GRP_THUMB = { h: 360, fps: 15, br: 600_000 };
+const grpViewOf = (p) => p.view || 'full';
 function grpShareBr() {
-  const n = Math.max(1, [...G.peers.values()].filter((p) => p.connected).length);
+  const n = Math.max(1, [...G.peers.values()].filter((p) => p.connected && grpViewOf(p) === 'full').length);
   return Math.max(1_500_000, Math.round(G.share.q.br / n)); // отдельная отправка каждому — делим канал
+}
+async function grpTuneVideo(p, br = G.share ? grpShareBr() : 0) {
+  const sender = p.vtx?.sender;
+  if (!G.share || !sender?.track) return;
+  const view = grpViewOf(p);
+  if (view === 'full') await tuneSender(sender, { video: { ...G.share.q, br }, mode: G.share.mode });
+  const prm = sender.getParameters();
+  if (!prm.encodings?.length) prm.encodings = [{}];
+  const e = prm.encodings[0];
+  const h = sender.track.getSettings().height || G.share.q.h;
+  e.active = view !== 'off';
+  e.scaleResolutionDownBy = view === 'thumb' ? Math.max(1, h / GRP_THUMB.h) : 1;
+  if (view === 'thumb') { e.maxBitrate = GRP_THUMB.br; e.maxFramerate = GRP_THUMB.fps; }
+  try { await sender.setParameters(prm); } catch (err) { L('grp', { tuneFailed: err.message }); }
 }
 async function grpTuneAll() {
   if (!G.share) return;
+  const br = grpShareBr();
   for (const p of G.peers.values()) {
-    if (p.vtx) await tuneSender(p.vtx.sender, { video: { ...G.share.q, br: grpShareBr() }, mode: G.share.mode });
+    if (!p.connected) continue;
+    await grpTuneVideo(p, br);
     if (p.satx && G.share.atrack) await tuneSender(p.satx.sender, { audio: 128_000 });
+  }
+}
+// у меня: как я сейчас смотрю экран каждого показывающего
+function grpSendViews() {
+  for (const p of G.peers.values()) {
+    if (!p.connected || !p.sharing) { p.viewSent = null; continue; }
+    const el = G.tiles.get(p.id);
+    const view = document.hidden ? 'off'
+      : G.focus === p.id || document.fullscreenElement === el ? 'full' : 'thumb';
+    if (p.viewSent === view) continue;
+    p.viewSent = view;
+    grpSend(p, { t: 'view', view });
   }
 }
 
@@ -649,6 +689,7 @@ async function grpBeginShare() {
     }
     const stream = await captureSource(srcId, QUALITY[qKey], mode, loopback);
     await grpShareStream(stream, { q: QUALITY[qKey], mode, name, atrack: atrack || stream.getAudioTracks()[0] || null });
+    window.duo.ovlOpen(srcId).catch(() => {}); // рисунки, указки и реакции зрителей — поверх окна (в захват не попадает)
   } catch (e) {
     console.warn('grp share', e);
     stopPcm();
@@ -664,7 +705,7 @@ async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', n
   track.addEventListener('ended', () => { if (G.share?.stream === stream) grpStopShare(); });
   for (const p of G.peers.values()) grpAttachSenders(p);
   await grpTuneAll();
-  grpSendAll({ t: 'screen', on: true, name });
+  grpSendAll({ t: 'screen', on: true, name, perm: grpMyPerm() });
   L('grp', { share: true, peers: G.peers.size, audio: !!atrack });
   sound('stream');
   grpUpdateControls();
@@ -675,11 +716,225 @@ function grpStopShare(silent) {
   if (!sh) return;
   G.share = null;
   sh.stream.getTracks().forEach((t) => t.stop());
+  window.duo?.ovlClose();
   stopPcm();
   for (const p of G.peers.values()) grpAttachSenders(p);
   grpSendAll({ t: 'screen', on: false });
   if (G.focus === grpMe()) G.focus = null;
   if (!silent) grpUpdateControls();
+}
+
+/* ---------- Указка, рисунки и реакции поверх экрана участника ----------
+   Зритель шлёт всем ('to' — чей экран): показывающий выводит их в оверлей поверх окна (как в звонке на двоих),
+   остальные зрители рисуют у себя поверх плитки — оверлей в захват не попадает. Цвет — у каждого свой. */
+const GRP_COLORS = ['#ff3c50', '#3ddc84', '#4fd1ff', '#ffcd1f', '#ff2bd6', '#ff8c42', '#b48cff'];
+function grpColor(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return GRP_COLORS[h % GRP_COLORS.length]; }
+// настройки «поверх моего стрима» поменялись — зрители узнают сразу
+function grpPermChanged() { if (G.active && G.share) grpSendAll({ t: 'screen', on: true, name: G.share.name, perm: grpMyPerm() }); }
+function grpMyPerm() { const o = settings(); return { draw: o.ovlDraw !== false, react: !!o.ovlReact }; }
+const GT = { mode: null, stroke: null, ptrAt: 0, flushAt: 0, react: [], strokes: new Map(), ptrs: new Map(), raf: 0, lastOvl: null, ovlLog: [] };
+function grpOvl(m) { GT.lastOvl = m; GT.ovlLog.push({ t: m.t, c: m.c, nick: m.nick }); GT.ovlLog.splice(0, GT.ovlLog.length - 30); window.duo.ovlMsg(m); }
+
+function grpAddTools(el, id) {
+  const cv = document.createElement('canvas');
+  cv.className = 'gdraw';
+  const inp = document.createElement('div');
+  inp.className = 'ginput';
+  const bar = document.createElement('div');
+  bar.className = 'gtools';
+  bar.innerHTML = '<button class="tbtn" data-m="ptr" title="Указка">👆</button><button class="tbtn" data-m="draw" title="Рисовать">✏️</button>'
+    + '<button class="tbtn" data-a="clear" title="Стереть рисунки">🧹</button><span class="tsep"></span>'
+    + REACTIONS.map((r) => `<button class="tbtn" data-r="${r}">${r}</button>`).join('')
+    + '<span class="tsep"></span><button class="tbtn" data-a="full" title="На весь экран / обратно">⛶</button>';
+  for (const x of [bar, inp]) { x.onclick = (e) => e.stopPropagation(); x.ondblclick = (e) => e.stopPropagation(); }
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    if (b.dataset.m) grpSetTool(b.dataset.m);
+    else if (b.dataset.r) grpReact(id, b.dataset.r);
+    else if (b.dataset.a === 'clear') { grpSendAll({ t: 'gclear', to: id }); GT.strokes.clear(); grpKickMarks(); }
+    else if (b.dataset.a === 'full') { if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen().catch(() => {}); }
+  });
+  const pt = (e) => grpNormPt(el, e);
+  inp.addEventListener('pointerdown', (e) => {
+    if (GT.mode !== 'draw') return;
+    try { inp.setPointerCapture(e.pointerId); } catch { /* */ }
+    GT.stroke = { id: newMid(), to: id, pending: [pt(e)] };
+    GT.strokes.set('me:' + GT.stroke.id, { c: grpColor(grpMe()), pts: [pt(e)], done: false, ts: Date.now() });
+    grpKickMarks();
+  });
+  inp.addEventListener('pointermove', (e) => {
+    const now = Date.now();
+    if (GT.mode === 'ptr' && now - GT.ptrAt > 40) {
+      GT.ptrAt = now;
+      const [x, y] = pt(e);
+      grpSendAll({ t: 'gptr', to: id, x, y });
+      GT.ptrs.set(grpMe(), { x, y, ts: now, nick: '', c: grpColor(grpMe()) });
+      grpKickMarks();
+    }
+    if (GT.mode === 'draw' && GT.stroke) {
+      const q = pt(e);
+      GT.stroke.pending.push(q);
+      GT.strokes.get('me:' + GT.stroke.id)?.pts.push(q);
+      grpKickMarks();
+      if (now - GT.flushAt > 50) { GT.flushAt = now; grpFlushStroke(false); }
+    }
+  });
+  const end = () => { if (GT.stroke) grpFlushStroke(true); };
+  inp.addEventListener('pointerup', end);
+  inp.addEventListener('pointercancel', end);
+  inp.addEventListener('pointerleave', () => { if (GT.mode === 'ptr') grpSendAll({ t: 'gptr-off', to: id }); });
+  el.append(cv, inp, bar);
+}
+
+function grpSetTool(mode) {
+  GT.mode = GT.mode === mode ? null : mode;
+  if (GT.mode !== 'ptr' && G.focus) grpSendAll({ t: 'gptr-off', to: G.focus });
+  grpUpdateTools();
+}
+
+function grpUpdateTools() {
+  const p = G.peers.get(G.focus);
+  const perm = p?.perm || {};
+  if (GT.mode && !perm.draw) GT.mode = null;
+  for (const [id, el] of G.tiles) {
+    const bar = el.querySelector('.gtools');
+    if (!bar) continue;
+    const on = id === G.focus && !!G.peers.get(id)?.sharing;
+    el.classList.toggle('tools', on);
+    if (!on) continue;
+    for (const b of bar.querySelectorAll('[data-m]')) { b.classList.toggle('on', GT.mode === b.dataset.m); b.disabled = !perm.draw; b.title = perm.draw ? (b.dataset.m === 'ptr' ? 'Указка' : 'Рисовать') : 'Показывающий не разрешил указку и рисование'; }
+    bar.querySelector('[data-a=clear]').disabled = !perm.draw;
+    for (const b of bar.querySelectorAll('[data-r]')) { b.disabled = !perm.react; b.title = perm.react ? '' : 'Показывающий не включил реакции в настройках'; }
+    el.querySelector('.ginput').dataset.mode = GT.mode || '';
+    el.querySelector('.ginput').classList.toggle('active', !!GT.mode);
+  }
+}
+
+function grpFlushStroke(done) {
+  const st = GT.stroke;
+  if (!st) return;
+  const pts = st.pending.splice(0).map(([x, y]) => [n4(x), n4(y)]);
+  if (pts.length || done) grpSendAll({ t: 'gdraw', to: st.to, id: st.id, pts, done: !!done });
+  if (done) { const ls = GT.strokes.get('me:' + st.id); if (ls) { ls.done = true; ls.ts = Date.now(); } GT.stroke = null; }
+}
+
+function grpReact(to, e) {
+  const now = Date.now();
+  GT.react = GT.react.filter((t) => now - t < 2000);
+  if (GT.react.length >= 6) return; // не больше 6 за 2 секунды
+  GT.react.push(now);
+  grpSendAll({ t: 'greact', to, e });
+  const el = G.tiles.get(to);
+  if (el) floatReaction(e, el);
+}
+
+// чужая отметка: на моём экране — в оверлей; на экране, который я смотрю, — на плитку
+function grpOnMark(p, d) {
+  const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+  const toMe = d.to === grpMe() && !!G.share;
+  const sharer = toMe ? null : G.peers.get(d.to);
+  const perm = toMe ? grpMyPerm() : sharer?.perm;
+  if (!perm || (!toMe && !sharer?.sharing)) return;
+  const viewing = !toMe && G.focus === d.to;
+  const key = p.id.slice(0, 12) + ':' + String(d.id || '').slice(0, 20);
+  const c = grpColor(p.id);
+  switch (d.t) {
+    case 'gdraw': {
+      if (!perm.draw || !Array.isArray(d.pts)) return;
+      const pts = d.pts.slice(0, 300).map((q) => [clamp(q?.[0]), clamp(q?.[1])]);
+      if (toMe) grpOvl({ t: 'stroke', id: key, c, w: 5, pts, done: !!d.done });
+      else if (viewing) {
+        let st = GT.strokes.get(key);
+        if (!st) { st = { c, pts: [], done: false, ts: Date.now() }; GT.strokes.set(key, st); }
+        st.pts.push(...pts);
+        if (d.done) { st.done = true; st.ts = Date.now(); }
+        grpKickMarks();
+      }
+      return;
+    }
+    case 'gptr':
+      if (!perm.draw) return;
+      if (toMe) grpOvl({ t: 'ptr', pid: p.id, x: clamp(d.x), y: clamp(d.y), nick: grpNick(p.id), c });
+      else if (viewing) { GT.ptrs.set(p.id, { x: clamp(d.x), y: clamp(d.y), ts: Date.now(), nick: grpNick(p.id), c }); grpKickMarks(); }
+      return;
+    case 'gptr-off':
+      if (toMe) grpOvl({ t: 'ptr-off', pid: p.id });
+      else { GT.ptrs.delete(p.id); grpKickMarks(); }
+      return;
+    case 'gclear':
+      if (!perm.draw) return;
+      if (toMe) grpOvl({ t: 'clear' });
+      else if (viewing) { GT.strokes.clear(); grpKickMarks(); }
+      return;
+    case 'greact': {
+      if (!perm.react || !REACTIONS.includes(d.e)) return;
+      p.reactIn = (p.reactIn || []).filter((t) => Date.now() - t < 2000);
+      if (p.reactIn.length >= 8) return;
+      p.reactIn.push(Date.now());
+      if (toMe) { grpOvl({ t: 'react', e: d.e }); const el = G.tiles.get(grpMe()); if (el) floatReaction(d.e, el); }
+      else if (viewing) { const el = G.tiles.get(d.to); if (el) floatReaction(d.e, el); }
+      return;
+    }
+    default:
+  }
+}
+
+function grpVideoRect(el) {
+  const v = el.querySelector('video');
+  const r = v.getBoundingClientRect();
+  const vw = v.videoWidth || 16, vh = v.videoHeight || 9;
+  const k = Math.min(r.width / vw, r.height / vh);
+  const w = vw * k, h = vh * k;
+  return { x: r.left + (r.width - w) / 2, y: r.top + (r.height - h) / 2, w, h };
+}
+function grpNormPt(el, e) {
+  const r = grpVideoRect(el);
+  return [Math.max(0, Math.min(1, (e.clientX - r.x) / r.w)), Math.max(0, Math.min(1, (e.clientY - r.y) / r.h))];
+}
+
+function grpKickMarks() { if (!GT.raf) GT.raf = requestAnimationFrame(grpDrawMarks); }
+function grpDrawMarks() {
+  GT.raf = 0;
+  const el = G.tiles.get(G.focus);
+  for (const t of G.tiles.values()) if (t !== el) { const c = t.querySelector('.gdraw'); if (c?.width) c.width = 0; }
+  if (!el || !el.querySelector('.gdraw')) { GT.strokes.clear(); GT.ptrs.clear(); return; }
+  const cv = el.querySelector('.gdraw');
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(el.clientWidth * dpr) || cv.height !== Math.round(el.clientHeight * dpr)) { cv.width = Math.round(el.clientWidth * dpr); cv.height = Math.round(el.clientHeight * dpr); }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  const er = el.getBoundingClientRect();
+  const r = grpVideoRect(el);
+  const X = (x) => r.x - er.left + x * r.w, Y = (y) => r.y - er.top + y * r.h;
+  const now = Date.now();
+  let alive = false;
+  for (const [k, st] of GT.strokes) {
+    const age = st.done ? now - st.ts : 0;
+    const a = age < 2500 ? 1 : 1 - (age - 2500) / 1500;
+    if (a <= 0) { GT.strokes.delete(k); continue; }
+    alive = true;
+    g.globalAlpha = a; g.strokeStyle = st.c; g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    st.pts.forEach(([x, y], i) => (i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
+    if (st.pts.length === 1) g.lineTo(X(st.pts[0][0]) + 0.1, Y(st.pts[0][1]));
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  for (const [k, q] of GT.ptrs) {
+    if (now - q.ts > 1500) { GT.ptrs.delete(k); continue; }
+    alive = true;
+    g.globalAlpha = 0.3; g.fillStyle = q.c; g.beginPath(); g.arc(X(q.x), Y(q.y), 14, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1; g.beginPath(); g.arc(X(q.x), Y(q.y), 6, 0, Math.PI * 2); g.fill();
+    if (q.nick) {
+      g.font = '600 12px "Segoe UI", sans-serif';
+      const tw = g.measureText(q.nick).width;
+      g.fillStyle = 'rgba(15,16,20,.85)'; g.fillRect(X(q.x) + 10, Y(q.y) + 8, tw + 10, 18);
+      g.fillStyle = '#fff'; g.fillText(q.nick, X(q.x) + 15, Y(q.y) + 21);
+    }
+  }
+  if (alive) GT.raf = requestAnimationFrame(grpDrawMarks);
 }
 
 /* ---------- Экран группы ---------- */
@@ -800,6 +1055,7 @@ function grpTile(id) {
   b.className = 'badges';
   nm.append(n, ' ', b);
   el.append(v, av, nm);
+  if (id !== grpMe()) grpAddTools(el, id);
   if (id !== grpMe()) {
     const vols = document.createElement('div');
     vols.className = 'gvols';
@@ -817,7 +1073,7 @@ function grpTile(id) {
     }
     el.appendChild(vols);
   }
-  el.onclick = () => { if (el.classList.contains('sharing')) { G.focus = G.focus === id ? null : id; grpRender(); } };
+  el.onclick = () => { if (el.classList.contains('sharing')) { G.focus = G.focus === id ? null : id; GT.strokes.clear(); GT.ptrs.clear(); grpRender(); grpKickMarks(); } };
   el.ondblclick = () => { if (el.classList.contains('sharing')) { if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen().catch(() => {}); } };
   G.tiles.set(id, el);
   grpPaintAvatar(id);
@@ -852,9 +1108,11 @@ function grpRender() {
   });
   if (G.focus && !G.tiles.get(G.focus)?.classList.contains('sharing')) G.focus = null;
   grid.classList.toggle('focus', !!G.focus);
+  grpUpdateTools();
   const n = 1 + [...G.peers.values()].filter((p) => p.connected).length;
   $('gStatus').querySelector('span').textContent = `В звонке: ${n} из ${G.members.size}`;
   $('gStatus').className = 'status ' + (n > 1 ? 'ok' : 'waiting');
+  grpSendViews();
 }
 
 function grpReset() {
@@ -862,6 +1120,7 @@ function grpReset() {
   for (const t of Object.values(G.lostTimer || {})) clearTimeout(t);
   G.lostTimer = {};
   G.nickCache.clear();
+  GT.mode = null; GT.stroke = null; GT.strokes.clear(); GT.ptrs.clear();
   G.gid = null; G.focus = null; G.conv = null; G.share = null;
 }
 
@@ -932,5 +1191,7 @@ function grpBind() {
     $('gChatInput').value = '';
   };
   window.addEventListener('beforeunload', () => { if (G.active) grpSendAll({ t: 'bye' }); });
+  document.addEventListener('visibilitychange', () => { if (G.active) grpSendViews(); });
+  document.addEventListener('fullscreenchange', () => { if (G.active) grpSendViews(); });
 }
 grpBind();

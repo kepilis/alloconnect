@@ -3,7 +3,7 @@
 const cv = document.getElementById('cv');
 const g = cv.getContext('2d');
 const strokes = new Map(); // id -> { c, w, pts: [[x,y]], done, ts }
-let ptr = null;            // { x, y, nick, ts }
+const ptrs = new Map();    // чья указка (pid; в звонке на двоих — одна) -> { x, y, nick, c, ts }
 let raf = 0;
 
 function resize() {
@@ -42,13 +42,15 @@ function draw() {
   }
   g.globalAlpha = 1;
   g.shadowBlur = 0;
-  if (ptr && now - ptr.ts < 1500) {
+  for (const [pid, ptr] of ptrs) {
+    if (now - ptr.ts >= 1500) { ptrs.delete(pid); continue; }
     alive = true;
     const x = ptr.x * W, y = ptr.y * H;
     const pulse = 1 + 0.25 * Math.sin(now / 120);
-    g.fillStyle = 'rgba(255,60,80,.25)';
+    g.globalAlpha = 0.25;
+    g.fillStyle = ptr.c;
     g.beginPath(); g.arc(x, y, 18 * pulse, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#ff3c50';
+    g.globalAlpha = 1;
     g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill();
     g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke();
     if (ptr.nick) {
@@ -170,8 +172,8 @@ window.ovl.on((m) => {
       break;
     }
     case 'clear': strokes.clear(); kick(); break;
-    case 'ptr': ptr = { x: clamp(m.x), y: clamp(m.y), nick: String(m.nick || '').slice(0, 24), ts: Date.now() }; kick(); break;
-    case 'ptr-off': ptr = null; kick(); break;
+    case 'ptr': ptrs.set(String(m.pid || 'one').slice(0, 64), { x: clamp(m.x), y: clamp(m.y), nick: String(m.nick || '').slice(0, 24), c: /^#[0-9a-f]{6}$/i.test(m.c) ? m.c : '#ff3c50', ts: Date.now() }); kick(); break;
+    case 'ptr-off': if (m.pid) ptrs.delete(String(m.pid)); else ptrs.clear(); kick(); break;
     case 'react': react(String(m.e || '').slice(0, 8)); break;
     case 'vid': if (m.bytes) showVideo(m.bytes, /^video\//.test(String(m.mime)) ? String(m.mime) : 'video/mp4', String(m.nick || '').slice(0, 24), cleanPl(m.pl), Number(m.vol) || 0, String(m.sink || '').slice(0, 200)); break;
     case 'img': if (m.bytes) showImage(m.bytes, String(m.mime || 'image/png'), String(m.nick || '').slice(0, 24), cleanPl(m.pl)); break;

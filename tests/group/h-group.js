@@ -83,8 +83,8 @@ app.whenReady().then(async () => {
     // 3. B показывает экран со звуком (canvas + генератор)
     if (ROLE !== 'D') await step('share', async () => {
       if (ROLE === 'B') {
-        await js(`(() => { const c = document.createElement('canvas'); c.width = 640; c.height = 360; const g = c.getContext('2d'); let i = 0;
-          setInterval(() => { g.fillStyle = 'hsl(' + (i++ * 7 % 360) + ',70%,50%)'; g.fillRect(0, 0, 640, 360); }, 33);
+        await js(`(() => { const c = document.createElement('canvas'); c.width = 1280; c.height = 720; const g = c.getContext('2d'); let i = 0;
+          setInterval(() => { g.fillStyle = 'hsl(' + (i++ * 7 % 360) + ',70%,50%)'; g.fillRect(0, 0, 1280, 720); }, 33);
           const ac = audio(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start();
           return grpShareStream(c.captureStream(30), { name: 'тест', atrack: d.stream.getAudioTracks()[0] }).then(() => true); })()`);
         put('shareB');
@@ -98,6 +98,59 @@ app.whenReady().then(async () => {
       }
     });
     await sync('c5', ABC);
+
+    // 3б. качество по тому, как смотрят; рисунок, указка и реакция A на экране B; саундпад A
+    if (ROLE !== 'D') await step('tools', async () => {
+      const pB = `G.peers.get(${J(ids.B)})`, pC = `G.peers.get(${J(ids.C)})`;
+      const enc = (pp) => `${pp}.vtx.sender.getParameters().encodings[0]`;
+      if (ROLE === 'C') { await js(`G.focus = null; grpRender(); true`); put('unfocusC'); await take('thumbOk'); await js(`G.focus = ${J(ids.B)}; grpRender(); true`); put('refocusC'); }
+      if (ROLE === 'B') {
+        await take('unfocusC');
+        res.thumbC = await waitFor(W, `${pC}.view === 'thumb' && ${enc(pC)}.scaleResolutionDownBy > 1 && ${enc(pC)}.maxBitrate === 600000`, 10000);
+        put('thumbOk');
+        await take('refocusC');
+        res.fullC = await waitFor(W, `${pC}.view === 'full' && ${enc(pC)}.scaleResolutionDownBy === 1 && ${enc(pC)}.maxBitrate > 600000`, 10000);
+        await js(`store.set('settings', { ...settings(), ovlReact: true }); grpPermChanged(); true`);
+        put('permB');
+      }
+      if (ROLE === 'A') { await take('thumbOk'); await take('permB'); }
+      await take('permB');
+      if (ROLE === 'A') {
+        res.permSeen = await waitFor(W, `!!${pB}?.perm?.react && !!${pB}?.perm?.draw`, 10000);
+        res.toolsShown = await js(`G.tiles.get(${J(ids.B)}).classList.contains('tools')`);
+        await js(`(() => { const el = G.tiles.get(${J(ids.B)}); const inp = el.querySelector('.ginput');
+          grpSetTool('draw'); const r = inp.getBoundingClientRect();
+          const ev = (t, k) => inp.dispatchEvent(new PointerEvent(t, { clientX: r.left + r.width * k, clientY: r.top + r.height / 2, pointerId: 1, bubbles: true }));
+          ev('pointerdown', 0.3); ev('pointermove', 0.4); GT.flushAt = 0; ev('pointermove', 0.5); ev('pointerup', 0.5);
+          grpSetTool('ptr'); GT.ptrAt = 0; ev('pointermove', 0.6);
+          grpReact(${J(ids.B)}, '🔥'); return true; })()`);
+        put('drawA');
+      }
+      if (ROLE === 'B') {
+        await take('drawA');
+        await waitFor(W, `['stroke', 'ptr', 'react'].every((t) => GT.ovlLog.some((m) => m.t === t))`, 10000);
+        res.ovl = await js(`({ types: [...new Set(GT.ovlLog.map((m) => m.t))], strokeColor: GT.ovlLog.find((m) => m.t === 'stroke')?.c, wantColor: grpColor(${J(ids.A)}), ptrNick: GT.ovlLog.find((m) => m.t === 'ptr')?.nick })`);
+      }
+      if (ROLE === 'C') {
+        await take('drawA');
+        res.seeStrokeA = await waitFor(W, `[...GT.strokes.keys()].some((k) => k.startsWith(${J(ids.A.slice(0, 12))}))`, 10000);
+        res.seeReactA = await waitFor(W, `!!G.tiles.get(${J(ids.B)}).querySelector('.react-float')`, 5000);
+      }
+      // саундпад: пока звучит — голос шире у всех
+      if (ROLE === 'A') {
+        await js(`(async () => { const sr = 48000, n = sr * 3; const buf = new ArrayBuffer(44 + n * 2); const v = new DataView(buf);
+          const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+          w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+          v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+          for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / sr * 2 * Math.PI * 440) * 8000, true);
+          await spAddFiles([new File([buf], 'beep.wav', { type: 'audio/wav' })]);
+          await spPlay(spList[spList.length - 1].id); return true; })()`);
+        res.spWide = await waitFor(W, `[...G.peers.values()].every((p) => p.atx.sender.getParameters().encodings[0].maxBitrate === 128000)`, 5000);
+        await js(`spStopAll(); true`);
+        res.spNarrow = await waitFor(W, `[...G.peers.values()].every((p) => p.atx.sender.getParameters().encodings[0].maxBitrate === 64000)`, 5000);
+      }
+    });
+    await sync('c5b', ABC);
 
     // 4. A шлёт файл всем
     if (ROLE !== 'D') await step('file', async () => {
@@ -119,6 +172,26 @@ app.whenReady().then(async () => {
     }
     res.conn4 = await waitFor(W, `${nConnected} === 3`, 80000);
     await sync('c7', ALL);
+
+    // 6б. D показывает настоящий экран со звуком компьютера (как через окно выбора)
+    await step('real', async () => {
+      if (ROLE === 'D') {
+        res.realShare = await js(`(async () => { pickerSources = await window.duo.getSources(); pickedId = pickerSources.find((s) => s.isScreen)?.id || null;
+          if (!pickedId) return { src: false };
+          document.getElementById('quality').value = '720p30'; document.getElementById('sysAudio').checked = true;
+          await grpBeginShare(); return { src: true, on: !!G.share, audio: !!G.share?.atrack, helper: !!pcmNode }; })()`);
+        put('realD');
+        await take('realSeenA'); await take('realSeenB'); await take('realSeenC');
+        await js(`grpStopShare(); true`);
+      } else {
+        await take('realD');
+        res.seeRealD = await waitFor(W, `(() => { const t = ${tileOf('D')}; return !!t && t.classList.contains('sharing') && t.querySelector('video').videoWidth > 0; })()`, 25000);
+        await sleep(2500);
+        res.realAudioIn = await js(`(async () => { const p = G.peers.get(${J(ids.D)}); let b = 0; (await p.pc.getStats(p.satx.receiver.track)).forEach((r) => { if (r.type === 'inbound-rtp') b += r.bytesReceived; }); return b; })()`);
+        put('realSeen' + ROLE);
+      }
+    });
+    await sync('c7b', ALL);
 
     // 7. обрыв: B рвёт соединение с C — оба переподключаются сами
     if (ROLE === 'B') await js(`G.peers.get(${J(ids.C)}).pc.close(); true`);
