@@ -53,6 +53,41 @@ const DEFAULTS = {
 };
 const settings = () => ({ ...DEFAULTS, ...store.get('settings', {}) });
 
+/* ---------- Темы оформления (стили — themes.css) ---------- */
+const THEMES = [
+  { id: '', name: 'Стандартная', sw: ['#111216', '#20222a', '#7c5cff', '#3ddc84'] },
+  { id: 'neon', name: 'Неоновая ночь', sw: ['#07060f', '#161331', '#ff2bd6', '#00f0ff'] },
+  { id: 'terminal', name: 'Терминал', sw: ['#030703', '#0a160b', '#39ff6a', '#1f9a44'] },
+  { id: 'glass', name: 'Стекло', sw: ['#3b5bdb', '#9b4dff', '#12b5a6', '#f3f6ff'] },
+  { id: 'pixel', name: 'Ретро-пиксель', sw: ['#1a1c3a', '#3a3d78', '#ffcd1f', '#ff4d6d'] },
+  { id: 'manga', name: 'Манга', sw: ['#f3efe6', '#ffffff', '#111111', '#e63946'] },
+  { id: 'space', name: 'Космос', sw: ['#04040c', '#4b3fb5', '#8b7bff', '#4fd1ff'] },
+];
+function applyTheme(id) {
+  const t = THEMES.some((x) => x.id === id) ? id : '';
+  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  document.querySelectorAll('#themeGrid .theme-card').forEach((b) => b.classList.toggle('selected', b.dataset.id === t));
+}
+function buildThemeGrid() {
+  const g = $('themeGrid');
+  if (!g || g.childElementCount) return;
+  for (const t of THEMES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'theme-card';
+    b.dataset.id = t.id;
+    const sw = document.createElement('span');
+    sw.className = 'theme-sw';
+    sw.style.background = `linear-gradient(135deg, ${t.sw[0]} 0 40%, ${t.sw[1]} 40% 60%, ${t.sw[2]} 60% 80%, ${t.sw[3]} 80%)`;
+    const n = document.createElement('span');
+    n.textContent = t.name;
+    b.append(sw, n);
+    b.onclick = () => { applyTheme(t.id); store.set('settings', { ...settings(), theme: t.id }); L('settings', { theme: t.id || 'standard' }); };
+    g.appendChild(b);
+  }
+}
+applyTheme(settings().theme || '');
+
 /* ---------- Состояние ---------- */
 const S = {
   pc: null, dc: null, role: null,      // role: 'host' | 'guest'
@@ -2624,6 +2659,8 @@ let settingsMicStream = null;
 let stopSettingsMeter = null;
 
 async function openSettings() {
+  buildThemeGrid();
+  applyTheme(settings().theme || '');
   const o = settings();
   $('optNoise').checked = o.noise;
   $('optRnn').checked = o.rnn !== false;

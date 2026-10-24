@@ -6,6 +6,7 @@
         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' blob:;" />
   <title>alloconnect</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="themes.css" />
 </head>
 <body>
 
@@ -305,6 +306,12 @@
         <button type="button" id="btnAvatarClear" class="btn small">Убрать</button>
         <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
       </div>
+    </div>
+
+    <div class="ringbox">
+      <div class="ringbox-head">Оформление</div>
+      <div id="themeGrid" class="theme-grid"></div>
+      <small class="muted">Тема только у тебя — у друга остаётся его собственная.</small>
     </div>
 
     <label class="field">

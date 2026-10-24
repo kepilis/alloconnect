@@ -534,3 +534,9 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
   .ctl { padding: 7px 11px; }
   .chat-head { padding: 8px 12px; }
 }
+/* выбор темы */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin: 6px 0 8px; }
+.theme-card { display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 6px; border-radius: 10px; border: 2px solid var(--line); background: var(--panel-2); cursor: pointer; color: var(--text); font-size: 12px; text-align: left; }
+.theme-card:hover { border-color: var(--accent-2); }
+.theme-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.theme-sw { height: 36px; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); }
