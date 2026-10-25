@@ -1390,6 +1390,11 @@ function checkUpdateResult() {
     try { res = fs.readFileSync(path.join(stagingDir(), 'result.txt'), 'utf-8').trim(); } catch { /* */ }
     updResult = { ok: res === 'ok', err: res === 'ok' ? null : res, from: pend.from, to: pend.to, now: app.getVersion() };
     log('update', { result: updResult });
+    // поставилась — кладём её подписанный update.json к программе: теперь и мы можем раздать её друзьям
+    // (помощник меняет только app.asar и exe; подпись и версию проверит loadOwnUpdate)
+    if (updResult.ok && pend.to === app.getVersion()) {
+      try { fs.copyFileSync(path.join(stagingDir(), pend.to, 'update.json'), path.join(resDir(), 'update.json')); } catch (e) { log('update', { manifestCopy: e.message }); }
+    }
     fs.rmSync(stagingDir(), { recursive: true, force: true });
   } catch { /* обновления не было */ }
 }
