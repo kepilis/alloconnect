@@ -280,6 +280,16 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .fdel { width: 28px; height: 28px; font-size: 13px; opacity: .5; }
 .fdel:hover { opacity: 1; }
 .hint { margin: 10px 0 0; }
+.wait-bar {
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; text-align: center;
+}
+.rejoin-bar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 12px;
+  border: 1px solid var(--accent); border-radius: 12px; background: var(--panel);
+}
+.rejoin-bar span { flex: 1; min-width: 0; }
 .fc-card { width: 460px; max-width: calc(100vw - 32px); }
 .fc-card .btn.big { width: 100%; margin-top: 12px; }
 .fc-card .codebox textarea { height: 64px; }
