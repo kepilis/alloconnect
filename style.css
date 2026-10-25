@@ -304,8 +304,8 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 }
 @keyframes ringpulse { 0% { box-shadow: 0 0 0 0 rgba(124,92,255,.5); } 70% { box-shadow: 0 0 0 18px rgba(124,92,255,0); } 100% { box-shadow: 0 0 0 0 rgba(124,92,255,0); } }
 .call-card h2 { margin: 0 0 6px; }
-.call-actions { display: flex; gap: 10px; margin-top: 18px; }
-.call-actions .btn { flex: 1; }
+.call-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; } /* не влезают в ряд (длинные надписи в темах) — переносятся */
+.call-actions .btn { flex: 1 1 0; min-width: min(100%, max-content); }
 .danger-btn { background: rgba(255,84,104,.15); border-color: rgba(255,84,104,.45); color: #ffb3bd; }
 .danger-btn:hover { background: var(--bad); color: #fff; }
 
