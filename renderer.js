@@ -215,23 +215,25 @@ function sound(kind) {
   if (!settings().sounds) return;
   const c = audio();
   const seq = {
-    join: [523, 784], leave: [784, 523], msg: [988],
+    join: [523, 784], leave: [784, 523], gone: [784, 622, 466, 392], msg: [988],
     mute: [520, 390], unmute: [390, 520], stream: [660, 880, 1046], error: [300, 220],
   }[kind];
   if (!seq) return;
+  const loud = kind === 'gone'; // собеседник вышел — заметнее, чтобы услышать и в игре
+  const vol = loud ? 0.22 : 0.12, len = loud ? 0.26 : 0.15, step = loud ? 0.16 : 0.085;
   let t = c.currentTime + 0.01;
   for (const f of seq) {
     const o = c.createOscillator();
     const g = c.createGain();
-    o.type = 'sine';
+    o.type = loud ? 'triangle' : 'sine';
     o.frequency.value = f;
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.12, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len);
     o.connect(g).connect(fxOut);
     o.start(t);
-    o.stop(t + 0.16);
-    t += 0.085;
+    o.stop(t + len + 0.01);
+    t += step;
   }
 }
 
@@ -834,6 +836,10 @@ function onPcState(state) {
 function onConnected() {
   clearTimeout(S.connectTimer);
   S.connected = true;
+  S.waiting = null;
+  S.rejoin = null;
+  $('waitBar').classList.add('hidden');
+  showRejoin();
   send({ t: 'hello', nick: S.nick, muted: S.muted, deaf: S.deafened });
   capsReady.then((c) => send({ t: 'caps', dec: c.dec, enc: c.enc }));
   enterCall();
@@ -999,7 +1005,8 @@ function attachRemoteVoice(stream) {
   });
 }
 
-function closePc() {
+// later — закрыть через столько мс (дать уйти «bye»); отвязываем сразу, чтобы не задеть новое соединение
+function closePc(later = 0) {
   const pc = S.pc;
   const dc = S.dc;
   const fdc = S.fdc;
@@ -1011,10 +1018,13 @@ function closePc() {
   S.cdu = null;
   S.fileChan = null;
   S.tx = null;
-  chan?.fail('звонок завершён');
-  try { fdc?.close(); } catch { /* ignore */ }
-  try { dc?.close(); } catch { /* ignore */ }
-  try { pc?.close(); } catch { /* ignore */ }
+  const fin = () => {
+    chan?.fail('звонок завершён');
+    try { fdc?.close(); } catch { /* ignore */ }
+    try { dc?.close(); } catch { /* ignore */ }
+    try { pc?.close(); } catch { /* ignore */ }
+  };
+  if (later) setTimeout(fin, later); else fin();
 }
 
 function releaseMic() {
@@ -1043,10 +1053,66 @@ function friendGone(reason) {
   $('remoteVoice').srcObject = null;
   closePc();
   setFriendPresent(false);
-  sound('leave');
-  sysMsg(`${reason}. Чтобы созвониться снова — «Выйти» и новое приглашение.`);
-  setStatus('bad', 'Звонок завершён');
+  sound('gone');
+  if (!document.hasFocus()) window.duo.notify({ title: reason, body: 'alloconnect', kind: 'msg' });
   $('btnShare').disabled = true;
+  $('btnAddFriend').classList.add('hidden'); // собеседника уже нет — добавить можно только у себя, он не узнает
+  // друг (ID подтверждён ключом) может вернуться в этот же звонок — ждём его; по коду с не-другом вернуться нечем
+  const id = canSignal() ? S.peerIdent.id : null;
+  const nick = S.friendNick;
+  S.waiting = id ? { id, nick } : null;
+  $('waitBar').classList.remove('hidden');
+  $('btnCallAgain').classList.toggle('hidden', !id);
+  if (id) {
+    $('waitText').textContent = `${nick} больше не в звонке — ждём, может вернуться`;
+    sysMsg(`${reason}. Ждём — ${nick} может вернуться, или позвони снова.`);
+    setStatus('waiting', `Ждём ${nick}…`);
+    window.duo.friendsSend(id, { t: 'call-wait' }); // у него в лобби появится «Вернуться»
+  } else {
+    $('waitText').textContent = `${nick} больше не в звонке. Вернуться в этот звонок нельзя — вы не в друзьях`;
+    sysMsg(`${reason}. Вернуться в этот звонок нельзя — вы не в друзьях. Добавьте друг друга («➕ Добавить друга»), чтобы созваниваться в один клик.`);
+    setStatus('bad', 'Звонок завершён');
+  }
+}
+
+/* ---------- Возврат в звонок ----------
+   Ушедший видит в лобби «Вернуться» (пока я жду — 'call-wait', перестал ждать — 'call-closed').
+   «Вернуться» — обычный звонок другу с пометкой rejoin: тот, кто ждёт именно его, принимает без звонка. */
+const REJOIN_FOR = 30 * 60 * 1000;
+function showRejoin() {
+  const r = S.rejoin;
+  const on = !!r && Date.now() < r.until && !S.inCall;
+  if (r && !on && Date.now() >= r.until) S.rejoin = null;
+  $('rejoinBar').classList.toggle('hidden', !on);
+  if (on) $('rejoinText').textContent = `Звонок с ${r.nick} ещё идёт — ${r.nick} ждёт тебя`;
+}
+function rejoinCall() {
+  const r = S.rejoin;
+  S.rejoin = null;
+  showRejoin();
+  if (!r || !isFriend(r.id)) return;
+  callFriend(r.id, true);
+}
+// я жду, а позвонить хочу сам: выхожу из пустого звонка и звоню
+function callAgain() {
+  const w = S.waiting;
+  if (!w) return;
+  S.waiting = null;
+  leaveCall();
+  callFriend(w.id, true);
+}
+// он вернулся (звонок с пометкой rejoin, а я жду именно его): выходим из пустого звонка и сразу отвечаем
+function acceptRejoin(id, nick, code) {
+  L('friend-call', { rejoin: 'accepted' });
+  S.waiting = null;
+  leaveCall();
+  S.friendCall = { id, nick, dir: 'in', code, accepted: true };
+  showCallModal('in', nick);
+  $('callTitle').textContent = `${nick} возвращается`;
+  $('callSub').textContent = 'Соединяемся…';
+  $('btnCallAccept').classList.add('hidden');
+  $('btnCallDecline').classList.add('hidden');
+  makeAnswer(code);
 }
 
 /* =========================================================
@@ -1571,6 +1637,8 @@ function enterCall() {
 
 function leaveCall() {
   L('call', { leave: true });
+  if (S.waiting) { window.duo.friendsSend(S.waiting.id, { t: 'call-closed' }); S.waiting = null; }
+  $('waitBar').classList.add('hidden');
   spStopAll();
   $('soundpad').classList.add('hidden');
   $('btnSoundpad').classList.remove('on-pad');
@@ -1595,7 +1663,7 @@ function leaveCall() {
   remoteSrc = null;
   $('remoteVoice').srcObject = null;
   // даём «bye» уйти, потом закрываем
-  setTimeout(closePc, wasConnected ? 300 : 0);
+  closePc(wasConnected ? 300 : 0);
   releaseMic();
   S.inCall = false;
   S.muted = false;
@@ -1609,6 +1677,7 @@ function leaveCall() {
   $('lobby').classList.add('active');
   showStep('stepHome');
   renderFriends();
+  showRejoin();
 }
 
 function setFriendPresent(on) {
@@ -2865,6 +2934,10 @@ function bind() {
   updateNsBtn();
   $('btnShare').onclick = openPicker;
   $('btnLeave').onclick = leaveCall;
+  $('btnCallAgain').onclick = callAgain;
+  $('btnRejoin').onclick = rejoinCall;
+  $('rejoinClose').onclick = () => { S.rejoin = null; showRejoin(); };
+  setInterval(showRejoin, 30000); // «Вернуться» гаснет сам через REJOIN_FOR
 
   $('friendVol').oninput = (e) => {
     const v = Number(e.target.value);
@@ -3431,12 +3504,13 @@ function endFriendCall(text) {
   if (text) { toast(text); L('friend-call', { ended: text, dir: fc?.dir }); }
 }
 
-async function callFriend(id) {
+async function callFriend(id, rejoin = false) {
   if (S.busy || S.pc || S.friendCall || S.inCall) return;
   const f = friendsList.find((x) => x.id === id);
   if (!f) return;
   S.nick = $('nick').value.trim() || 'Без имени';
-  S.friendCall = { id, nick: f.nick, dir: 'out' };
+  if (S.rejoin?.id === id) { S.rejoin = null; showRejoin(); }
+  S.friendCall = { id, nick: f.nick, dir: 'out', rejoin };
   L('friend-call', { out: true, friendOnline: f.online, addrKinds: f.addrKinds });
   showCallModal('out', f.nick);
   startInvite();
@@ -3446,7 +3520,7 @@ async function sendFriendInvite(code) {
   const fc = S.friendCall;
   if (!fc || fc.dir !== 'out') return; // встречный звонок уже принят — своё приглашение не шлём
   $('callSub').textContent = 'Отправляю вызов…';
-  const r = await window.duo.friendsSend(fc.id, { t: 'call', code, nick: S.nick });
+  const r = await window.duo.friendsSend(fc.id, { t: 'call', code, nick: S.nick, ...(fc.rejoin ? { rejoin: 1 } : {}) });
   if (S.friendCall !== fc) return;
   if (!r.ok) { endFriendCall(`${fc.nick} не отвечает — у него закрыт alloconnect или до него не достучаться`); return; }
   $('callSub').textContent = 'Вызов доставлен — ждём ответа';
@@ -3482,6 +3556,11 @@ function onFriendMsg({ id, msg }) {
         return;
       }
       if (fc?.dir === 'in' && fc.id === id && fc.accepted) return; // повтор того же вызова
+      // он возвращается в звонок, где я жду именно его («Вернуться» или просто «Позвонить» — неважно)
+      if (f && S.waiting?.id === id && S.inCall && !S.connected && !S.busy && !fc && /^ALOI\./.test(String(msg.code || ''))) {
+        acceptRejoin(id, nick, msg.code);
+        return;
+      }
       if (S.inCall || S.busy || S.pc || fc) { window.duo.friendsSend(id, { t: 'busy' }); return; }
       if (!/^ALOI\./.test(String(msg.code || ''))) return;
       S.friendCall = { id, nick, dir: 'in', code: msg.code };
@@ -3512,6 +3591,14 @@ function onFriendMsg({ id, msg }) {
       return;
     case 'cancel':
       if (fc?.id === id && fc.dir === 'in') endFriendCall(fc.accepted ? `${nick} отменил звонок` : `Пропущенный звонок от ${nick}`);
+      return;
+    case 'call-wait': // я вышел, а он остался и ждёт
+      if (!f || S.inCall || S.friendCall) return;
+      S.rejoin = { id, nick, until: Date.now() + REJOIN_FOR };
+      showRejoin();
+      return;
+    case 'call-closed':
+      if (S.rejoin?.id === id) { S.rejoin = null; showRejoin(); }
       return;
     case 'dm':
       if (f) onDmText(id, nick, msg);

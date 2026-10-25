@@ -23,6 +23,11 @@
 
     <!-- Шаг 0: выбор -->
     <div id="stepHome" class="step active">
+      <div id="rejoinBar" class="rejoin-bar hidden">
+        <span id="rejoinText"></span>
+        <button id="btnRejoin" class="btn primary small">↩ Вернуться</button>
+        <button id="rejoinClose" class="icon-btn" title="Скрыть">✕</button>
+      </div>
       <div id="friendsBox" class="friends hidden">
         <div class="friends-head">Друзья</div>
         <div id="friendsList"></div>
@@ -101,6 +106,12 @@
           <div class="avatar"><span id="friendInitial">…</span></div>
           <div class="pname"><span id="friendName">ожидание</span> <em class="badges" id="friendBadges"></em></div>
         </div>
+      </div>
+
+      <!-- Собеседник вышел: ждём, можно позвать снова -->
+      <div id="waitBar" class="wait-bar hidden">
+        <span id="waitText"></span>
+        <button id="btnCallAgain" class="btn primary small">📞 Позвонить снова</button>
       </div>
 
       <!-- Стрим друга -->
