@@ -103,7 +103,7 @@ input:focus, select:focus { border-color: var(--accent); }
   outline: none; user-select: text; word-break: break-all;
 }
 .codebox textarea:focus { border-color: var(--accent); color: var(--text); }
-.codebox .btn { width: 120px; }
+.codebox .btn { width: auto; min-width: 120px; flex: none; } /* длинная надпись (темы) — кнопка шире, а не в две строки */
 .step .btn.big { width: 100%; margin-top: 12px; }
 .info { min-height: 18px; margin: 10px 0 6px; }
 .info.ok { color: var(--ok); }
@@ -280,8 +280,10 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .fdel { width: 28px; height: 28px; font-size: 13px; opacity: .5; }
 .fdel:hover { opacity: 1; }
 .hint { margin: 10px 0 0; }
+/* плашка ожидания — под аватарками (в низком окне не наезжает на них); стрима в это время нет */
+.view:has(> #waitBar:not(.hidden)) { flex-direction: column; gap: 18px; }
 .wait-bar {
-  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px);
+  max-width: min(460px, 100%);
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; text-align: center;
 }

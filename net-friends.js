@@ -281,6 +281,10 @@ class FriendsNet extends EventEmitter {
     setTimeout(() => this.ping(id), 200);
     this.punch();
     this.log('friends', { added: id.slice(0, 8), addrKinds: (addrs || []).map((a) => a.kind) });
+    // подружились другим путём («В друзья» в звонке) — незавершённый запрос по коду дружбы больше не нужен
+    const out = this.outgoing.get(id);
+    if (out) { this.cancelOutgoing(id); this.emit('fr', { type: 'status', id, st: 'added', nick: out.nick }); }
+    this.incoming.delete(id);
     return true;
   }
   /* адрес друга по работающему пути WebRTC (из звонка) — надёжнее STUN, если у кого-то VPN */
