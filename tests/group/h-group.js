@@ -301,14 +301,19 @@ app.whenReady().then(async () => {
     await sync('c12', ALL);
 
     // 11. самозванец: у D «ломается» ключ, B переподключается к нему — B должен его отвергнуть
-    if (ROLE === 'D') { await js(`window.__okCh = grpOnCh; grpOnCh = async (p) => grpSend(p, { t: 'proof', mac: 'AAAA' }); true`); put('badD'); }
+    // (неверный ответ — через 4 с: пока D не подтвердил ID, B пишет в чат — до D это дойти не должно)
+    if (ROLE === 'D') { await js(`window.__okCh = grpOnCh; grpOnCh = async (p) => { await new Promise((r) => setTimeout(r, 4000)); grpSend(p, { t: 'proof', mac: 'AAAA' }); }; true`); put('badD'); }
     if (ROLE === 'B') {
       await take('badD');
       await js(`G.peers.get(${J(ids.D)}).pc.close(); true`);
+      res.unverifiedD = await waitFor(W, `(() => { const p = G.peers.get(${J(ids.D)}); return !!p && !p.connected && p.dc.readyState === 'open'; })()`, 30000);
+      await js(`document.getElementById('gChatInput').value='secret from B'; document.getElementById('gChatForm').requestSubmit(); true`);
       res.rejectedD = await waitFor(W, `G.left.has(${J(ids.D)}) && !G.members.has(${J(ids.D)}) && /ключ не его|не подтвердил свой ID/.test(G.conv.box.textContent)`, 60000);
       res.othersStay = await js(`${nConnected} === 2`);
     }
     await sync('c13', ALL);
+    if (ROLE === 'D') res.noSecret = await js(`!/secret from B/.test(G.conv.box.textContent)`);
+    if (ROLE === 'A') res.gotSecret = await js(`/secret from B/.test(G.conv.box.textContent)`);
     await js(`grpLeave(); true`).catch(() => {});
     if (ROLE === 'D') await js(`grpOnCh = window.__okCh; true`); // снова честный
     await sleep(1500);

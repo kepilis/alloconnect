@@ -37,7 +37,8 @@ function grpNick(id) {
 }
 function grpRosterList() { return [...G.members.values()].map((m) => ({ id: m.id, nick: m.nick, via: m.via || '' })); }
 function grpBusy() { return G.active || S.inCall || S.busy || !!S.pc || !!S.friendCall; }
-const grpOpen = (id) => G.peers.get(id)?.dc.readyState === 'open';
+// на связи и подтвердил свой ID: только таким идут сообщения и пересылка записок
+const grpOpen = (id) => { const p = G.peers.get(id); return !!p?.connected && p.dc.readyState === 'open'; };
 
 function grpAddMember(m, force) {
   const id = String(m?.id || '');
@@ -294,7 +295,7 @@ function grpAttachSenders(p) {
 }
 
 function grpSend(p, obj) { try { if (p?.dc.readyState === 'open') p.dc.send(JSON.stringify(obj)); } catch { /* */ } }
-function grpSendAll(obj) { for (const p of G.peers.values()) grpSend(p, obj); }
+function grpSendAll(obj) { for (const p of G.peers.values()) if (p.connected) grpSend(p, obj); } // до подтверждения ID — ничего
 const grpSdp = (pc) => opusStereo(minifySdp(pc.localDescription.sdp));
 
 async function grpConnect(id, tries = 0) {
@@ -463,7 +464,7 @@ function grpVerified(p) {
 }
 
 function grpOnData(p, d) {
-  if (p.closed || !d || typeof d.t !== 'string') return;
+  if (p.closed || !G.active || !d || typeof d.t !== 'string') return;
   if (d.t === 'ch') { grpOnCh(p, d); return; }
   if (d.t === 'proof') { grpOnProof(p, d); return; }
   if (!p.connected) { p.queue = p.queue || []; if (p.queue.length < 50) p.queue.push(d); return; } // до подтверждения ID — ждём

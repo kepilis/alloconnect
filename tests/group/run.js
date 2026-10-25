@@ -48,6 +48,7 @@ const R = (role) => readRes(dirs.SH, role);
   t('B собрал группу снова, A позвал C — все четверо', [a, b, c, d].every((r) => r.conn4again && r.sameGid), [a, b, c, d].map((r) => [r.conn4again, r.sameGid]));
   t('история чата группы на месте', [a, b, c].every((r) => /edited by A/.test(r.history || '') && /reply from C/.test(r.history || '')), [a, b, c].map((r) => (r.history || '').slice(0, 300)));
   t('самозванец отвергнут, остальные на связи', b.rejectedD && b.othersStay, [b.rejectedD, b.othersStay]);
+  t('пока ID не подтверждён — чат до него не доходит (остальным дошёл)', b.unverifiedD && d.noSecret && a.gotSecret, [b.unverifiedD, d.noSecret, a.gotSecret]);
   t('A и B собрали группу одновременно — половины соединились', [a, b, c, d].every((r) => r.merged && r.mergedGid), [a, b, c, d].map((r) => [r.merged, r.mergedGid]));
   const errs = ROLES.flatMap((r) => (R(r).errors || []).map((e) => `${r}: ${e}`));
   if (errs.length) console.log('Ошибки в консоли окна:\n  ' + errs.slice(0, 15).join('\n  '));
