@@ -27,6 +27,54 @@ const OBSERVED_FRESH = 120000;
 const TS_SKEW = 180000;
 
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
+const INVITE_FOR = 24 * 3600 * 1000; // код дружбы действует сутки
+const INVITE_KEEP = 5;
+const STRANGER_LIMIT = 60;           // расшифровок пакетов от незнакомцев за 10 с (только пока есть код дружбы)
+
+/* ---------- Код дружбы: ALOF.<base64url> ----------
+   1 байт версии, 32 байта ID, 12 байт секрета, ник (длина + UTF-8), адреса (число, по 7 байт: вид, IPv4, порт),
+   4 байта контрольной суммы (sha256) — чтобы опечатка не ушла запросом в никуда. */
+const ADDR_KINDS = ['lan', 'tailscale', 'upnp', 'stun', 'public'];
+function encodeFriendCode({ id, tok, nick, addrs }) {
+  let nb = Buffer.from(String(nick || '').slice(0, 24), 'utf-8');
+  if (nb.length > 60) nb = nb.subarray(0, 60);
+  const list = (addrs || []).filter((a) => ADDR_KINDS.includes(a.kind) && /^\d+\.\d+\.\d+\.\d+$/.test(a.ip)).slice(0, 6);
+  const ab = Buffer.alloc(1 + list.length * 7);
+  ab[0] = list.length;
+  list.forEach((a, i) => {
+    const o = 1 + i * 7;
+    ab[o] = ADDR_KINDS.indexOf(a.kind);
+    a.ip.split('.').forEach((n, j) => { ab[o + 1 + j] = Number(n) & 255; });
+    ab.writeUInt16BE(a.port, o + 5);
+  });
+  const body = Buffer.concat([Buffer.from([1]), Buffer.from(id, 'base64url'), Buffer.from(tok, 'hex'), Buffer.from([nb.length]), nb, ab]);
+  const sum = crypto.createHash('sha256').update(body).digest().subarray(0, 4);
+  return 'ALOF.' + b64u(Buffer.concat([body, sum]));
+}
+function decodeFriendCode(code) {
+  const m = /ALOF\.([A-Za-z0-9_-]{60,400})/.exec(String(code || '').replace(/\s+/g, ''));
+  if (!m) return null;
+  const buf = Buffer.from(m[1], 'base64url');
+  if (buf.length < 1 + 32 + 12 + 2 + 4 || buf[0] !== 1) return null;
+  const body = buf.subarray(0, buf.length - 4);
+  if (!crypto.createHash('sha256').update(body).digest().subarray(0, 4).equals(buf.subarray(buf.length - 4))) return null;
+  const id = b64u(body.subarray(1, 33));
+  const tok = body.subarray(33, 45).toString('hex');
+  let o = 45;
+  const nl = body[o++];
+  if (o + nl + 1 > body.length) return null;
+  const nick = body.subarray(o, o + nl).toString('utf-8').replace(/[\u0000-\u001f]/g, '').slice(0, 24);
+  o += nl;
+  const n = body[o++];
+  if (n > 6 || o + n * 7 !== body.length) return null;
+  const addrs = [];
+  for (let i = 0; i < n; i++, o += 7) {
+    const kind = ADDR_KINDS[body[o]];
+    if (!kind) return null;
+    addrs.push({ kind, ip: [...body.subarray(o + 1, o + 5)].join('.'), port: body.readUInt16BE(o + 5) });
+  }
+  return { id, tok, nick, addrs: addrs.filter((a) => a.port > 0) };
+}
 
 function ipKind(ip) {
   const p = ip.split('.').map(Number);
@@ -63,6 +111,11 @@ class FriendsNet extends EventEmitter {
     this.cnt = { sent: 0, recvOk: 0, recvBad: 0, recvUnknown: 0 };
     this.sock = null;
     this.port = 0;
+    this.nick = '';
+    this.invites = [];          // мои коды дружбы: { tok, exp }
+    this.outgoing = new Map();  // id -> { tok, nick, addrs, until } — я вставил его код, жду ответа
+    this.incoming = new Map();  // id -> { nick, addrs, src, tok } — вставили мой код, жду моего решения
+    this.strangerHits = [];
   }
 
   /* ---------- хранение ---------- */
@@ -75,6 +128,23 @@ class FriendsNet extends EventEmitter {
       fs.writeFileSync(tmp, JSON.stringify(data, null, 1));
       fs.renameSync(tmp, this.file(name));
     } catch (e) { this.log('friends-error', 'write ' + name + ': ' + e.message); }
+  }
+
+  loadCodes() {
+    const now = Date.now();
+    const c = this.readJson('friend-codes.json', {});
+    this.invites = (Array.isArray(c.invites) ? c.invites : []).filter((x) => /^[a-f0-9]{24}$/.test(x?.tok) && x.exp > now).slice(0, INVITE_KEEP);
+    for (const o of Array.isArray(c.outgoing) ? c.outgoing : []) {
+      if (o?.until > now && /^[A-Za-z0-9_-]{43}$/.test(o.id) && /^[a-f0-9]{24}$/.test(o.tok)) {
+        this.outgoing.set(o.id, { tok: o.tok, nick: String(o.nick || '').slice(0, 24), addrs: this.cleanAddrs(o.addrs), until: o.until });
+      }
+    }
+  }
+  saveCodes() {
+    this.writeJson('friend-codes.json', {
+      invites: this.invites,
+      outgoing: [...this.outgoing].map(([id, o]) => ({ id, tok: o.tok, nick: o.nick, addrs: o.addrs, until: o.until })),
+    });
   }
 
   loadIdentity() {
@@ -100,12 +170,13 @@ class FriendsNet extends EventEmitter {
     })));
   }
 
-  keyFor(id) {
+  // cache = false — для незнакомцев: их ключи не копим
+  keyFor(id, cache = true) {
     if (this.keys.has(id)) return this.keys.get(id);
     const pub = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'X25519', x: id }, format: 'jwk' });
     const shared = crypto.diffieHellman({ privateKey: this.priv, publicKey: pub });
     const key = Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.alloc(0), Buffer.from('alocalls friends v1'), 32));
-    this.keys.set(id, key);
+    if (cache) this.keys.set(id, key);
     return key;
   }
 
@@ -125,6 +196,7 @@ class FriendsNet extends EventEmitter {
   async start(preferredPort) {
     this.loadIdentity();
     this.loadFriends();
+    this.loadCodes();
     const cfg = this.readJson('net.json', {});
     const tryPorts = [preferredPort, cfg.port, ...Array.from({ length: 5 }, () => 40000 + Math.floor(Math.random() * 20000))].filter(Boolean);
     for (const p of tryPorts) {
@@ -296,12 +368,15 @@ class FriendsNet extends EventEmitter {
     if (buf.length < 4 + 32 + 12 + 16 + 2 || !buf.subarray(0, 4).equals(MAGIC)) return null;
     const from = buf.subarray(4, 36);
     const id = from.toString('base64url');
-    if (!this.friends.has(id)) { this.cnt.recvUnknown++; return null; } // не друг — выбрасываем без ответа
+    // не друг — выбрасываем без ответа. Исключения: я вставил его код дружбы (жду ответа)
+    // или у меня есть действующий код дружбы (может прийти запрос) — тогда с ограничением частоты
+    const known = this.friends.has(id) || this.outgoing.has(id);
+    if (!known && !this.strangerOk()) { this.cnt.recvUnknown++; return null; }
     const nonce = buf.subarray(36, 48);
     const nk = id + nonce.toString('hex');
     if (this.seenNonces.has(nk)) return null;         // повтор пакета
     try {
-      const d = crypto.createDecipheriv('aes-256-gcm', this.keyFor(id), nonce);
+      const d = crypto.createDecipheriv('aes-256-gcm', this.keyFor(id, known), nonce);
       d.setAAD(from);
       d.setAuthTag(buf.subarray(buf.length - 16));
       const plain = Buffer.concat([d.update(buf.subarray(48, buf.length - 16)), d.final()]);
@@ -314,6 +389,15 @@ class FriendsNet extends EventEmitter {
     } catch { this.cnt.recvBad++; return null; }
   }
 
+  strangerOk() {
+    if (!this.activeInvites().length) return false;
+    const now = Date.now();
+    this.strangerHits = this.strangerHits.filter((t) => now - t < 10000);
+    if (this.strangerHits.length >= STRANGER_LIMIT) return false;
+    this.strangerHits.push(now);
+    return true;
+  }
+
   gc() {
     const lim = Date.now() - TS_SKEW * 2;
     for (const [k, t] of this.seenNonces) if (t < lim) this.seenNonces.delete(k);
@@ -322,7 +406,8 @@ class FriendsNet extends EventEmitter {
 
   sendTo(id, obj, addr) {
     if (!this.sock) return;
-    const pkt = this.seal(id, obj);
+    let pkt;
+    try { pkt = this.seal(id, obj); } catch { return; }
     this.cnt.sent++;
     this.sock.send(pkt, addr.port, addr.ip, (e) => { if (e && e.code !== 'ENETUNREACH' && e.code !== 'EHOSTUNREACH') this.log('friends-error', `send ${addr.kind}: ${e.code || e.message}`); });
   }
@@ -364,7 +449,141 @@ class FriendsNet extends EventEmitter {
 
   /* ---------- пульс ---------- */
   ping(id) { this.sendAll(id, { t: 'ping', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity }); }
-  pingAll() { for (const id of this.friends.keys()) this.ping(id); }
+  pingAll() {
+    for (const id of this.friends.keys()) this.ping(id);
+    this.knockAll();
+  }
+
+  /* ---------- Код дружбы ----------
+     A даёт свой код (ID, секрет, адреса) → B вставляет его и стучится к A запросом 'fr-req' с секретом →
+     A видит «B хочет в друзья» → принял — оба друзья ('fr-ok'). Если A не достучаться (строгий роутер без
+     проброса порта), у B есть ответный код с тем же секретом: A вставляет его — и добавляет B сам. */
+  setNick(nick) { if (typeof nick === 'string') this.nick = nick.trim().slice(0, 24); }
+  activeInvites() {
+    const now = Date.now();
+    this.invites = this.invites.filter((x) => x.exp > now);
+    return this.invites;
+  }
+  myCode(tok) { return encodeFriendCode({ id: this.id, tok, nick: this.nick, addrs: this.localAddrs() }); }
+  // мой код: прежний, если действует ещё больше половины срока, иначе новый
+  makeInvite() {
+    const list = this.activeInvites();
+    let inv = list.find((x) => x.exp - Date.now() > INVITE_FOR / 2);
+    if (!inv) {
+      inv = { tok: crypto.randomBytes(12).toString('hex'), exp: Date.now() + INVITE_FOR };
+      this.invites = [inv, ...list].slice(0, INVITE_KEEP);
+      this.saveCodes();
+      this.log('friends', { inviteCode: 'new' });
+    }
+    return { code: this.myCode(inv.tok), exp: inv.exp };
+  }
+  parseCode(code) {
+    const c = decodeFriendCode(code);
+    if (!c) return { ok: false, error: 'bad' };
+    try { this.keyFor(c.id, false); } catch { return { ok: false, error: 'bad' }; }
+    return {
+      ok: true, id: c.id, nick: c.nick || 'Друг',
+      own: c.id === this.id, already: this.friends.has(c.id),
+      reply: this.activeInvites().some((x) => x.tok === c.tok), // ответный код на мой код
+    };
+  }
+  // вставили чужой код
+  useCode(code) {
+    const info = this.parseCode(code);
+    if (!info.ok || info.own || info.already) return info;
+    const c = decodeFriendCode(code);
+    if (info.reply) {
+      // друг не смог достучаться и прислал ответный код: я его добавляю — теперь стучимся оба
+      this.invites = this.invites.filter((x) => x.tok !== c.tok);
+      this.saveCodes();
+      this.addFriend({ id: c.id, nick: c.nick, addrs: c.addrs });
+      this.log('friends', { friendCode: 'reply-used', id: c.id.slice(0, 8) });
+      return { ...info, added: true };
+    }
+    this.outgoing.set(c.id, { tok: c.tok, nick: c.nick || 'Друг', addrs: this.cleanAddrs(c.addrs), until: Date.now() + INVITE_FOR });
+    this.saveCodes();
+    this.log('friends', { friendCode: 'used', id: c.id.slice(0, 8), addrKinds: c.addrs.map((a) => a.kind) });
+    this.punch();
+    this.knock(c.id);
+    return { ...info, pending: true, replyCode: this.myCode(c.tok) };
+  }
+  knock(id) {
+    const o = this.outgoing.get(id);
+    if (!o) return;
+    if (o.until < Date.now()) { this.cancelOutgoing(id); this.emit('fr', { type: 'status', id, st: 'expired', nick: o.nick }); return; }
+    const pkt = { t: 'fr-req', tok: o.tok, nick: this.nick, addrs: this.localAddrs() };
+    const seen = new Set();
+    for (const a of [...(o.observed ? [o.observed] : []), ...o.addrs]) {
+      const k = a.ip + ':' + a.port;
+      if (!seen.has(k)) { seen.add(k); this.sendTo(id, pkt, a); }
+    }
+  }
+  knockAll() { for (const id of [...this.outgoing.keys()]) this.knock(id); }
+  cancelOutgoing(id) { if (this.outgoing.delete(id)) this.saveCodes(); }
+  pendingList() {
+    return {
+      incoming: [...this.incoming].map(([id, r]) => ({ id, nick: r.nick })),
+      outgoing: [...this.outgoing].map(([id, o]) => ({ id, nick: o.nick, seen: !!o.seen })),
+    };
+  }
+  acceptRequest(id) {
+    const r = this.incoming.get(id);
+    if (!r) return false;
+    this.incoming.delete(id);
+    this.invites = this.invites.filter((x) => x.tok !== r.tok); // код одноразовый
+    this.saveCodes();
+    if (!this.addFriend({ id, nick: r.nick, addrs: r.addrs })) return false;
+    const f = this.friends.get(id);
+    f.observed = r.src;
+    this.saveFriends();
+    this.sendReliable(id, { t: 'fr-ok', nick: this.nick, addrs: this.localAddrs() }).catch((e) => this.log('friends', { frOk: e.message }));
+    this.log('friends', { friendCode: 'accepted', id: id.slice(0, 8) });
+    return true;
+  }
+  declineRequest(id) {
+    const r = this.incoming.get(id);
+    if (!r) return;
+    this.incoming.delete(id);
+    this.sendTo(id, { t: 'fr-no' }, { ...r.src, kind: 'reply' });
+    this.log('friends', { friendCode: 'declined', id: id.slice(0, 8) });
+  }
+  // пакет от не-друга (уже расшифрован и проверен ключом пары)
+  onStranger(id, msg, src) {
+    const reply = (o) => this.sendTo(id, o, { ...src, kind: 'reply' });
+    const out = this.outgoing.get(id);
+    if (out) {
+      out.observed = src;
+      if (msg.t === 'fr-seen') {
+        if (!out.seen) { out.seen = true; this.emit('fr', { type: 'status', id, st: 'seen', nick: out.nick }); }
+        return;
+      }
+      if (msg.t === 'fr-no') {
+        this.cancelOutgoing(id);
+        this.emit('fr', { type: 'status', id, st: 'declined', nick: out.nick });
+        return;
+      }
+      if (msg.t === 'fr-req') return; // он тоже вставил мой код — дождёмся его 'fr-ok' / пинга
+      // 'fr-ok' или его пинг: он меня добавил — добавляю и я
+      if (msg.rid) reply({ t: 'ack', rid: msg.rid });
+      this.cancelOutgoing(id);
+      this.addFriend({ id, nick: out.nick, addrs: Array.isArray(msg.addrs) ? msg.addrs : out.addrs });
+      const f = this.friends.get(id);
+      if (f) { f.observed = src; f.lastSeen = Date.now(); f.online = true; this.saveFriends(); this.emitList(); }
+      this.log('friends', { friendCode: 'added', id: id.slice(0, 8), by: msg.t });
+      this.emit('fr', { type: 'status', id, st: 'added', nick: out.nick });
+      return;
+    }
+    if (msg.t !== 'fr-req' || typeof msg.tok !== 'string') return;
+    if (!this.activeInvites().some((x) => x.tok === msg.tok)) { this.log('friends', { friendCode: 'bad-secret' }); return; }
+    reply({ t: 'fr-seen' });
+    const fresh = !this.incoming.has(id);
+    if (fresh && this.incoming.size >= 10) return;
+    this.incoming.set(id, { nick: String(msg.nick || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) || 'Без имени', addrs: this.cleanAddrs(msg.addrs), src, tok: msg.tok });
+    if (fresh) {
+      this.log('friends', { friendCode: 'request', id: id.slice(0, 8) });
+      this.emit('fr', { type: 'request', id, nick: this.incoming.get(id).nick });
+    }
+  }
 
   /* проверка «может ли друг достучаться»: шлём на каждый его адрес отдельно */
   probe(id) {
@@ -486,6 +705,7 @@ class FriendsNet extends EventEmitter {
     const { id, msg } = r;
     const f = this.friends.get(id);
     const src = { ip: rinfo.address, port: rinfo.port, ts: Date.now() };
+    if (!f) { this.onStranger(id, msg, src); return; }
     const prevOnline = f.online;
     f.lastSeen = Date.now();
     f.online = true;
@@ -518,6 +738,12 @@ class FriendsNet extends EventEmitter {
         this.log('net-check', { friendReachableVia: msg.kind, friend: id.slice(0, 8) });
         this.emit('probe-ok', id, msg.kind);
         return;
+      case 'fr-req': // уже друзья (ответный код или потерялся мой 'fr-ok') — подтверждаем
+        reply({ t: 'fr-ok', nick: this.nick, addrs: this.localAddrs() });
+        return;
+      case 'fr-ok': case 'fr-seen': case 'fr-no':
+        if (msg.rid) reply({ t: 'ack', rid: msg.rid });
+        return;
       case 'ack': {
         const p = this.pending.get(msg.rid);
         if (p) { clearTimeout(p.timer); this.pending.delete(msg.rid); p.resolve(); }
@@ -546,4 +772,4 @@ class FriendsNet extends EventEmitter {
   }
 }
 
-module.exports = { FriendsNet, ipKind };
+module.exports = { FriendsNet, ipKind, encodeFriendCode, decodeFriendCode };

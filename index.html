@@ -14,7 +14,7 @@
 <section id="lobby" class="screen active">
   <div class="lobby-card">
     <div class="logo"><img src="icon.png" alt="" class="logo-img" /> alloconnect</div>
-    <p class="muted">Звонки, демонстрация экрана, чат и файлы с друзьями. Напрямую, без серверов. Первый раз — по коду через любой мессенджер (alloconnect сам копирует свой код и сам замечает код друга), дальше — из списка друзей в один клик.</p>
+    <p class="muted">Звонки, демонстрация экрана, чат и файлы с друзьями. Напрямую, без серверов. Первый раз — короткий код дружбы через любой мессенджер, дальше — из списка друзей в один клик.</p>
 
     <label class="field">
       <span>Твой ник</span>
@@ -32,10 +32,11 @@
         </div>
         <div id="netVerdictLobby" class="net-verdict wait small"></div>
       </div>
-      <button id="btnInvite" class="btn primary big">Пригласить по коду</button>
-      <div class="or"><span>или</span></div>
+      <button id="btnAddFriendCode" class="btn primary big">➕ Добавить друга</button>
+      <p class="muted small hint">Один короткий код — и друг в списке: звони в один клик, а 💬 — чат и файлы без звонка.</p>
+      <div class="or"><span>или позвонить без добавления</span></div>
+      <button id="btnInvite" class="btn big">Пригласить по коду</button>
       <button id="btnHaveInvite" class="btn big">У меня есть код приглашения</button>
-      <p class="muted small hint">Позвони один раз по коду и нажми «В друзья» — дальше звони из списка в один клик, а 💬 — чат и файлы без звонка.</p>
     </div>
 
     <!-- Ты приглашаешь -->
@@ -282,6 +283,47 @@
       <button id="btnCallAccept" class="btn primary big">Принять</button>
       <button id="btnCallDecline" class="btn big danger-btn">Отклонить</button>
       <button id="btnCallCancel" class="btn big danger-btn">Отменить</button>
+    </div>
+  </div>
+</div>
+
+<!-- КОД ДРУЖБЫ -->
+<div id="fcModal" class="modal hidden">
+  <div class="modal-card fc-card">
+    <div class="modal-head"><h2>Добавить друга</h2><button id="fcClose" class="icon-btn">✕</button></div>
+    <div class="stepnum"><b>1</b> Отправь другу свой код дружбы</div>
+    <div class="codebox">
+      <textarea id="fcMine" readonly placeholder="Готовлю код…"></textarea>
+      <button id="fcCopy" class="btn primary" disabled>Скопировать</button>
+    </div>
+    <p class="muted small">Код действует сутки. Друг вставит его у себя — и тебе придёт запрос «в друзья».</p>
+    <div class="or"><span>или</span></div>
+    <div class="stepnum"><b>2</b> Вставь код, который прислал друг</div>
+    <div class="codebox">
+      <textarea id="fcIn" placeholder="ALOF.…" spellcheck="false"></textarea>
+      <button id="fcPaste" class="btn">Вставить</button>
+    </div>
+    <button id="fcAdd" class="btn primary big" disabled>Добавить</button>
+    <p id="fcStatus" class="muted small info"></p>
+    <div id="fcReplyBlock" class="hidden">
+      <p class="small">Если у <b id="fcReplyNick"></b> программа запущена, а запрос не доходит — напрямую не достучаться. Отправь этот ответный код: его нужно вставить так же, в «Добавить друга». Если программа не запущена — запрос дойдёт сам, когда её запустят (в течение суток).</p>
+      <div class="codebox">
+        <textarea id="fcReply" readonly></textarea>
+        <button id="fcReplyCopy" class="btn primary">Скопировать</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ЗАПРОС В ДРУЗЬЯ -->
+<div id="fcReqModal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar" id="fcReqAvatar">?</div>
+    <h2 id="fcReqTitle">Запрос в друзья</h2>
+    <p class="muted small">Запрос по твоему коду дружбы</p>
+    <div class="call-actions">
+      <button id="fcReqAccept" class="btn primary big">Принять</button>
+      <button id="fcReqDecline" class="btn big danger-btn">Отклонить</button>
     </div>
   </div>
 </div>
