@@ -2843,6 +2843,7 @@ function bind() {
 
   // Лобби
   $('btnInvite').onclick = startInvite;
+  fcBind();
   $('btnHaveInvite').onclick = () => { $('offerIn').value = ''; showStep('stepGuest'); };
   $('btnCopyOffer').onclick = (e) => copyField('offerOut', e.currentTarget);
   $('btnCopyAnswer').onclick = (e) => copyField('answerOut', e.currentTarget);
@@ -3110,6 +3111,8 @@ async function initFriends() {
   if (myIdent) { friendsList = myIdent.list || []; renderFriends(); }
   window.duo.onFriends((l) => { friendsList = l; renderFriends(); });
   window.duo.onFriendMsg(onFriendMsg);
+  window.duo.onFriendCode(fcOnEvent);
+  window.duo.fcPending().then((p) => { for (const r of p.incoming) fcOnEvent({ type: 'request', ...r }); }).catch(() => {});
   window.duo.onNet(renderNet);
   renderNet(await window.duo.netGet());
   stunCheck();
@@ -3179,6 +3182,127 @@ function renderFriends() {
     if (upBtn) name.appendChild(upBtn);
     list.appendChild(row);
   }
+}
+
+/* ---------- Код дружбы: добавить друга одним коротким кодом (net-friends.js) ----------
+   Я отправляю свой код → друг вставляет → мне приходит запрос → принял — оба в списке.
+   Не достучаться напрямую — у друга есть ответный код: вставляю его, и программы стучатся друг к другу сами. */
+const FC = { reqs: [], cur: null, wait: null, replyTimer: null, seq: 0 };
+const fcNick = () => $('nick').value.trim() || 'Без имени';
+function fcStatus(text, cls = '') { const el = $('fcStatus'); el.textContent = text; el.className = 'muted small info ' + cls; }
+
+async function fcOpen(code) {
+  if (!myIdent) { toast('Сеть друзей ещё не готова'); return; }
+  closeDm();
+  $('fcModal').classList.remove('hidden');
+  if (!FC.wait) { fcStatus(''); $('fcReplyBlock').classList.add('hidden'); }
+  $('fcIn').value = code || '';
+  fcCheckInput();
+  $('fcCopy').disabled = true;
+  const r = await window.duo.fcMake(fcNick()).catch(() => null);
+  if (!r) { $('fcMine').value = ''; $('fcMine').placeholder = 'Не получилось — сеть друзей не запущена'; return; }
+  ownCodes.add(r.code);
+  $('fcMine').value = r.code;
+  $('fcCopy').disabled = false;
+}
+
+async function fcCheckInput() {
+  const code = $('fcIn').value.trim();
+  const seq = ++FC.seq;
+  $('fcAdd').disabled = true;
+  if (!code) { if (!FC.wait) fcStatus(''); return; }
+  const r = await window.duo.fcParse(code).catch(() => ({ ok: false }));
+  if (seq !== FC.seq) return;
+  if (!r.ok) fcStatus('Код не читается — скопируй его целиком', 'err');
+  else if (r.own) fcStatus('Это твой собственный код — его нужно отправить другу', 'err');
+  else if (r.already) fcStatus(`${friendNickOf(r.id)} уже в друзьях`);
+  else { fcStatus(r.reply ? `Ответный код от ${r.nick} — нажми «Добавить»` : `Код дружбы от ${r.nick} — нажми «Добавить»`); $('fcAdd').disabled = false; }
+}
+
+async function fcAdd() {
+  $('fcAdd').disabled = true;
+  const r = await window.duo.fcUse($('fcIn').value.trim(), fcNick()).catch(() => ({ ok: false }));
+  if (!r.ok || r.own || r.already) { fcCheckInput(); return; }
+  $('fcIn').value = '';
+  L('friends', { friendCode: r.added ? 'reply-used' : 'used' });
+  if (r.added) {
+    FC.wait = null;
+    $('fcReplyBlock').classList.add('hidden');
+    fcStatus(`${r.nick} — в друзьях ✓ «В сети» появится, как только ваши программы найдут друг друга`, 'ok');
+    return;
+  }
+  FC.wait = { id: r.id, nick: r.nick, seen: false };
+  fcStatus(`Стучусь к ${r.nick}…`);
+  ownCodes.add(r.replyCode);
+  $('fcReply').value = r.replyCode;
+  $('fcReplyNick').textContent = r.nick;
+  $('fcReplyBlock').classList.add('hidden');
+  clearTimeout(FC.replyTimer);
+  FC.replyTimer = setTimeout(() => {
+    if (FC.wait?.id !== r.id || FC.wait.seen) return;
+    fcStatus(`${r.nick} пока не отвечает`);
+    $('fcReplyBlock').classList.remove('hidden');
+  }, 8000);
+}
+
+function fcOnEvent(e) {
+  if (!e || !ID_RE.test(String(e.id || ''))) return;
+  if (e.type === 'request') {
+    if (FC.cur?.id !== e.id && !FC.reqs.some((x) => x.id === e.id)) FC.reqs.push({ id: e.id, nick: String(e.nick || 'Без имени') });
+    fcNextReq();
+    return;
+  }
+  const mine = FC.wait?.id === e.id;
+  if (e.st === 'seen' && mine) {
+    FC.wait.seen = true;
+    $('fcReplyBlock').classList.add('hidden');
+    fcStatus(`Запрос дошёл — ждём, пока ${e.nick} примет`);
+  } else if (e.st === 'added') {
+    if (mine) { FC.wait = null; clearTimeout(FC.replyTimer); $('fcReplyBlock').classList.add('hidden'); fcStatus(`${e.nick} — в друзьях ✓`, 'ok'); }
+    toast(`${e.nick} теперь в друзьях — звони прямо из списка`);
+    sound('join');
+  } else if (e.st === 'declined' || e.st === 'expired') {
+    if (mine) { FC.wait = null; clearTimeout(FC.replyTimer); $('fcReplyBlock').classList.add('hidden'); }
+    const text = e.st === 'declined' ? `${e.nick} отклонил(а) запрос в друзья` : `Запрос в друзья к ${e.nick} не дошёл за сутки — попроси новый код`;
+    if (mine) fcStatus(text, 'err');
+    toast(text);
+  }
+}
+
+function fcNextReq() {
+  if (FC.cur || !FC.reqs.length) return;
+  FC.cur = FC.reqs.shift();
+  $('fcReqTitle').textContent = `${FC.cur.nick} хочет в друзья`;
+  $('fcReqAvatar').textContent = initial(FC.cur.nick);
+  $('fcReqModal').classList.remove('hidden');
+  sound('msg');
+  window.duo.focusWindow();
+  window.duo.notify({ title: `${FC.cur.nick} хочет в друзья`, body: 'Открой alloconnect, чтобы принять', kind: 'msg' });
+}
+
+async function fcAnswer(ok) {
+  const r = FC.cur;
+  if (!r) return;
+  FC.cur = null;
+  $('fcReqModal').classList.add('hidden');
+  if (!ok) window.duo.fcDecline(r.id);
+  else if (await window.duo.fcAccept(r.id, fcNick())) {
+    toast(`${r.nick} теперь в друзьях — звони прямо из списка`);
+    $('fcModal').classList.add('hidden');
+  } else toast('Не удалось добавить');
+  fcNextReq();
+}
+
+function fcBind() {
+  $('btnAddFriendCode').onclick = () => fcOpen();
+  $('fcClose').onclick = () => $('fcModal').classList.add('hidden');
+  $('fcCopy').onclick = () => autoCopy($('fcMine').value, $('fcCopy'));
+  $('fcReplyCopy').onclick = () => autoCopy($('fcReply').value, $('fcReplyCopy'));
+  $('fcPaste').onclick = async () => { $('fcIn').value = (await window.duo.paste().catch(() => '')) || ''; fcCheckInput(); };
+  $('fcIn').oninput = fcCheckInput;
+  $('fcAdd').onclick = fcAdd;
+  $('fcReqAccept').onclick = () => fcAnswer(true);
+  $('fcReqDecline').onclick = () => fcAnswer(false);
 }
 
 function showCallModal(dir, nick) {
@@ -3610,6 +3734,16 @@ async function checkClipboard() {
   try { text = (await window.duo.paste()) || ''; } catch { return; }
   if (text === lastClip) return;
   lastClip = text;
+  // код дружбы — открыть «Добавить друга» (свой код не считается)
+  const fc = /ALOF\.[A-Za-z0-9_-]{60,400}/.exec(text.replace(/\s+/g, ''));
+  if (fc && !ownCodes.has(fc[0]) && document.querySelector('.step.active')?.id === 'stepHome') {
+    const info = await window.duo.fcParse(fc[0]).catch(() => null);
+    if (!info?.ok || info.own || info.already) return;
+    L('clipboard', 'friend code detected');
+    if ($('fcModal').classList.contains('hidden')) fcOpen(fc[0]);
+    else if (!$('fcIn').value.trim()) { $('fcIn').value = fc[0]; fcCheckInput(); }
+    return;
+  }
   const m = /ALO([IA])\.[A-Za-z0-9_-]{200,}/.exec(text.replace(/\s+/g, ''));
   if (!m || ownCodes.has(m[0])) return;
   const code = m[0];

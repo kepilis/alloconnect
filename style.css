@@ -280,6 +280,10 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .fdel { width: 28px; height: 28px; font-size: 13px; opacity: .5; }
 .fdel:hover { opacity: 1; }
 .hint { margin: 10px 0 0; }
+.fc-card { width: 460px; max-width: calc(100vw - 32px); }
+.fc-card .btn.big { width: 100%; margin-top: 12px; }
+.fc-card .codebox textarea { height: 64px; }
+.info.err { color: var(--bad); }
 .net-verdict { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); margin: 8px 0; }
 .net-verdict.small { font-size: 11px; margin: 8px 0 0; padding: 6px 8px; }
 .net-verdict.ok { color: var(--ok); }

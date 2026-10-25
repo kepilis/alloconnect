@@ -591,6 +591,7 @@ async function startFriends() {
   net.tailscale = addrs.some((a) => a.kind === 'tailscale');
   friends.on('friends', (list) => sendWin('friends-update', list));
   friends.on('message', (id, msg) => sendWin('friends-msg', { id, msg }));
+  friends.on('fr', (e) => sendWin('friends-fr', e)); // код дружбы: запрос или ответ
   friends.on('probe-in', (_id, kind) => { if (!net.inboundConfirmed.includes(kind)) { net.inboundConfirmed.push(kind); publishNet(); } });
   friends.on('stun', (info) => {
     net.stunMapped = info.stun;
@@ -639,6 +640,14 @@ async function runUpnp() {
 ipcMain.handle('friends-info', () => (friends ? { id: friends.id, port: friends.port, addrs: friends.localAddrs(), list: friends.list() } : null));
 ipcMain.handle('friends-add', (_e, f) => { const ok = friends?.addFriend(f); if (ok) setTimeout(() => friends.probe(f.id), 1500); return ok; });
 ipcMain.handle('friends-remove', (_e, id) => friends?.removeFriend(id));
+// код дружбы (ник — для кода и запроса)
+ipcMain.handle('fc-make', (_e, nick) => { if (!friends?.id) return null; friends.setNick(nick); return friends.makeInvite(); });
+ipcMain.handle('fc-parse', (_e, code) => friends?.parseCode(code) || { ok: false, error: 'bad' });
+ipcMain.handle('fc-use', (_e, code, nick) => { if (!friends?.id) return { ok: false, error: 'bad' }; friends.setNick(nick); return friends.useCode(code); });
+ipcMain.handle('fc-accept', (_e, id, nick) => { friends?.setNick(nick); return friends?.acceptRequest(id) || false; });
+ipcMain.handle('fc-decline', (_e, id) => friends?.declineRequest(id));
+ipcMain.handle('fc-cancel', (_e, id) => friends?.cancelOutgoing(id));
+ipcMain.handle('fc-pending', () => friends?.pendingList() || { incoming: [], outgoing: [] });
 ipcMain.handle('friends-proof', (_e, id, prover, nonce, bind) => friends?.proof(id, prover, nonce, bind) || null);
 ipcMain.handle('friends-send', async (_e, id, msg) => {
   try { await friends.sendBig(id, msg); return { ok: true }; } catch (e) { log('friends', { sendFailed: msg?.t, error: e.message }); return { ok: false, error: e.message }; }
