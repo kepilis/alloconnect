@@ -2480,6 +2480,43 @@ function filesFromEvent(dt) {
   return out;
 }
 
+// Браузер отдал при перетаскивании не файл, а ссылку: берём адрес самой картинки.
+// <img src> из text/html важнее text/uri-list — там часто ссылка на страницу (пин), а не на картинку.
+function droppedMediaUrl(dt) {
+  const ok = (u) => /^(https?:|data:(image|video)\/)/i.test(u || '');
+  try {
+    const html = dt.getData('text/html');
+    if (html) {
+      const el = new DOMParser().parseFromString(html, 'text/html').querySelector('img[src], video[src], video source[src]');
+      const src = el?.getAttribute('src');
+      if (ok(src)) return src;
+    }
+  } catch { /* */ }
+  const uri = (dt.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'))?.trim();
+  return ok(uri) ? uri : '';
+}
+
+const MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv', 'video/ogg': 'ogv' };
+async function fileFromUrl(url) {
+  let bytes, mime, name = '';
+  if (/^data:/i.test(url)) {
+    const m = /^data:([\w/+.-]+)(;base64)?,(.*)$/is.exec(url);
+    if (!m) return null;
+    mime = m[1].toLowerCase();
+    try {
+      bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
+    } catch { return null; }
+  } else {
+    toast('Загружаю картинку…');
+    const r = await window.duo.fetchDropped(url).catch(() => ({ error: 'fail' }));
+    if (r.error) { toast(r.error === 'too-big' ? 'Слишком большой файл (больше 100 МБ)' : r.error === 'not-media' ? 'По ссылке не картинка и не видео' : 'Не удалось скачать картинку'); return null; }
+    ({ bytes, mime, name } = r);
+  }
+  const ext = MIME_EXT[mime] || (mime.split('/')[1] || 'bin').replace(/[^\w]/g, '').slice(0, 8);
+  if (!name || !/\.\w{2,5}$/.test(name)) name = (name || 'image') + '.' + ext;
+  return new File([bytes], name, { type: mime });
+}
+
 /* =========================================================
    Саундпад: звуки подмешиваются в голос после шумодава
    ========================================================= */
@@ -3005,27 +3042,47 @@ function bind() {
     if (dmVisible) dmSendFiles(files); else queueFiles(files);
   });
   let dragDepth = 0;
-  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((inAnyCall() || !$('dm').classList.contains('hidden')) && [...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
+  let innerDrag = false; // тащат что-то из самого окна (картинку из чата) — не отправлять повторно
+  document.addEventListener('dragstart', () => { innerDrag = true; });
+  document.addEventListener('dragend', () => { innerDrag = false; });
+  // Файл или (из браузера) ссылка на картинку — не все браузеры отдают сам файл
+  const dragHasMedia = (dt) => { const t = [...(dt?.types || [])]; return t.includes('Files') || (!innerDrag && t.includes('text/uri-list')); };
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((inAnyCall() || !$('dm').classList.contains('hidden')) && dragHasMedia(e.dataTransfer)) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
   document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropOverlay').classList.add('hidden'); });
   const overStreamForImage = (e) => S.inCall && S.friendPerm?.react && !$('remoteScreenWrap').classList.contains('hidden') &&
-    !!e.target.closest?.('#remoteScreenWrap') && [...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type)));
+    !!e.target.closest?.('#remoteScreenWrap') && ([...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type))) ||
+      (!innerDrag && [...(e.dataTransfer?.types || [])].includes('text/uri-list') && ![...(e.dataTransfer?.types || [])].includes('Files')));
   document.addEventListener('dragover', (e) => {
     e.preventDefault();
     const onStream = overStreamForImage(e);
     $('dropOverlay').classList.toggle('to-screen', onStream);
     $('dropOverlay').firstElementChild.textContent = onStream ? 'Отпусти — картинка или видео полетит на экран друга (место, размер и звук выберешь)' : 'Отпусти, чтобы отправить другу';
   });
-  document.addEventListener('drop', (e) => {
+  document.addEventListener('drop', async (e) => {
     e.preventDefault();
     dragDepth = 0;
     $('dropOverlay').classList.add('hidden');
-    if (overStreamForImage(e)) {
-      const img = filesFromEvent(e.dataTransfer).find((f) => IMG_TYPES.test(f.type) || VID_TYPES.test(f.type));
-      if (img) { startPlacement(img, normPt(e)); return; }
+    const wasInner = innerDrag; innerDrag = false;
+    // Всё из события читаем сразу — после await dataTransfer уже пуст
+    const toStream = overStreamForImage(e), pt = toStream ? normPt(e) : null;
+    const toPad = !!e.target.closest?.('#soundpad');
+    let files = filesFromEvent(e.dataTransfer);
+    if (toPad) $('soundpad').classList.remove('drag');
+    if (!files.length && !wasInner) {
+      const url = droppedMediaUrl(e.dataTransfer);
+      if (!url) return;
+      const f = await fileFromUrl(url);
+      if (!f) return;
+      files = [f];
     }
-    if (e.target.closest?.('#soundpad')) { $('soundpad').classList.remove('drag'); spAddFiles(filesFromEvent(e.dataTransfer)); return; }
-    if (!$('dm').classList.contains('hidden')) { dmSendFiles(filesFromEvent(e.dataTransfer)); return; }
-    if (inAnyCall()) queueFiles(filesFromEvent(e.dataTransfer));
+    if (!files.length) return;
+    if (toStream) {
+      const img = files.find((f) => IMG_TYPES.test(f.type) || VID_TYPES.test(f.type));
+      if (img) { startPlacement(img, pt); return; }
+    }
+    if (toPad) { spAddFiles(files); return; }
+    if (!$('dm').classList.contains('hidden')) { dmSendFiles(files); return; }
+    if (inAnyCall()) queueFiles(files);
   });
   $('lightbox').onclick = () => $('lightbox').classList.add('hidden');
   spBind();

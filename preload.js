@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('duo', {
   ringtoneLoad: () => ipcRenderer.invoke('ringtone-load'),
   ringtoneClear: () => ipcRenderer.invoke('ringtone-clear'),
   readAsset: (rel) => ipcRenderer.invoke('read-asset', rel),
+  fetchDropped: (url) => ipcRenderer.invoke('fetch-dropped', url),
   onHotkey: (fn) => ipcRenderer.on('hotkey', (_e, what) => fn(what)),
   log: (tag, data) => ipcRenderer.send('log', tag, data),
   openLogs: () => ipcRenderer.invoke('open-logs'),

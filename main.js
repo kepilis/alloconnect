@@ -1300,6 +1300,35 @@ async function ghGet(url, asJson) {
   if (!r.ok) throw new Error(r.status === 404 ? 'обновлений пока нет' : 'GitHub ответил ' + r.status);
   return asJson ? r.json() : Buffer.from(await r.arrayBuffer());
 }
+/* ---------- Картинка, перетащенная из браузера ссылкой (не файлом) ----------
+   Не все браузеры отдают при перетаскивании сам файл — часто только адрес картинки. Качаем здесь, без CORS. */
+const DROP_MAX = 100 * 1024 * 1024;
+ipcMain.handle('fetch-dropped', async (_e, url) => {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'bad-url' };
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 30000);
+    try {
+      const r = await enet.fetch(u.href, { signal: ac.signal, headers: { Accept: 'image/*,video/*;q=0.9,*/*;q=0.5' } });
+      if (!r.ok) return { error: 'http ' + r.status };
+      const mime = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!/^(image|video)\//.test(mime)) return { error: 'not-media' };
+      if (Number(r.headers.get('content-length')) > DROP_MAX) return { error: 'too-big' };
+      const chunks = []; let size = 0;
+      for await (const c of r.body) {
+        size += c.length;
+        if (size > DROP_MAX) { ac.abort(); return { error: 'too-big' }; }
+        chunks.push(c);
+      }
+      const name = decodeURIComponent(u.pathname.split('/').pop() || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 100);
+      return { bytes: Buffer.concat(chunks), mime, name };
+    } finally { clearTimeout(t); }
+  } catch (e) {
+    log('drop-fetch', { error: e.name === 'AbortError' ? 'timeout' : String(e.message || e).slice(0, 80) });
+    return { error: 'fail' };
+  }
+});
 async function ghCheck() {
   if (!/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return { ok: false, error: 'no-repo' };
   // 1) ветка updates в репозитории: update.json + файлы рядом; 2) запасной путь — раздел релизов
