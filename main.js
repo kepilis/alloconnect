@@ -225,7 +225,12 @@ function createWindow() {
   win.loadFile('index.html');
   // перетащенный в окно файл не должен открываться вместо приложения
   win.webContents.on('will-navigate', (e) => e.preventDefault());
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // окно звонка, вынесенное в отдельное окно Windows (windows.js): пустая страница, содержимое переносит окно программы
+    if (/^alc-pop-(screen|cam|chat)$/.test(frameName || '') && (!url || url === 'about:blank')) {
+      return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: '#111216', icon: path.join(__dirname, 'icon.png'), minWidth: 200, minHeight: 150 } };
+    }
+    if (!/^https?:\/\//i.test(url)) return { action: 'deny' };
     shell.openExternal(url);
     return { action: 'deny' };
   });

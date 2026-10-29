@@ -144,7 +144,17 @@
           <span class="tag" id="remoteStats"></span>
           <span class="tag warn" id="remoteReason"></span>
           <label class="tag vol">🔊 <input type="range" id="screenVol" min="0" max="100" value="100" /></label>
+          <button class="tag btn-tag" id="btnScreenMin" title="Свернуть демонстрацию — звук стрима выключится">— Свернуть</button>
           <button class="tag btn-tag" id="btnFull">⛶ На весь экран</button>
+        </div>
+      </div>
+
+      <!-- Вебкамера (1.18): друг крупно, своя — в углу -->
+      <div id="camWrap" class="camwrap hidden">
+        <div class="camview">
+          <video id="camFriend" autoplay playsinline muted></video>
+          <video id="camSelf" class="camself" autoplay playsinline muted></video>
+          <span class="tag camname" id="camFriendName">Друг</span>
         </div>
       </div>
 
@@ -158,8 +168,8 @@
     </div>
 
     <div class="chat-split" title="Потяни — ширина чата; двойной клик — как было"></div>
-    <aside class="chat">
-      <div class="chat-head">Чат <button type="button" id="chatSearchBtn" class="icon-btn small" title="Поиск по переписке">🔍</button></div>
+    <aside class="chat" id="callChat">
+      <div class="chat-head"><span class="wtitle">Чат</span> <button type="button" id="chatSearchBtn" class="icon-btn small" title="Поиск по переписке">🔍</button></div>
       <div id="messages" class="messages"></div>
       <form id="chatForm" class="chat-form">
         <button type="button" id="btnAttach" class="btn attach" title="Отправить файл (или Ctrl+V / перетащи в окно)">📎</button>
@@ -181,6 +191,7 @@
     </div>
     <div class="ctl-group">
       <button id="btnSoundpad" class="ctl" title="Саундпад"><b>🎵</b><span>Саундпад</span></button>
+      <button id="btnCam" class="ctl" title="Вебкамера"><b>📷</b><span>Камера</span></button>
       <button id="btnShare" class="ctl share" title="Показать экран"><b>🖥</b><span>Показать экран</span></button>
       <button id="btnLeave" class="ctl danger" title="Выйти из звонка"><b>✕</b><span>Выйти</span></button>
     </div>
@@ -477,6 +488,15 @@
       </div>
     </details>
 
+    <details class="scat" data-cat="cam">
+      <summary>📷 Камера и окна</summary>
+      <div class="scat-body">
+    <label class="field"><span>Вебкамера</span><select id="camSelect"></select></label>
+    <label class="check"><input type="checkbox" id="optWinFree" /> <span>Свободное расположение окон <small class="muted">(демонстрацию, камеру и чат можно двигать, менять размер, закреплять, прицеплять друг к другу и выносить в отдельное окно)</small></span></label>
+    <button type="button" id="btnWinReset" class="btn small">Расставить окна как было</button>
+      </div>
+    </details>
+
     <details class="scat" data-cat="screen">
       <summary>🖥 Демонстрация экрана</summary>
       <div class="scat-body">
@@ -618,5 +638,7 @@
 <script src="gif-shrink.js"></script>
 <script src="group.js"></script>
 <script src="renderer.js"></script>
+<script src="camera.js"></script>
+<script src="windows.js"></script>
 </body>
 </html>

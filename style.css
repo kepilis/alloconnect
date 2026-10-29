@@ -655,3 +655,71 @@ body.resizing video, body.resizing iframe { pointer-events: none; }
 .tsize { display: block; width: 18px; border-radius: 4px; background: currentColor; color: var(--text); }
 .screenwrap:fullscreen .soundpad, .gtile:fullscreen .soundpad { z-index: 8; }
 .screenwrap:fullscreen .toast { z-index: 9; }
+
+/* ---------- Окна в звонке: демонстрация, вебкамера, чат (1.18) ---------- */
+.camwrap { position: absolute; right: 28px; bottom: 72px; width: clamp(160px, 24cqw, 280px); aspect-ratio: 4 / 3; z-index: 3; display: flex; flex-direction: column;
+  background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 36px rgba(0,0,0,.5); }
+.camview { position: relative; flex: 1; min-height: 0; background: #0b0c10; }
+.camview video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.camself { position: absolute; right: 6px; bottom: 6px; width: 32% !important; height: auto !important; aspect-ratio: 4 / 3; border-radius: 6px; border: 1px solid rgba(255,255,255,.35); }
+.camwrap.solo-self #camFriend { display: none; }
+.camwrap.solo-self .camself { position: static; width: 100% !important; height: 100% !important; border: 0; border-radius: 0; }
+.camwrap:not(.solo-self) .camself:not([src]):not(.on) { }
+.camname { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 7px; }
+.camwrap.in-fs { right: 24px; bottom: 80px; width: 22vw; z-index: 6; }
+.ctl.on b { filter: none; }
+#btnCam.on { background: rgba(61,220,132,.16); border-color: var(--ok); color: var(--ok); }
+
+.whead { height: 30px; flex: 0 0 30px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; background: var(--panel-2); border-bottom: 1px solid var(--line); box-sizing: border-box; min-width: 0; }
+.whead .wtitle { flex: 0 1 auto; min-width: 0; font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wlink { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--accent-2); background: rgba(124,92,255,.15); border-radius: 6px; padding: 1px 6px; }
+.wicons { margin-left: auto; flex: 0 0 auto; display: flex; gap: 2px; }
+.wbtn { width: 26px; height: 22px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.wbtn:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.wbtn.on { background: rgba(124,92,255,.3); border-color: var(--accent); color: var(--text); }
+.chat-head.whead { height: auto; min-height: 42px; flex: 0 0 auto; padding: 8px 6px 8px 16px; background: transparent; }
+.chat-head #chatSearchBtn { flex: 0 0 auto; }
+/* базовый режим: у окон только «свернуть», заголовок демонстрации не нужен (кнопка — в нижней плашке) */
+.stage:not(.free) .wbtn:not([data-a="min"]) { display: none; }
+.stage:not(.free) #remoteScreenWrap > .whead { display: none; }
+.stage.free #btnScreenMin { display: none; }
+.wresize { display: none; }
+.wmin { display: none !important; }
+
+/* свёрнутые окна — кнопки внизу */
+.wdock { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 8px; z-index: 40; pointer-events: none; }
+.wchip { pointer-events: auto; display: flex; align-items: center; gap: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+.wchip:hover { border-color: var(--accent); }
+.wchip small { color: var(--bad); font-size: 12px; }
+.stage { position: relative; }
+.stage.chat-min > .chat, .stage.chat-min > .chat-split, .stage.chat-out > .chat-split { display: none; }
+
+/* свободное расположение: окна стоят там, куда их поставили */
+.stage.free > .chat-split { display: none; }
+.stage.free > .view { position: absolute; inset: 0; padding: 0; }
+.stage.free #remoteScreenWrap, .stage.free #camWrap, .stage.free > #callChat { position: absolute; inset: auto; right: auto; bottom: auto; max-width: none; min-width: 0;
+  display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.45); aspect-ratio: auto; }
+.stage.free #remoteScreenWrap.hidden, .stage.free #camWrap.hidden { display: none; }
+.stage.free #remoteScreenWrap > video { flex: 1; min-height: 0; height: auto; }
+.stage.free > #callChat { border-left: 1px solid var(--line); }
+.stage.free > #callChat .chat-head { cursor: move; }
+.stage.free .whead { cursor: move; user-select: none; }
+.stage.free .wpinned .whead, .stage.free > #callChat.wpinned .chat-head { cursor: default; }
+.stage.free .wpinned { border-color: var(--accent); }
+.stage.free .wlinked { border-style: dashed; border-color: var(--accent-2); }
+.stage.free .wresize { display: block; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 9;
+  background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 58%, transparent 58%, transparent 70%, rgba(255,255,255,.35) 70%, rgba(255,255,255,.35) 78%, transparent 78%); }
+.stage.free .wpinned .wresize { display: none; }
+.stage.free #remoteScreenWrap .stoolbar { top: 40px; }
+.stage.free #camWrap.in-fs { position: absolute; }
+body.wdragging, body.wdragging * { user-select: none !important; }
+body.wdragging video { pointer-events: none; }
+
+/* окно, вынесенное в отдельное окно Windows: на всё окно */
+body.popbody { margin: 0; height: 100vh; overflow: hidden; background: var(--bg); }
+body.popbody > .popped { position: absolute !important; inset: 0 !important; width: auto !important; height: auto !important; border-radius: 0 !important; border: 0 !important; box-shadow: none !important; display: flex !important; flex-direction: column; }
+body.popbody > .popped .wresize, body.popbody > .popped .wbtn:not([data-a="pop"]) { display: none !important; }
+body.popbody > .popped .wbtn[data-a="pop"] { display: grid !important; }
+body.popbody > #remoteScreenWrap.popped > .whead { display: flex !important; }
+body.popbody > #remoteScreenWrap.popped > video { flex: 1; min-height: 0; height: auto; }
+body.popbody > .chat.popped { width: auto !important; }

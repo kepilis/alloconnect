@@ -5,7 +5,8 @@
    Чистый WebRTC без серверов: приглашение и ответ пересылаются вручную.
    ========================================================= */
 
-const $ = (id) => document.getElementById(id);
+// элементы окна, вынесенного в отдельное окно Windows (windows.js), тоже находятся по id
+const $ = (id) => document.getElementById(id) || (typeof winLookup === 'function' ? winLookup(id) : null);
 
 /* ---------- Лог (тестовая сборка) ---------- */
 function L(tag, data) {
@@ -46,7 +47,7 @@ const DEFAULTS = {
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
   ovlDraw: true, ovlReact: false, ctlAllow: true,
-  clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true,
+  clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true, winFree: false, cam: '',
   ptt: false, pttVk: 0, pttName: '', activity: false, autoUpdate: true,
   svidVol: 70, svidSound: true,      // видео на экран друга: как отправляю
   svidInSound: true, svidInVol: 80,  // видео от друга поверх моего экрана: как слышу
@@ -962,7 +963,7 @@ function onConnected() {
   $('waitBar').classList.add('hidden');
   showRejoin();
   send({ t: 'hello', nick: S.nick, muted: S.muted, deaf: S.deafened });
-  capsReady.then((c) => send({ t: 'caps', dec: c.dec, enc: c.enc }));
+  capsReady.then((c) => send({ t: 'caps', dec: c.dec, enc: c.enc, cam: 1 })); // cam: 1 — умею вебкамеру (1.18)
   enterCall();
   attachRemoteVoice(new MediaStream([S.tx.mic.receiver.track]));
   tuneSender(S.tx.mic.sender, { audio: 64_000 });
@@ -989,6 +990,7 @@ function send(obj) {
 
 function onData(d) {
   if (!d || typeof d !== 'object') return;
+  if (camOnData(d)) return; // вебкамера (camera.js)
   switch (d.t) {
     case 'hello':
       S.friendNick = String(d.nick || S.friendNick || 'Друг').slice(0, 24);
@@ -1010,6 +1012,7 @@ function onData(d) {
       break;
     case 'caps':
       S.friendCaps = d.dec || {};
+      S.peerCam = d.cam === 1;
       L('caps', { friendDecode: d.dec, friendEncode: d.enc });
       break;
     case 'chat': {
@@ -1608,7 +1611,7 @@ function showRemoteScreen() {
   // небольшой запас в буфере: короткие провалы сети не превращаются во фризы
   try { S.tx.video.receiver.jitterBufferTarget = 100; S.tx.saudio.receiver.jitterBufferTarget = 100; } catch { /* старые версии */ }
   v.srcObject = new MediaStream([S.tx.video.receiver.track, S.tx.saudio.receiver.track]);
-  v.muted = S.deafened;
+  v.muted = S.deafened || !!WIN.min.screen;
   v.volume = Number($('screenVol').value) / 100;
   v.play().catch(() => {});
   $('remoteScreenOwner').textContent = S.friendNick || 'друг';
@@ -1695,7 +1698,7 @@ function sendMyState() { (G.active ? grpSendAll : send)({ t: 'state', muted: S.m
 function setDeafened(v) {
   S.deafened = v;
   if (master) master.gain.value = v ? 0 : 1;
-  $('remoteScreen').muted = v;
+  $('remoteScreen').muted = v || !!WIN.min.screen;
   applyMicEnabled();
   updateMyControls();
   sendMyState();
@@ -1783,6 +1786,9 @@ function enterCall() {
 
 function leaveCall() {
   L('call', { leave: true });
+  camReset();
+  winResetCall();
+  S.peerCam = false;
   if (S.waiting) { window.duo.friendsSend(S.waiting.id, { t: 'call-closed' }); S.waiting = null; }
   $('waitBar').classList.add('hidden');
   spStopAll();
@@ -3065,6 +3071,8 @@ async function openSettings() {
   $('optClip').checked = o.clip !== false;
   $('optClipAudio').checked = o.clipAudio === true;
   $('optStreamFrame').checked = o.streamFrame !== false;
+  $('optWinFree').checked = o.winFree === true;
+  fillCameras();
   renderHotkeys();
   $('clipSeconds').value = String(o.clipSeconds || 30);
   $('clipSecondsVal').textContent = (o.clipSeconds || 30) + ' с';
@@ -3170,6 +3178,8 @@ async function saveSettings() {
     clip: $('optClip').checked,
     clipAudio: $('optClipAudio').checked,
     streamFrame: $('optStreamFrame').checked,
+    winFree: $('optWinFree').checked,
+    cam: $('camSelect').value,
     clipSeconds: Number($('clipSeconds').value) || 30,
     ptt: $('optPtt').checked,
     autoUpdate: $('optAutoUpd').checked,
@@ -3177,6 +3187,8 @@ async function saveSettings() {
   };
   store.set('settings', after);
   applyStreamFrame();
+  if (after.winFree !== before.winFree) winSetMode();
+  if (after.cam !== before.cam && CAM.on) { camStop(); camToggle(); }
   if (after.clip !== before.clip || after.clipSeconds !== before.clipSeconds || after.clipAudio !== before.clipAudio) { S.clipKey = null; refreshClip(); }
   if (after.ptt !== before.ptt || after.pttVk !== before.pttVk) { applyPttHelper(); toast(after.ptt ? (after.pttVk ? 'Рация включена' : 'Задай клавишу рации') : 'Рация выключена'); }
   if (after.activity !== before.activity) applyActivity();
@@ -5566,10 +5578,20 @@ function bindLiveTools() {
   $('toolDrawMenu').onclick = (e) => { e.stopPropagation(); toggleToolMenu('drawMenu'); };
   $('toolEmoji').onclick = (e) => { e.stopPropagation(); toggleToolMenu('emojiMenu'); };
   $('toolPad').onclick = () => $('btnSoundpad').click();
+  $('btnCam').onclick = () => camToggle();
+  $('btnScreenMin').onclick = () => winSetMin('screen', true);
+  $('btnWinReset').onclick = () => { winReset(); toast('Окна расставлены как было'); };
   // в полноэкранном режиме видно только содержимое полноэкранного элемента — саундпад и подсказки переносим туда
   document.addEventListener('fullscreenchange', () => {
     const host = document.fullscreenElement || document.body;
     for (const id of ['soundpad', 'toast']) if ($(id).parentElement !== host) host.appendChild($(id));
+    const cam = $('camWrap');
+    if (cam && !WIN.pops.cam) {
+      const fs = document.fullscreenElement === $('remoteScreenWrap');
+      cam.classList.toggle('in-fs', fs);
+      const home = fs ? $('remoteScreenWrap') : document.querySelector('#call .view');
+      if (cam.parentElement !== home) home.appendChild(cam);
+    }
   });
   document.addEventListener('mousedown', (e) => { if (!e.target.closest?.('.tdrop')) closeToolMenus(); });
   $('toolClear').onclick = () => { tools.local.clear(); kickLocal(); send({ t: 'draw-clear' }); };
