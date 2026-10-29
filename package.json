@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -41,6 +41,7 @@
       "stun-lists.js",
       "clip.js",
       "gif-shrink.js",
+      "group-bridge.js",
       "camera.js",
       "windows.js",
       "vendor/mp4-muxer.js",

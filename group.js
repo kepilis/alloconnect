@@ -300,7 +300,7 @@ function grpAttachSenders(p) {
    кто звонил в этой паре (role 'out'); второй просит его (gcam-need). По каналу 'g': greneg {sdp, camMid} → greneg-ans,
    gcam {on}; в hello — cam: 1 (умею) и camOn. */
 async function grpCamEnsure(p, asked) {
-  if (p.closed || !p.connected || p.ctx) return;
+  if (p.virt || p.closed || !p.connected || p.ctx) return;
   if (p.role !== 'out') { if (!p.camAsked) { p.camAsked = true; grpSend(p, { t: 'gcam-need' }); } return; }
   if (!p.peerCam && !asked) return;
   if (p.camBusy) return;
@@ -340,11 +340,12 @@ async function grpOnRenegAns(p, d) {
 function grpCamWatch(p) {
   const t = p.ctx?.receiver.track;
   if (t && p.cstream?.getVideoTracks()[0] !== t) p.cstream = new MediaStream([t]);
+  if (!p.virt) grpFwdRefresh(p.id);
   grpRender();
 }
 function grpCamAttach(p) {
   const tr = p.ctx;
-  if (!tr) return;
+  if (!tr || p.virt) return;
   tr.sender.replaceTrack(p.connected && CAM.on ? CAM.stream?.getVideoTracks()[0] || null : null).catch(() => {});
   try {
     const prm = tr.sender.getParameters();
@@ -358,11 +359,15 @@ function grpCamAll() { for (const p of G.peers.values()) { if (CAM.on) grpCamEns
 function grpApplyScreenVols() { for (const p of G.peers.values()) grpApplyVol(p, 'gsvol'); }
 
 function grpSend(p, obj) { try { if (p?.dc.readyState === 'open') p.dc.send(JSON.stringify(obj)); } catch { /* */ } }
-function grpSendAll(obj) { for (const p of G.peers.values()) if (p.connected) grpSend(p, obj); } // до подтверждения ID — ничего
+function grpSendAll(obj) {
+  for (const p of G.peers.values()) if (p.connected) grpSend(p, obj); // до подтверждения ID — ничего
+  if (FWD_TYPES.has(obj.t)) for (const v of G.vpeers?.values() || []) if (v.connected && !G.peers.get(v.id)?.connected) grpSend(v, obj);
+}
 const grpSdp = (pc) => opusStereo(minifySdp(pc.localDescription.sdp));
 
 async function grpConnect(id, tries = 0) {
   if (!G.active || G.peers.has(id) || G.connecting.has(id) || !G.members.has(id)) return;
+  if (window.GRP_BLOCK === id) return; // автотест моста: напрямую с ним «не соединяется»
   G.connecting.add(id);
   const gid = G.gid;
   const pid = newMid();
@@ -386,6 +391,7 @@ async function grpConnect(id, tries = 0) {
 
 async function grpAnswer(from, msg) {
   if (!/^v=0/.test(String(msg.sdp || ''))) return;
+  if (window.GRP_BLOCK === from) return;
   const pid = cleanMid(msg.pid);
   const ex = G.peers.get(from);
   if (ex) { if (ex.pid === pid) return; grpClosePeer(ex); } // новый вызов от него — прежнее соединение уже не нужно
@@ -420,7 +426,7 @@ async function grpOnAnswer(from, msg) {
 }
 
 function grpClosePeer(p) {
-  if (G.peers.get(p.id) === p) { grpCtlGone(p.id, 'связь с участником пропала'); G.peers.delete(p.id); }
+  if (G.peers.get(p.id) === p) { grpCtlGone(p.id, 'связь с участником пропала'); G.peers.delete(p.id); if (p.connected) grpFwdPeerDown(p.id); }
   p.closed = true;
   clearTimeout(p.timer);
   clearTimeout(p.discTimer);
@@ -447,13 +453,14 @@ function grpPeerLost(p, why) {
   grpRender();
   // переподключение: звонит тот, у кого ID больше; второй ждёт его вызова
   const since = Date.now() - G.lostAt.get(p.id);
-  if (since > GRP_RECONNECT_FOR) { grpMemberGone(p.id, G.seen.has(p.id) ? 'потерялся — связь не восстановилась' : 'не смог подключиться'); return; }
   const tries = (p.tries || 0) + 1;
+  if (since > GRP_RECONNECT_FOR && grpBridged(p.id)) { if (grpMe() > p.id) setTimeout(() => grpConnect(p.id, tries), 60000); return; }
+  if (since > GRP_RECONNECT_FOR) { grpMemberGone(p.id, G.seen.has(p.id) ? 'потерялся — связь не восстановилась' : 'не смог подключиться'); return; }
   if (grpMe() > p.id) setTimeout(() => grpConnect(p.id, tries), Math.min(8000, 1500 * tries));
   else {
     clearTimeout(G.lostTimers.get(p.id));
     G.lostTimers.set(p.id, setTimeout(() => {
-      if (G.active && G.members.has(p.id) && !G.peers.get(p.id)?.connected) grpMemberGone(p.id, 'потерялся — связь не восстановилась');
+      if (G.active && G.members.has(p.id) && !G.peers.get(p.id)?.connected && !grpBridged(p.id)) grpMemberGone(p.id, 'потерялся — связь не восстановилась');
     }, GRP_RECONNECT_FOR + 2000));
   }
 }
@@ -468,6 +475,7 @@ function grpMemberGone(id, why, silent) {
   G.lostTimers.delete(id);
   const p = G.peers.get(id);
   if (p) grpClosePeer(p);
+  grpFwdMemberGone(id);
   if (G.focus === id) G.focus = null;
   if (known && G.active) { sysMsg(`${grpNick(id)} ${why}`); sound('leave'); }
   grpRender();
@@ -482,15 +490,16 @@ function grpPeerOpen(p) {
   clearTimeout(p.timer);
   p.timer = setTimeout(() => { if (!p.connected) grpRejectPeer(p, 'не подтвердил свой ID'); }, 15000);
 }
+const grpProofBind = (p) => (p.virt ? `fwd|${G.gid}|${p.via}` : callBinding(p.pc));
 async function grpOnCh(p, d) {
   if (typeof d.ch !== 'string' || d.ch.length < 16 || d.ch.length > 64) return;
-  const bind = callBinding(p.pc);
+  const bind = grpProofBind(p);
   const mac = bind ? await window.duo.friendsProof(p.id, grpMe(), d.ch, bind).catch(() => null) : null;
   if (mac) grpSend(p, { t: 'proof', mac });
 }
 async function grpOnProof(p, d) {
   if (p.connected || !p.ch || typeof d.mac !== 'string') return;
-  const bind = callBinding(p.pc);
+  const bind = grpProofBind(p);
   const want = bind ? await window.duo.friendsProof(p.id, p.id, p.ch, bind).catch(() => null) : null;
   if (p.closed || p.connected) return;
   if (want && want === d.mac) grpVerified(p);
@@ -498,6 +507,12 @@ async function grpOnProof(p, d) {
 }
 function grpRejectPeer(p, why) {
   if (p.closed) return;
+  if (p.virt) { // через мост: закрываем только мост, участник остаётся (прямые попытки идут дальше)
+    L('grp', { fwdRejected: p.id.slice(0, 8), why });
+    if (/ключ/.test(why)) sysMsg(`⚠ Через ${grpNick(p.via)} пришёл не ${grpNick(p.id)} (ключ не его) — мост закрыт`);
+    grpVpClose(p, !/ключ/.test(why));
+    return;
+  }
   L('grp', { rejected: p.id.slice(0, 8), why });
   sysMsg(`⚠ Участник «${grpNick(p.id)}» ${why} — отключён`);
   grpClosePeer(p);
@@ -506,6 +521,7 @@ function grpRejectPeer(p, why) {
 
 function grpVerified(p) {
   p.connected = true;
+  if (!p.virt) grpFwdDirectUp(p.id);
   grpAttachSenders(p);
   for (const key of Object.keys(p.aud)) grpApplyVol(p, key);
   G.seen.add(p.id);
@@ -515,11 +531,12 @@ function grpVerified(p) {
   G.lostAt.delete(p.id);
   clearTimeout(G.lostTimers.get(p.id));
   G.lostTimers.delete(p.id);
-  grpSend(p, { t: 'hello', cam: 1, camOn: CAM.on, nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', perm: grpMyPerm(), av: myAvatar?.hash || '', members: grpRosterList() });
+  grpSend(p, { t: 'hello', fwd: 1, cam: 1, camOn: CAM.on, nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', perm: grpMyPerm(), av: myAvatar?.hash || '', members: grpRosterList() });
   if (G.share) grpTuneAll();
   if (spHighBr) grpMicBitrate(128_000);
   L('grp', { open: p.id.slice(0, 8), peers: G.peers.size, back });
-  sysMsg(back ? `${grpNick(p.id)} снова на связи` : `${grpNick(p.id)} в звонке`);
+  sysMsg((back ? `${grpNick(p.id)} снова на связи` : `${grpNick(p.id)} в звонке`) + (p.virt ? ` (через ${grpNick(p.via)})` : ''));
+  if (!p.virt) setTimeout(grpSendLinks, 300);
   sound('join');
   grpSaveCurrent();
   grpRender();
@@ -531,11 +548,14 @@ function grpOnData(p, d) {
   if (d.t === 'ch') { grpOnCh(p, d); return; }
   if (d.t === 'proof') { grpOnProof(p, d); return; }
   if (!p.connected) { p.queue = p.queue || []; if (p.queue.length < 50) p.queue.push(d); return; } // до подтверждения ID — ждём
+  if (!p.virt && grpFwdOnData(p, d)) return; // мост (group-bridge.js)
+  if (p.virt && !FWD_TYPES.has(d.t)) return;
   switch (d.t) {
     case 'hello':
       if (!isFriend(p.id) && G.members.has(p.id)) G.members.get(p.id).nick = grpClean(d.nick) || G.members.get(p.id).nick;
       p.muted = !!d.muted; p.deaf = !!d.deaf;
-      p.peerCam = d.cam === 1;
+      p.peerCam = d.cam === 1 && !p.virt;
+      p.peerFwd = d.fwd === 1;
       p.camOn = !!d.camOn;
       if (p.peerCam && CAM.on) grpCamEnsure(p);
       grpOnScreen(p, !!d.sharing, d.name, d.perm);
@@ -655,6 +675,8 @@ function grpUpdateControls() {
 /* ---------- Файлы всем: одна отправка на каждого, один пузырь у меня ---------- */
 function grpQueueFiles(list, p = 'chat') {
   const chans = [...G.peers.values()].filter((x) => x.connected).map((x) => x.chan);
+  const viaBridge = [...(G.vpeers?.values() || [])].filter((v) => v.connected && !G.peers.get(v.id)?.connected);
+  if (viaBridge.length) sysMsg(`Файлы до ${viaBridge.map((v) => grpNick(v.id)).join(', ')} не дойдут: нет прямой связи`);
   if (!chans.length) { toast('В группе пока никого нет на связи'); return; }
   for (const f of list) {
     if (!f) continue;
@@ -714,11 +736,13 @@ async function grpTuneAll() {
 }
 // у меня: как я сейчас смотрю экран каждого показывающего
 function grpSendViews() {
-  for (const p of G.peers.values()) {
-    if (!p.connected || !p.sharing) { p.viewSent = null; continue; }
+  for (const p of [...G.peers.values(), ...(G.vpeers?.values() || [])]) {
+    if (!p.connected || !p.sharing || (p.virt && G.peers.get(p.id)?.connected)) { p.viewSent = null; continue; }
     const el = G.tiles.get(p.id);
-    const view = document.hidden ? 'off'
+    const mine = document.hidden ? 'off'
       : G.focus === p.id || document.fullscreenElement === el ? 'full' : 'thumb';
+    const fw = p.virt ? null : grpFwdWantView(p.id);
+    const view = fw === 'full' || mine === 'full' ? 'full' : fw === 'thumb' || mine === 'thumb' ? 'thumb' : 'off';
     if (p.viewSent === view) continue;
     p.viewSent = view;
     grpSend(p, { t: 'view', view });
@@ -1246,7 +1270,7 @@ function grpRenderNow() {
   for (const [id, el] of G.tiles) if (!G.members.has(id) && id !== me) { el.remove(); G.tiles.delete(id); }
   ids.forEach((id, i) => {
     const el = grpTile(id);
-    const p = G.peers.get(id);
+    const p = grpViewPeer(id);
     const mine = id === me;
     const on = mine || !!p?.connected;
     const sharing = mine ? !!G.share : !!(p?.connected && p.sharing);
@@ -1265,7 +1289,7 @@ function grpRenderNow() {
     el.querySelector('.gname span').textContent = grpNick(id) + (mine ? ' (я)' : '');
     const muted = mine ? S.muted || S.deafened : p?.muted || p?.deaf;
     const deaf = mine ? S.deafened : p?.deaf;
-    const wait = on ? '' : G.lostAt.has(id) ? ' · переподключаюсь…' : ' · соединяюсь…';
+    const wait = on ? (p?.virt ? ` · через ${grpNick(p.via)}` : '') : G.lostAt.has(id) ? ' · переподключаюсь…' : ' · соединяюсь…';
     el.querySelector('.badges').textContent = (on && deaf ? '🔇' : '') + (on && muted ? '🎙̸' : '') + wait;
     if (grid.children[i] !== el) grid.insertBefore(el, grid.children[i] || null);
   });
@@ -1274,7 +1298,7 @@ function grpRenderNow() {
   const badge = G.tiles.get(me)?.querySelector('.gctl');
   if (badge) { badge.classList.toggle('hidden', !CS.on); badge.querySelector('span').textContent = CS.on ? `🎮 ${CS.link?.nick()} управляет` : ''; }
   grpUpdateTools();
-  const n = 1 + [...G.peers.values()].filter((p) => p.connected).length;
+  const n = 1 + [...G.members.keys()].filter((id) => id !== me && grpViewPeer(id)?.connected).length; // и те, кто через мост
   $('gStatus').querySelector('span').textContent = `В звонке: ${n} из ${G.members.size}`;
   $('gStatus').className = 'status ' + (n > 1 ? 'ok' : 'waiting');
   grpSendViews();
@@ -1299,6 +1323,7 @@ function grpLeave(text) {
   grpStopShare(true);
   camReset();
   winResetCall(WING);
+  grpFwdReset();
   spStopAll();
   $('soundpad').classList.add('hidden');
   const peers = [...G.peers.values()];
