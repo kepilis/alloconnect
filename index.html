@@ -207,10 +207,10 @@
     <button id="gSettings" class="icon-btn" title="Настройки">⚙</button>
   </header>
   <main class="stage">
-    <div class="view gview"><div id="gGrid" class="ggrid"></div></div>
+    <div class="view gview" id="gView"><div id="gGrid" class="ggrid"></div></div>
     <div class="chat-split" title="Потяни — ширина чата; двойной клик — как было"></div>
-    <aside class="chat">
-      <div class="chat-head">Чат группы</div>
+    <aside class="chat" id="gChat">
+      <div class="chat-head"><span class="wtitle">Чат группы</span></div>
       <div id="gMessages" class="messages"></div>
       <form id="gChatForm" class="chat-form">
         <button type="button" id="gAttach" class="btn attach" title="Отправить файл всем (или Ctrl+V / перетащи в окно)">📎</button>
@@ -228,6 +228,7 @@
     </div>
     <div class="ctl-group">
       <button id="gSoundpad" class="ctl" title="Саундпад — слышат все"><b>🎵</b><span>Саундпад</span></button>
+      <button id="gCam" class="ctl" title="Вебкамера — видят все"><b>📷</b><span>Камера</span></button>
       <button id="gShare" class="ctl share" title="Показать экран всем"><b>🖥</b><span>Показать экран</span></button>
       <button id="gLeave" class="ctl danger" title="Выйти из группы"><b>✕</b><span>Выйти</span></button>
     </div>
@@ -501,6 +502,7 @@
       <summary>🖥 Демонстрация экрана</summary>
       <div class="scat-body">
     <label class="check"><input type="checkbox" id="optStreamFrame" checked /> <span>Рамка вокруг стрима друга <small class="muted">(у каждой темы своя)</small></span></label>
+    <label class="check"><input type="checkbox" id="optHideSelf" checked /> <span>Не показывать окно alloconnect, когда показываю весь экран <small class="muted">(иначе превью стрима снимает само себя — «зеркало»; на это время окно не попадёт и в скриншоты)</small></span></label>
     <div class="ringbox">
       <div class="ringbox-head">Поверх моего стрима</div>
       <label class="check"><input type="checkbox" id="optOvlDraw" /> <span>Друг может показывать указку и рисовать поверх моего экрана</span></label>

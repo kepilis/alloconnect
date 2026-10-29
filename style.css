@@ -723,3 +723,27 @@ body.popbody > .popped .wbtn[data-a="pop"] { display: grid !important; }
 body.popbody > #remoteScreenWrap.popped > .whead { display: flex !important; }
 body.popbody > #remoteScreenWrap.popped > video { flex: 1; min-height: 0; height: auto; }
 body.popbody > .chat.popped { width: auto !important; }
+
+/* превью своего стрима «крупно» вписывается в своё место (раньше высота шла от ширины 16:9 и при широком месте —
+   свободные окна или свёрнутый чат — наезжала на кнопки звонка) */
+.local-preview.solo { aspect-ratio: auto; height: auto; bottom: 16px; }
+.stage { overflow: hidden; }
+#call .controls, #call .topbar { position: relative; z-index: 20; }
+
+/* ---------- Группа (1.19): камера в плитке, окна «Участники» и «Чат» ---------- */
+.gtile video.gcam { display: none; object-fit: cover; background: #0b0c10; z-index: 0; }
+.gtile.cam:not(.sharing) video.gcam { display: block; }
+.gtile.cam:not(.sharing) .avatar { display: none; }
+.gtile.cam:not(.sharing) .gname { position: absolute; left: 8px; bottom: 8px; background: rgba(0,0,0,.6); color: #fff; padding: 2px 8px; border-radius: 8px; font-size: 12px; }
+.gtile.cam.sharing video.gcam { display: block; inset: auto 8px 8px auto; width: 26%; height: auto; aspect-ratio: 4 / 3; border-radius: 8px; border: 1px solid rgba(255,255,255,.35); z-index: 2; }
+.gtile.me video.gcam { transform: scaleX(-1); }
+.gtile.speaking.cam:not(.sharing) { box-shadow: inset 0 0 0 2px var(--ok); }
+#gCam.on { background: rgba(61,220,132,.16); border-color: var(--ok); color: var(--ok); }
+.stage:not(.free) #gView > .whead { display: none; }
+.stage.free > #gView { position: absolute; inset: auto; padding: 0; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+.stage.free > #gView > .ggrid { flex: 1; min-height: 0; }
+.stage.free > #gChat { position: absolute; inset: auto; max-width: none; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+.stage.free > #gChat .chat-head { cursor: move; }
+.stage.free > #gChat.wpinned .chat-head { cursor: default; }
+body.popbody > #gView.popped > .whead { display: flex !important; }
+body.popbody > #gView.popped > .ggrid { flex: 1; min-height: 0; }

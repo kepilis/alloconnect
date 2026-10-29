@@ -47,7 +47,7 @@ const DEFAULTS = {
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
   ovlDraw: true, ovlReact: false, ctlAllow: true,
-  clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true, winFree: false, cam: '',
+  clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true, hideSelf: true, winFree: false, cam: '',
   ptt: false, pttVk: 0, pttName: '', activity: false, autoUpdate: true,
   svidVol: 70, svidSound: true,      // видео на экран друга: как отправляю
   svidInSound: true, svidInVol: 80,  // видео от друга поверх моего экрана: как слышу
@@ -1351,6 +1351,7 @@ async function beginShare() {
     }
     const { sc, stream, winState } = await openShareSource(srcId, srcName, q, mode, useLoopback);
     S.shareCtx = sc;
+    capHide(srcId.startsWith('screen:'));
     const vt = stream.getVideoTracks()[0];
     L('share', {
       start: true, quality: qKey, mode, source: srcId.split(':')[0], windowState: winState,
@@ -1383,6 +1384,7 @@ async function beginShare() {
     stopPcm();
     window.duo.winWatchStop();
     S.shareCtx = null;
+    capHide(false);
     const msg = /could not start video source/i.test(e.message || '') && isWin
       ? 'не удалось захватить окно — если оно свёрнуто, разверни его и попробуй снова'
       : (e.message || e.name);
@@ -1575,9 +1577,13 @@ function stopSendStats() {
   $('localStats').textContent = '';
 }
 
+// окно alloconnect не попадает в показ всего экрана (настройка hideSelf, по умолчанию вкл)
+function capHide(on) { window.duo?.captureHide?.(!!on && settings().hideSelf !== false); }
+
 function stopShare(silent) {
   if (!S.localScreen) return;
   L('share', { stop: true });
+  capHide(false);
   ctlEnd('показ остановлен');
   window.duo?.ovlClose();
   S.localScreen.getTracks().forEach((t) => t.stop());
@@ -3071,6 +3077,7 @@ async function openSettings() {
   $('optClip').checked = o.clip !== false;
   $('optClipAudio').checked = o.clipAudio === true;
   $('optStreamFrame').checked = o.streamFrame !== false;
+  $('optHideSelf').checked = o.hideSelf !== false;
   $('optWinFree').checked = o.winFree === true;
   fillCameras();
   renderHotkeys();
@@ -3178,6 +3185,7 @@ async function saveSettings() {
     clip: $('optClip').checked,
     clipAudio: $('optClipAudio').checked,
     streamFrame: $('optStreamFrame').checked,
+    hideSelf: $('optHideSelf').checked,
     winFree: $('optWinFree').checked,
     cam: $('camSelect').value,
     clipSeconds: Number($('clipSeconds').value) || 30,
@@ -3188,6 +3196,7 @@ async function saveSettings() {
   store.set('settings', after);
   applyStreamFrame();
   if (after.winFree !== before.winFree) winSetMode();
+  if (after.hideSelf !== before.hideSelf && (S.shareCtx?.srcId || '').startsWith('screen:')) capHide(true);
   if (after.cam !== before.cam && CAM.on) { camStop(); camToggle(); }
   if (after.clip !== before.clip || after.clipSeconds !== before.clipSeconds || after.clipAudio !== before.clipAudio) { S.clipKey = null; refreshClip(); }
   if (after.ptt !== before.ptt || after.pttVk !== before.pttVk) { applyPttHelper(); toast(after.ptt ? (after.pttVk ? 'Рация включена' : 'Задай клавишу рации') : 'Рация выключена'); }

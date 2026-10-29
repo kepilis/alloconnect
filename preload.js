@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('duo', {
   // оверлей поверх экрана, который показываю
   ovlOpen: (sourceId) => ipcRenderer.invoke('ovl-open', sourceId),
   ovlClose: () => ipcRenderer.invoke('ovl-close'),
+  captureHide: (on) => ipcRenderer.invoke('capture-hide', on),
   ovlMsg: (m) => ipcRenderer.send('ovl-msg', m),
   winBuild: () => ipcRenderer.invoke('win-build'),
   // приглушение других программ

@@ -94,11 +94,12 @@ let appSet = { ...APP_DEFAULTS, ...(FLAGS.app || {}) };
 let tray = null;
 let appQuitting = false;
 let trayHintShown = !!FLAGS.trayHintShown;
+let minHintShown = !!FLAGS.minHintShown;
 let trayState = { inCall: false, friend: '', online: 0, muted: false };
 const launchedHidden = process.argv.includes('--hidden');
 
 function saveFlags() {
-  try { fs.writeFileSync(path.join(app.getPath('userData'), 'flags.json'), JSON.stringify({ ...readFlags(), app: appSet, trayHintShown })); } catch (e) { log('main-error', 'flags: ' + e.message); }
+  try { fs.writeFileSync(path.join(app.getPath('userData'), 'flags.json'), JSON.stringify({ ...readFlags(), app: appSet, trayHintShown, minHintShown })); } catch (e) { log('main-error', 'flags: ' + e.message); }
 }
 function showWindow() {
   if (!win) return;
@@ -132,6 +133,10 @@ function updateTray() {
     items.push({ label: 'Завершить звонок', click: () => win?.webContents.send('hotkey', 'leave') });
     items.push({ type: 'separator' });
   }
+  // как сворачивать — прямо здесь, а не только в настройках
+  items.push({ label: 'Кнопка «свернуть» прячет в трей', type: 'checkbox', checked: !!appSet.minToTray,
+    click: (mi) => { appSet = { ...appSet, minToTray: mi.checked }; saveFlags(); log('settings', { app: appSet }); updateTray(); } });
+  items.push({ type: 'separator' });
   items.push({ label: 'Выход', click: () => { appQuitting = true; app.quit(); } });
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
@@ -227,7 +232,7 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url, frameName }) => {
     // окно звонка, вынесенное в отдельное окно Windows (windows.js): пустая страница, содержимое переносит окно программы
-    if (/^alc-pop-(screen|cam|chat)$/.test(frameName || '') && (!url || url === 'about:blank')) {
+    if (/^alc-pop-(screen|cam|chat|gview|gchat)$/.test(frameName || '') && (!url || url === 'about:blank')) {
       return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: '#111216', icon: path.join(__dirname, 'icon.png'), minWidth: 200, minHeight: 150 } };
     }
     if (!/^https?:\/\//i.test(url)) return { action: 'deny' };
@@ -239,7 +244,14 @@ function createWindow() {
     if (!appQuitting && tray && appSet.closeToTray) { e.preventDefault(); hideToTray(); }
   });
   win.on('minimize', () => {
-    if (tray && appSet.minToTray) hideToTray(); // свернули → прячем и с панели задач
+    if (!(tray && appSet.minToTray)) return;
+    hideToTray(); // свернули → прячем и с панели задач
+    // один раз подсказываем, где вернуть обычное сворачивание
+    if (!minHintShown) {
+      minHintShown = true;
+      saveFlags();
+      try { tray.displayBalloon({ title: 'alloconnect свёрнут в трей', content: 'Чтобы сворачивать на панель задач, сними галочку в меню этого значка или в Настройки → Программа.', iconType: 'info' }); } catch { /* */ }
+    }
   });
   win.on('show', updateTray);
   win.on('hide', updateTray);
@@ -919,6 +931,8 @@ ipcMain.handle('ovl-open', (_e, sourceId) => {
   log('overlay', { open: ovlCtx.kind });
   return { ok: true };
 });
+// показ всего экрана: окно alloconnect прячем из захвата — иначе превью стрима снимает само себя (эффект зеркала)
+ipcMain.handle('capture-hide', (_e, on) => { try { win?.setContentProtection(!!on); log('share', { hideOwnWindow: !!on }); return true; } catch { return false; } });
 ipcMain.handle('ovl-close', () => {
   ovlCtx = null;
   ovlPinned = false;

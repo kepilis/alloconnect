@@ -20,9 +20,8 @@ function camWaitTx(ms) {
 
 async function camToggle() {
   if (CAM.on) { camStop(); return; }
-  if (!S.connected) { toast('Камера включается в звонке'); return; }
-  if (G.active) { toast('В групповом звонке камеры пока нет'); return; }
-  if (!S.peerCam) { toast(`У ${S.friendNick || 'друга'} старая версия — камера заработает, когда он обновится`); return; }
+  if (!S.connected && !G.active) { toast('Камера включается в звонке'); return; }
+  if (!G.active && !S.peerCam) { toast(`У ${S.friendNick || 'друга'} старая версия — камера заработает, когда он обновится`); return; }
   const dev = settings().cam || '';
   try {
     CAM.stream = await navigator.mediaDevices.getUserMedia({
@@ -37,6 +36,7 @@ async function camToggle() {
   CAM.on = true;
   CAM.stream.getVideoTracks()[0].onended = () => { if (CAM.on) camStop(); };
   camRender();
+  if (G.active) { grpCamAll(); grpSendAll({ t: 'gcam', on: true }); grpRender(); L('cam', { on: true, group: true }); return; }
   const ok = await camEnsureTx();
   if (!CAM.on) return;
   if (!ok) { toast('Не получилось передать камеру другу'); camStop(); return; }
@@ -51,7 +51,11 @@ function camStop(notify = true) {
   const was = CAM.on;
   CAM.on = false;
   try { S.tx?.cam?.sender.replaceTrack(null); } catch { /* */ }
-  if (was && notify) send({ t: 'cam', on: false });
+  if (G.active) {
+    for (const p of G.peers.values()) grpCamAttach(p);
+    if (was && notify) grpSendAll({ t: 'gcam', on: false });
+    grpRender();
+  } else if (was && notify) send({ t: 'cam', on: false });
   if (was) L('cam', { on: false });
   camRender();
 }
@@ -163,8 +167,7 @@ function camRender() {
   $('camFriendName').textContent = CAM.peerOn ? (S.friendNick || 'Друг') : 'Ты';
   const fv = $('camFriend');
   if (CAM.peerOn) fv.play?.().catch(() => {});
-  const b = $('btnCam');
-  if (b) { b.classList.toggle('on', CAM.on); b.querySelector('span').textContent = CAM.on ? 'Камера вкл' : 'Камера'; }
+  for (const b of [$('btnCam'), $('gCam')]) if (b) { b.classList.toggle('on', CAM.on); b.querySelector('span').textContent = CAM.on ? 'Камера вкл' : 'Камера'; }
   window.winLayoutChanged?.();
 }
 

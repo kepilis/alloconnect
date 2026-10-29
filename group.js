@@ -292,7 +292,70 @@ function grpAttachSenders(p) {
   p.atx?.sender.replaceTrack(ok ? micSendTrack() : null).catch(() => {});
   p.vtx?.sender.replaceTrack(ok ? G.share?.track || null : null).catch(() => {});
   p.satx?.sender.replaceTrack(ok ? G.share?.atrack || null : null).catch(() => {});
+  grpCamAttach(p);
 }
+
+/* ---------- Вебкамера в группе (1.19) ----------
+   Как в звонке на двоих: видеопоток камеры добавляется в соединение пары по запросу. Добавляет и предлагает тот,
+   кто звонил в этой паре (role 'out'); второй просит его (gcam-need). По каналу 'g': greneg {sdp, camMid} → greneg-ans,
+   gcam {on}; в hello — cam: 1 (умею) и camOn. */
+async function grpCamEnsure(p, asked) {
+  if (p.closed || !p.connected || p.ctx) return;
+  if (p.role !== 'out') { if (!p.camAsked) { p.camAsked = true; grpSend(p, { t: 'gcam-need' }); } return; }
+  if (!p.peerCam && !asked) return;
+  if (p.camBusy) return;
+  p.camBusy = true;
+  try {
+    for (let i = 0; i < 25 && p.pc.signalingState !== 'stable'; i++) await new Promise((r) => setTimeout(r, 200));
+    if (p.closed || p.pc.signalingState !== 'stable' || p.ctx) return;
+    const tr = p.pc.addTransceiver('video', { direction: 'sendrecv' });
+    await p.pc.setLocalDescription(await p.pc.createOffer());
+    p.ctx = tr;
+    p.camMid = tr.mid;
+    grpCamAttach(p);
+    grpSend(p, { t: 'greneg', sdp: p.pc.localDescription.sdp, camMid: tr.mid });
+    L('grp', { camOffer: p.id.slice(0, 8) });
+  } catch (e) { L('grp', { camOfferFailed: e.message }); } finally { p.camBusy = false; }
+}
+async function grpOnReneg(p, d) {
+  if (p.role === 'out' || !/^v=0/.test(String(d.sdp || ''))) return;
+  try {
+    p.camMid = String(d.camMid);
+    if (p.pc.signalingState === 'have-local-offer') await p.pc.setLocalDescription({ type: 'rollback' });
+    await p.pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) });
+    const tr = p.pc.getTransceivers().find((t) => t.mid === p.camMid);
+    if (!tr) throw new Error('нет трансивера камеры');
+    tr.direction = 'sendrecv';
+    p.ctx = tr;
+    grpCamAttach(p);
+    await p.pc.setLocalDescription(await p.pc.createAnswer());
+    grpSend(p, { t: 'greneg-ans', sdp: p.pc.localDescription.sdp });
+    grpCamWatch(p);
+  } catch (e) { L('grp', { camAnswerFailed: e.message }); }
+}
+async function grpOnRenegAns(p, d) {
+  if (p.pc.signalingState !== 'have-local-offer') return;
+  try { await p.pc.setRemoteDescription({ type: 'answer', sdp: String(d.sdp || '') }); grpCamWatch(p); } catch (e) { L('grp', { camApplyFailed: e.message }); }
+}
+function grpCamWatch(p) {
+  const t = p.ctx?.receiver.track;
+  if (t && p.cstream?.getVideoTracks()[0] !== t) p.cstream = new MediaStream([t]);
+  grpRender();
+}
+function grpCamAttach(p) {
+  const tr = p.ctx;
+  if (!tr) return;
+  tr.sender.replaceTrack(p.connected && CAM.on ? CAM.stream?.getVideoTracks()[0] || null : null).catch(() => {});
+  try {
+    const prm = tr.sender.getParameters();
+    prm.encodings = prm.encodings?.length ? prm.encodings : [{}];
+    prm.encodings[0].maxBitrate = 600_000; // в группе камера уходит каждому — скромнее
+    tr.sender.setParameters(prm).catch(() => {});
+  } catch { /* */ }
+}
+function grpCamAll() { for (const p of G.peers.values()) { if (CAM.on) grpCamEnsure(p); grpCamAttach(p); } }
+// свёрнуты «Участники» — звук экранов молчит, голоса остаются
+function grpApplyScreenVols() { for (const p of G.peers.values()) grpApplyVol(p, 'gsvol'); }
 
 function grpSend(p, obj) { try { if (p?.dc.readyState === 'open') p.dc.send(JSON.stringify(obj)); } catch { /* */ } }
 function grpSendAll(obj) { for (const p of G.peers.values()) if (p.connected) grpSend(p, obj); } // до подтверждения ID — ничего
@@ -452,7 +515,7 @@ function grpVerified(p) {
   G.lostAt.delete(p.id);
   clearTimeout(G.lostTimers.get(p.id));
   G.lostTimers.delete(p.id);
-  grpSend(p, { t: 'hello', nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', perm: grpMyPerm(), av: myAvatar?.hash || '', members: grpRosterList() });
+  grpSend(p, { t: 'hello', cam: 1, camOn: CAM.on, nick: S.nick, muted: S.muted, deaf: S.deafened, sharing: !!G.share, name: G.share?.name || '', perm: grpMyPerm(), av: myAvatar?.hash || '', members: grpRosterList() });
   if (G.share) grpTuneAll();
   if (spHighBr) grpMicBitrate(128_000);
   L('grp', { open: p.id.slice(0, 8), peers: G.peers.size, back });
@@ -472,6 +535,9 @@ function grpOnData(p, d) {
     case 'hello':
       if (!isFriend(p.id) && G.members.has(p.id)) G.members.get(p.id).nick = grpClean(d.nick) || G.members.get(p.id).nick;
       p.muted = !!d.muted; p.deaf = !!d.deaf;
+      p.peerCam = d.cam === 1;
+      p.camOn = !!d.camOn;
+      if (p.peerCam && CAM.on) grpCamEnsure(p);
       grpOnScreen(p, !!d.sharing, d.name, d.perm);
       if (isFriend(p.id)) onPeerAvatarHash(p.id, String(d.av || '').slice(0, 32), () => grpSend(p, { t: 'av-want' })).then(() => grpPaintAvatar(p.id)).catch(() => {});
       grpMergeRoster(d.members);
@@ -521,6 +587,10 @@ function grpOnData(p, d) {
     }
     case 'chat-op': applyOp(G.conv, d, p.id); return;
     case 'sp-stop': spStopAll(); return; // участник убрал всё со своего экрана
+    case 'gcam': p.camOn = !!d.on; if (p.camOn) { sysMsg(`${grpNick(p.id)} включил камеру`); grpCamWatch(p); } grpRender(); return;
+    case 'gcam-need': p.peerCam = true; if (p.role === 'out') grpCamEnsure(p, true); return;
+    case 'greneg': grpOnReneg(p, d); return;
+    case 'greneg-ans': grpOnRenegAns(p, d); return;
     case 'bye': grpMemberGone(p.id, 'вышел'); grpSendAll({ t: 'gone', id: p.id }); return;
     default:
   }
@@ -537,7 +607,10 @@ function grpOnScreen(p, on, name, perm) {
 }
 
 function grpOnTrack(p, e) {
-  if (e.track.kind === 'video') { p.vstream = new MediaStream([e.track]); grpRender(); return; }
+  if (e.track.kind === 'video') {
+    if (e.transceiver === p.ctx || (p.camMid != null && e.transceiver.mid === p.camMid)) { p.cstream = new MediaStream([e.track]); grpRender(); return; }
+    p.vstream = new MediaStream([e.track]); grpRender(); return;
+  }
   // трансивер 2 — звук экрана, иначе голос; громкость у каждого своя (gvol / gsvol)
   const screen = p.pc.getTransceivers().indexOf(e.transceiver) === 2;
   const stream = grpAudioSink(p, e.track, screen ? 'gsvol' : 'gvol');
@@ -558,7 +631,7 @@ function grpAudioSink(p, track, key) {
   return stream;
 }
 // пока участник не подтвердил свой ID — тишина
-function grpApplyVol(p, key) { const a = p.aud[key]; if (a) a.gain.gain.value = p.connected ? grpVol(p.id, key) / 100 : 0; }
+function grpApplyVol(p, key) { const a = p.aud[key]; if (a) a.gain.gain.value = p.connected && !(key === 'gsvol' && WING.min.gview) ? grpVol(p.id, key) / 100 : 0; }
 
 /* ---------- Громкость каждого, микрофон, звук ---------- */
 const GV = {}; // громкости участников (gvol — голос, gsvol — звук экрана), читаются из хранилища один раз
@@ -701,6 +774,7 @@ async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', n
   const track = stream.getVideoTracks()[0];
   if (!track) throw new Error('нет видео');
   G.share = { stream, track, atrack, q, mode, name, srcId, win };
+  capHide(String(srcId).startsWith('screen:'));
   track.addEventListener('ended', () => { if (G.share?.stream === stream) grpStopShare(); });
   for (const p of G.peers.values()) grpAttachSenders(p);
   await grpTuneAll();
@@ -711,6 +785,7 @@ async function grpShareStream(stream, { q = QUALITY['1080p30'], mode = 'game', n
 }
 
 function grpStopShare(silent) {
+  capHide(false);
   const sh = G.share;
   if (!sh) return;
   ctlEnd('показ остановлен');
@@ -1014,6 +1089,7 @@ function grpEnterUi() {
   updateMyControls();
   updateNsBtn();
   grpUpdateControls();
+  requestAnimationFrame(() => winGroupShown());
 }
 
 /* ---------- Сохранённые группы: позвать тех же ещё раз, история чата общая ---------- */
@@ -1102,6 +1178,9 @@ function grpTile(id) {
   el.dataset.id = id;
   const v = document.createElement('video');
   v.autoplay = true; v.playsInline = true; v.muted = true;
+  const cv = document.createElement('video');
+  cv.className = 'gcam';
+  cv.autoplay = true; cv.playsInline = true; cv.muted = true;
   const av = document.createElement('div');
   av.className = 'avatar';
   av.appendChild(document.createElement('span'));
@@ -1111,7 +1190,8 @@ function grpTile(id) {
   const b = document.createElement('em');
   b.className = 'badges';
   nm.append(n, ' ', b);
-  el.append(v, av, nm);
+  el.append(v, cv, av, nm);
+  if (id === grpMe()) el.classList.add('me');
   if (id !== grpMe()) { grpAddTools(el, id); grpAddVols(el, id); } else {
     // кто мной управляет + «Забрать»
     const badge = document.createElement('div');
@@ -1173,6 +1253,11 @@ function grpRenderNow() {
     const v = el.querySelector('video');
     const want = sharing ? (mine ? G.share.stream : p.vstream || null) : null;
     if (v.srcObject !== want) v.srcObject = want;
+    // камера: без показа экрана — на всю плитку вместо аватарки, при показе — маленькой в углу
+    const camSt = mine ? (CAM.on ? CAM.stream : null) : (p?.connected && p.camOn ? p.cstream || null : null);
+    const cv = el.querySelector('.gcam');
+    if (cv.srcObject !== camSt) { cv.srcObject = camSt; if (camSt) cv.play().catch(() => {}); }
+    el.classList.toggle('cam', !!camSt);
     el.classList.toggle('sharing', sharing);
     el.classList.toggle('ghost', !on);
     el.classList.toggle('focused', G.focus === id);
@@ -1212,6 +1297,8 @@ function grpLeave(text) {
   for (const id of G.members.keys()) if (id !== grpMe() && !grpOpen(id) && isFriend(id)) window.duo.friendsSend(id, { t: 'grp-leave', gid: G.gid });
   ctlViewStop(true);
   grpStopShare(true);
+  camReset();
+  winResetCall(WING);
   spStopAll();
   $('soundpad').classList.add('hidden');
   const peers = [...G.peers.values()];
@@ -1245,6 +1332,7 @@ function grpBind() {
   $('gDeafen').onclick = () => $('btnDeafen').click();
   $('gNs').onclick = () => $('btnNs').click();
   $('gShare').onclick = openPicker;
+  $('gCam').onclick = () => camToggle();
   $('gLeave').onclick = () => grpLeave();
   $('gSettings').onclick = openSettings;
   $('gSoundpad').onclick = () => {
