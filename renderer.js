@@ -46,7 +46,7 @@ const DEFAULTS = {
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
   ovlDraw: true, ovlReact: false, ctlAllow: true,
-  clip: true, clipSeconds: 30,
+  clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true,
   ptt: false, pttVk: 0, pttName: '', activity: false, autoUpdate: true,
   svidVol: 70, svidSound: true,      // видео на экран друга: как отправляю
   svidInSound: true, svidInVol: 80,  // видео от друга поверх моего экрана: как слышу
@@ -62,7 +62,124 @@ const THEMES = [
   { id: 'pixel', name: 'Ретро-пиксель', sw: ['#1a1c3a', '#3a3d78', '#ffcd1f', '#ff4d6d'] },
   { id: 'manga', name: 'Манга', sw: ['#f3efe6', '#ffffff', '#111111', '#e63946'] },
   { id: 'space', name: 'Космос', sw: ['#04040c', '#4b3fb5', '#8b7bff', '#4fd1ff'] },
+  { id: 'blueprint', name: 'Чертёж', sw: ['#0d3b6f', '#ffffff', '#ffd34d', '#a9c4e8'] },
+  { id: 'retro98', name: 'Ретро-ОС', sw: ['#008080', '#c0c0c0', '#000080', '#ffffff'] },
+  { id: 'notebook', name: 'Тетрадь', sw: ['#fdfcf6', '#b9cbea', '#1e3a8a', '#d6336c'] },
+  { id: 'newspaper', name: 'Газета', sw: ['#efebe1', '#161616', '#f7f4ec', '#b3261e'] },
 ];
+// рамка вокруг стрима друга (у каждой темы своя) — можно выключить
+function applyStreamFrame() { document.documentElement.classList.toggle('no-stream-frame', settings().streamFrame === false); }
+
+/* ---------- Разделы настроек: какие раскрыты — помним ---------- */
+function bindSettingsCats() {
+  const open = store.get('settingsOpen', ['theme']);
+  for (const d of document.querySelectorAll('#settings details.scat')) {
+    d.open = open.includes(d.dataset.cat);
+    d.addEventListener('toggle', () => {
+      store.set('settingsOpen', [...document.querySelectorAll('#settings details.scat')].filter((x) => x.open).map((x) => x.dataset.cat));
+    });
+  }
+}
+
+/* ---------- Горячие клавиши программы (глобальные, хранит main) ---------- */
+const HOTKEY_NAMES = [
+  ['mute', 'Микрофон вкл/выкл'], ['deafen', 'Звук вкл/выкл (ничего не слышу)'], ['ns', 'Шумодав вкл/выкл'],
+  ['clear', 'Убрать всё с моего экрана (видео, картинки, гифки, рисунки, звуки саундпада)'],
+  ['__stop', 'Саундпад: стоп всё'], ['clip', 'Сохранить повтор последних секунд'], ['mark', 'Метка «лагает» в логе'],
+];
+let hkCapture = null;
+async function renderHotkeys() {
+  const box = $('hkList');
+  if (!box || !window.duo?.hotkeysGet) return;
+  const h = await window.duo.hotkeysGet();
+  box.replaceChildren();
+  for (const [what, name] of HOTKEY_NAMES) {
+    const acc = what === '__stop' ? h.stopKey : h.keys[what];
+    const def = what === '__stop' ? 'CommandOrControl+Alt+0' : h.defaults[what];
+    const row = document.createElement('div');
+    row.className = 'hk-row';
+    const lab = document.createElement('span');
+    lab.textContent = name;
+    const key = document.createElement('button');
+    key.type = 'button';
+    key.className = 'btn small hk-key' + (hkCapture === what ? ' capture' : '') + (h.busy?.includes(what) ? ' busy' : '');
+    key.textContent = hkCapture === what ? 'Нажми сочетание…' : acc ? prettyKey(acc) : 'выключено';
+    if (h.busy?.includes(what)) key.title = 'Это сочетание занято другой программой — выбери другое';
+    key.onclick = () => { hkCapture = what; renderHotkeys(); };
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'icon-btn hk-reset';
+    reset.textContent = '↺';
+    reset.title = 'Вернуть ' + prettyKey(def);
+    reset.disabled = acc === def;
+    reset.onclick = () => setHotkey(what, def);
+    row.append(lab, key, reset);
+    box.appendChild(row);
+  }
+}
+async function setHotkey(what, acc) {
+  hkCapture = null;
+  const r = what === '__stop' ? await window.duo.soundsUpdate('__stop', { hotkey: acc }) : await window.duo.hotkeysSet(what, acc);
+  if (acc && r && r.ok === false) toast(`${prettyKey(acc)} уже занято другой программой — выбери другое сочетание`);
+  else if (acc) toast(`Назначено: ${prettyKey(acc)}`);
+  if (what === '__stop') spLoadList();
+  renderHotkeys();
+}
+document.addEventListener('keydown', (e) => {
+  if (!hkCapture) return;
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === 'Escape') { hkCapture = null; renderHotkeys(); return; }
+  const acc = e.key === 'Backspace' ? '' : accelFromEvent(e);
+  if (acc === 'NEED_MOD') { toast('Добавь Ctrl, Alt или Shift — иначе клавиша перестанет работать в других программах'); return; }
+  if (acc === null) { toast('Эту клавишу назначить нельзя'); return; }
+  setHotkey(hkCapture, acc);
+}, true);
+
+// «Убрать всё с экрана»: всё, что друзья прислали поверх моего экрана, и все звуки саундпада (свои и друзей)
+function clearMyScreen() {
+  window.duo.ovlMsg({ t: 'clear-all' });
+  spStopAll();
+  if (G.active) grpSendAll({ t: 'sp-stop' });
+  else if (S.connected) send({ t: 'sp-stop' });
+  toast('Убрано всё с экрана');
+}
+
+/* ---------- Граница между демонстрацией и чатом: тянется мышью, ширина запоминается ---------- */
+const CHAT_MIN = 220, VIEW_MIN = 320;
+function setChatWidth(px) {
+  if (px == null) { document.documentElement.style.removeProperty('--chat-w'); return; }
+  document.documentElement.style.setProperty('--chat-w', Math.round(px) + 'px');
+}
+function bindChatSplit() {
+  const saved = store.get('chatW', null);
+  if (saved) setChatWidth(saved);
+  for (const sp of document.querySelectorAll('.chat-split')) {
+    sp.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      sp.setPointerCapture(e.pointerId);
+      const stage = sp.parentElement.getBoundingClientRect();
+      document.body.classList.add('resizing');
+      const move = (ev) => {
+        const w = Math.max(CHAT_MIN, Math.min(stage.width - VIEW_MIN, stage.right - ev.clientX));
+        setChatWidth(w);
+      };
+      const up = () => {
+        sp.removeEventListener('pointermove', move);
+        document.body.classList.remove('resizing');
+        const w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chat-w'), 10);
+        if (w) store.set('chatW', w);
+      };
+      sp.addEventListener('pointermove', move);
+      sp.addEventListener('pointerup', up, { once: true });
+      sp.addEventListener('pointercancel', up, { once: true });
+    });
+    sp.addEventListener('dblclick', () => { setChatWidth(null); store.set('chatW', null); });
+  }
+}
+
 function applyTheme(id) {
   const t = THEMES.some((x) => x.id === id) ? id : '';
   if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
@@ -87,6 +204,9 @@ function buildThemeGrid() {
   }
 }
 applyTheme(settings().theme || '');
+applyStreamFrame();
+bindSettingsCats();
+bindChatSplit();
 
 /* ---------- Состояние ---------- */
 const S = {
@@ -897,6 +1017,7 @@ function onData(d) {
       const re = reIn(d.re);
       chatMsg(S.callConv, S.friendNick, String(d.text || '').slice(0, 2000), false, d.ts, null, { mid, re });
       record(S.callConv, { mid, ts: Number(d.ts) || Date.now(), who: 'peer', nick: S.friendNick, type: 'text', text: String(d.text || '').slice(0, 2000), re: re || undefined });
+      noteUnseen(S.callConv, mid);
       sound('msg');
       window.duo?.notify({ title: S.friendNick, body: String(d.text || '').slice(0, 200), kind: 'msg' });
       if (!document.hasFocus()) window.duo?.attention();
@@ -904,6 +1025,9 @@ function onData(d) {
     }
     case 'chat-op':
       if (S.callConv) applyOp(S.callConv, d, 'peer');
+      break;
+    case 'read':
+      onReadMids(S.callConv, d.mids);
       break;
     case 'screen-start':
       L('watch', { friendStarted: d.quality });
@@ -939,6 +1063,9 @@ function onData(d) {
       break;
     case 'svid-play':
       startVideoEcho();
+      break;
+    case 'sp-stop': // друг нажал «убрать всё с экрана» — глушим свой саундпад
+      spStopAll();
       break;
     case 'svid-no':
       onVideoRefused(String(d.why || ''));
@@ -1739,7 +1866,7 @@ function appendLinkified(parent, text) {
    ========================================================= */
 const convs = new Map();            // ID друга → разговор
 const HIST_PAGE = 150;
-const HIST_IMG_MAX = 25 * 1024 * 1024; // картинки и гифки до 25 МБ сохраняем в историю сами
+const HIST_FILE_MAX = 200 * 1024 * 1024; // файлы чата (картинки, гифки, видео, звук, документы) до 200 МБ сохраняем в историю
 
 function newConvBox() {
   const box = document.createElement('div');
@@ -1763,16 +1890,38 @@ function tempConv(nick) {
   return { id: null, nick: nick || 'Друг', box: newConvBox(), loaded: true, histStart: 0, unread: 0, blobs: [], pending: [], msgs: new Map() };
 }
 
+// лента «прилипает» к низу: если был внизу — остаётся внизу, даже когда картинка/видео догрузились позже
+// и выросли (раньше проверка «близко к низу» шла до загрузки, и высокая картинка ломала прокрутку).
+// «Отлип» — только если ленту сдвинули вверх от места, куда её поставили мы: событие прокрутки приходит
+// на кадр позже, и к тому времени пачка новых сообщений уже отодвигает низ
+const atBottom = (s) => s.scrollHeight - s.scrollTop - s.clientHeight < 40;
+function toEnd(s) { s.scrollTop = s.scrollHeight; s.progTop = s.scrollTop; s.stick = true; }
+const boxSizes = new ResizeObserver((list) => {
+  for (const e of list) {
+    const s = e.target.parentElement;
+    if (s && s.stick !== false) toEnd(s);
+  }
+});
 function mountConv(conv, host) {
   host.replaceChildren(conv.box);
-  host.scrollTop = host.scrollHeight;
+  if (!host.stickInit) {
+    host.stickInit = true;
+    host.addEventListener('scroll', () => {
+      if (host.progTop != null && host.scrollTop >= host.progTop - 2) return; // это мы прокрутили
+      host.progTop = null;
+      host.stick = atBottom(host);
+    }, { passive: true });
+    new ResizeObserver(() => { if (host.stick !== false) toEnd(host); }).observe(host);
+  }
+  if (!conv.box.observed) { conv.box.observed = true; boxSizes.observe(conv.box); }
+  toEnd(host);
 }
 
 const scroller = (conv) => conv.box.parentElement;
 function scrollEnd(conv, force) {
   const s = scroller(conv);
   if (!s) return;
-  if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 120) s.scrollTop = s.scrollHeight;
+  if (force || s.stick !== false || atBottom(s)) toEnd(s);
 }
 
 const newMid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1822,7 +1971,7 @@ async function loadHistory(conv, more) {
   }
   conv.histStart = r.start;
   conv.box.prepend(...frag.childNodes);
-  if (s) s.scrollTop = more ? s.scrollHeight - prevH : s.scrollHeight;
+  if (s) { if (more) s.scrollTop = s.scrollHeight - prevH; else toEnd(s); }
 }
 
 function renderHistEntry(conv, e, into) {
@@ -1834,6 +1983,7 @@ function renderHistEntry(conv, e, into) {
   } else if (e.type === 'text') {
     const m = chatMsg(conv, who, String(e.text || ''), mine, e.ts, into, opt);
     if (e.st === 'fail') markUndelivered(m);
+    else if (mine && !conv.group) setTickEl(m, e.st === 'read' ? 'read' : 'sent');
   } else if (e.type === 'file' && e.file) {
     const meta = { ...e.file, kind: e.file.kind || fileKind(e.file.mime || '') };
     const ui = fileBubble(conv, who, meta, mine, { ts: e.ts, into, ...opt });
@@ -1874,6 +2024,49 @@ function chatMsg(conv, who, text, mine, ts, into, opt = {}) {
   if (!into) scrollEnd(conv, mine);
   return m;
 }
+
+/* ---------- Прочитано: ✓ — дошло до друга, ✓✓ — друг открыл чат и увидел (только разговор на двоих) ---------- */
+function setTickEl(m, st) {
+  const meta = m?.querySelector('.meta');
+  if (!meta) return;
+  let t = meta.querySelector('.tick');
+  if (!t) { t = document.createElement('span'); t.className = 'tick'; meta.appendChild(t); }
+  if (t.classList.contains('read')) return; // прочитанное назад не откатываем
+  t.textContent = st === 'read' ? ' ✓✓' : ' ✓';
+  t.classList.toggle('read', st === 'read');
+  t.title = st === 'read' ? 'Прочитано' : 'Доставлено';
+}
+function onReadMids(conv, mids) {
+  if (!conv || !Array.isArray(mids)) return;
+  for (const raw of mids.slice(0, 200)) {
+    const mid = cleanMid(raw);
+    const it = mid && conv.msgs?.get(mid);
+    if (!it || it.e.who !== 'me' || it.read) continue;
+    it.read = true;
+    setTickEl(it.el, 'read');
+    recordStatus(conv, mid, 'read');
+  }
+}
+// чьи сообщения я ещё не видел → как только разговор на экране и окно в фокусе — говорим другу «прочитано»
+function convVisible(conv) {
+  if (!conv || document.hidden || !document.hasFocus()) return false;
+  if (dmOpen === conv && !$('dm').classList.contains('hidden')) return true;
+  return S.inCall && S.callConv === conv && !!$('messages').offsetParent;
+}
+function noteUnseen(conv, mid) {
+  if (!conv || !mid) return;
+  (conv.unseen ??= []).push(mid);
+  flushRead(conv);
+}
+function flushRead(conv) {
+  if (!conv?.unseen?.length || !convVisible(conv)) return;
+  const mids = conv.unseen.splice(0, 200);
+  if (S.inCall && S.callConv === conv && S.connected) send({ t: 'read', mids });
+  else if (conv.id) window.duo.friendsSend(conv.id, { t: 'dm-read', mids }).catch(() => {});
+}
+function flushReadAll() { for (const c of convs.values()) flushRead(c); if (S.callConv && !S.callConv.id) flushRead(S.callConv); }
+window.addEventListener('focus', () => setTimeout(flushReadAll, 300));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(flushReadAll, 300); });
 
 function markUndelivered(m) {
   if (!m || m.querySelector('.undel')) return;
@@ -2315,13 +2508,13 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
   };
 }
 
-// запись о файле в историю (картинку — вместе с самой картинкой)
+// запись о файле в историю — вместе с самим файлом (если не больше HIST_FILE_MAX)
 async function recordFile(conv, mine, meta, blob, from = {}) {
   if (!conv || meta.p !== 'chat' && meta.p !== 'sound') return;
   const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : (from.who || 'peer'), nick: mine ? S.nick : (from.nick || conv.nick), type: 'file',
     file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p } };
-  if (meta.kind === 'image' && meta.size <= HIST_IMG_MAX && conv.id) {
-    try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без картинки */ }
+  if (blob && meta.size <= HIST_FILE_MAX && conv.id) {
+    try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без самого файла */ }
   }
   record(conv, entry);
 }
@@ -2640,16 +2833,54 @@ function spBitrate() {
   tuneSender(S.tx.mic.sender, { audio: want ? 128_000 : 64_000 });
 }
 
+// AudioBuffer → WAV (16 бит). Не влезает в max — сначала моно, потом обрезаем
+function toWav(buf, max) {
+  let ch = Math.min(2, buf.numberOfChannels);
+  const rate = buf.sampleRate;
+  if (44 + buf.length * ch * 2 > max) ch = 1;
+  const frames = Math.min(buf.length, Math.floor((max - 44) / (ch * 2)));
+  const out = new DataView(new ArrayBuffer(44 + frames * ch * 2));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) out.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); out.setUint32(4, 36 + frames * ch * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true); out.setUint32(24, rate, true);
+  out.setUint32(28, rate * ch * 2, true); out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true);
+  str(36, 'data'); out.setUint32(40, frames * ch * 2, true);
+  const data = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) data.push(buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < ch; c++) {
+      // моно из стерео — среднее каналов
+      let v = ch === 1 && data.length > 1 ? (data[0][i] + data[1][i]) / 2 : data[c][i];
+      v = Math.max(-1, Math.min(1, v));
+      out.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return { bytes: new Uint8Array(out.buffer), cut: frames < buf.length, sec: frames / rate };
+}
+const SP_VIDEO = /\.(mp4|m4v|mkv|mov|avi|wmv)$/i;
+const SP_SOUND_MAX = 15 * 1024 * 1024; // как в main (SOUND_MAX)
 async function spAddFiles(files) {
   let added = 0;
   for (const f of files) {
     if (!f) continue;
-    if (!/^audio\//.test(f.type) && !/\.(mp3|ogg|oga|opus|wav|m4a|aac|flac|webm)$/i.test(f.name)) { toast(`${f.name}: это не звук`); continue; }
+    const isVideo = /^video\//.test(f.type) || SP_VIDEO.test(f.name);
+    if (!isVideo && !/^audio\//.test(f.type) && !/\.(mp3|ogg|oga|opus|wav|m4a|aac|flac|webm)$/i.test(f.name)) { toast(`${f.name}: это не звук и не видео`); continue; }
     try {
-      const bytes = new Uint8Array(await f.arrayBuffer());
-      // проверяем, что файл вообще декодируется
-      await audio().decodeAudioData(bytes.slice().buffer);
-      await window.duo.soundsAdd(bytes, f.name);
+      if (isVideo && f.size > 500 * 1024 * 1024) throw new Error('видео больше 500 МБ');
+      let bytes = new Uint8Array(await f.arrayBuffer());
+      let name = f.name;
+      // проверяем, что файл вообще декодируется (у видео заодно достаём звуковую дорожку)
+      const buf = await audio().decodeAudioData(bytes.slice().buffer).catch(() => { throw new Error(isVideo ? 'в видео нет звука или формат не читается' : 'не получилось прочитать звук'); });
+      // видео (и слишком большой звук) — сохраняем звук отдельно в WAV
+      if (isVideo || bytes.length > SP_SOUND_MAX) {
+        const r = toWav(buf, SP_SOUND_MAX);
+        bytes = r.bytes;
+        name = f.name.replace(/\.[^.]+$/, '') + '.wav';
+        if (r.cut) toast(`${f.name}: звук длинный — взяты первые ${Math.floor(r.sec)} с`);
+      }
+      await window.duo.soundsAdd(bytes, name);
       added++;
     } catch (e) { toast(`${f.name}: ${e.message || 'не получилось добавить'}`); }
   }
@@ -2665,7 +2896,8 @@ function spOpenEdit(id) {
   $('spEditName').value = s.name;
   $('spEditVol').value = String(s.vol ?? 100);
   $('spEditKey').classList.remove('capture');
-  $('spEditKey').textContent = 'Клавиша: ' + (s.hotkey ? prettyKey(s.hotkey) : '—');
+  $('spEditKey').textContent = '⌨ ' + (s.hotkey ? prettyKey(s.hotkey) : 'Клавиша: —');
+  $('spEditKeyClear').classList.toggle('hidden', !s.hotkey);
 }
 
 async function spSaveEdit() {
@@ -2813,7 +3045,7 @@ async function openSettings() {
   $('optStunAlt').checked = !!o.stunAlt;
   $('stunCustom').value = o.stunCustom || '';
   window.duo?.appSettingsGet().then((a) => {
-    $('appTray').checked = a.tray; $('appCloseToTray').checked = a.closeToTray; $('appMinToTray').checked = a.minToTray;
+    $('appTray').checked = a.tray; $('appCloseToTray').checked = a.closeToTray; $('appMinToTray').checked = a.minToTray; $('appMinTaskbar').checked = !a.minToTray;
     $('appAutostart').checked = a.autostart; $('appStartHidden').checked = a.startHidden; $('appBossKey').checked = a.bossKey; $('appNotify').checked = a.notify;
     syncAppChecks();
   });
@@ -2831,6 +3063,9 @@ async function openSettings() {
   $('svidInVolVal').textContent = (o.svidInVol ?? 80) + '%';
   $('optCtlAllow').checked = o.ctlAllow !== false;
   $('optClip').checked = o.clip !== false;
+  $('optClipAudio').checked = o.clipAudio === true;
+  $('optStreamFrame').checked = o.streamFrame !== false;
+  renderHotkeys();
   $('clipSeconds').value = String(o.clipSeconds || 30);
   $('clipSecondsVal').textContent = (o.clipSeconds || 30) + ' с';
   $('optPtt').checked = !!o.ptt;
@@ -2887,7 +3122,7 @@ async function fillDevices(o) {
 // без трея «прятать в трей» не имеет смысла
 function syncAppChecks() {
   const t = $('appTray').checked;
-  for (const id of ['appCloseToTray', 'appMinToTray', 'appStartHidden']) $(id).disabled = !t;
+  for (const id of ['appCloseToTray', 'appMinToTray', 'appMinTaskbar', 'appStartHidden']) $(id).disabled = !t;
   $('appStartHidden').disabled = !t || !$('appAutostart').checked;
 }
 
@@ -2933,13 +3168,16 @@ async function saveSettings() {
     svidInVol: Number($('svidInVol').value),
     ctlAllow: $('optCtlAllow').checked,
     clip: $('optClip').checked,
+    clipAudio: $('optClipAudio').checked,
+    streamFrame: $('optStreamFrame').checked,
     clipSeconds: Number($('clipSeconds').value) || 30,
     ptt: $('optPtt').checked,
     autoUpdate: $('optAutoUpd').checked,
     activity: $('optActivity').checked,
   };
   store.set('settings', after);
-  if (after.clip !== before.clip || after.clipSeconds !== before.clipSeconds) { S.clipKey = null; refreshClip(); }
+  applyStreamFrame();
+  if (after.clip !== before.clip || after.clipSeconds !== before.clipSeconds || after.clipAudio !== before.clipAudio) { S.clipKey = null; refreshClip(); }
   if (after.ptt !== before.ptt || after.pttVk !== before.pttVk) { applyPttHelper(); toast(after.ptt ? (after.pttVk ? 'Рация включена' : 'Задай клавишу рации') : 'Рация выключена'); }
   if (after.activity !== before.activity) applyActivity();
   if (after.autoUpdate !== before.autoUpdate) scheduleGh();
@@ -3014,7 +3252,9 @@ function bind() {
   $('friendVolVal').textContent = fv + '%';
 
   $('screenVol').oninput = (e) => { $('remoteScreen').volume = Number(e.target.value) / 100; };
-  $('btnFull').onclick = () => $('remoteScreenWrap').requestFullscreen().catch(() => {});
+  // одна кнопка полного экрана — в обе стороны (кнопка на панели сверху убрана)
+  $('btnFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $('remoteScreenWrap').requestFullscreen()).catch(() => {});
+  document.addEventListener('fullscreenchange', () => { $('btnFull').textContent = document.fullscreenElement === $('remoteScreenWrap') ? '⛶ Свернуть' : '⛶ На весь экран'; });
   // как в видеоплеере: в полноэкранном режиме прячем плашку и курсор через 2.5 с без движения
   let idleT = null;
   const wrap = $('remoteScreenWrap');
@@ -3055,8 +3295,19 @@ function bind() {
   document.addEventListener('dragover', (e) => {
     e.preventDefault();
     const onStream = overStreamForImage(e);
+    const onPad = !onStream && !!e.target.closest?.('#soundpad');
+    const onAv = !!e.target.closest?.('.avatar-row');
+    if (onAv && dragHasMedia(e.dataTransfer)) {
+      $('dropOverlay').classList.remove('hidden');
+      $('dropOverlay').classList.remove('to-screen', 'to-pad');
+      $('dropOverlay').firstElementChild.textContent = 'Отпусти — это будет твоя аватарка (большая сама уменьшится)';
+      return;
+    }
+    if (onPad && dragHasMedia(e.dataTransfer)) $('dropOverlay').classList.remove('hidden');
     $('dropOverlay').classList.toggle('to-screen', onStream);
-    $('dropOverlay').firstElementChild.textContent = onStream ? 'Отпусти — картинка или видео полетит на экран друга (место, размер и звук выберешь)' : 'Отпусти, чтобы отправить другу';
+    $('dropOverlay').classList.toggle('to-pad', onPad);
+    $('dropOverlay').firstElementChild.textContent = onStream ? 'Отпусти — картинка или видео полетит на экран друга (место, размер и звук выберешь)'
+      : onPad ? 'Отпусти, чтобы добавить звук в саундпад (из видео возьмётся звук)' : 'Отпусти, чтобы отправить другу';
   });
   document.addEventListener('drop', async (e) => {
     e.preventDefault();
@@ -3066,6 +3317,7 @@ function bind() {
     // Всё из события читаем сразу — после await dataTransfer уже пуст
     const toStream = overStreamForImage(e), pt = toStream ? normPt(e) : null;
     const toPad = !!e.target.closest?.('#soundpad');
+    const toAv = !!e.target.closest?.('.avatar-row');
     let files = filesFromEvent(e.dataTransfer);
     if (toPad) $('soundpad').classList.remove('drag');
     if (!files.length && !wasInner) {
@@ -3081,6 +3333,7 @@ function bind() {
       if (img) { startPlacement(img, pt); return; }
     }
     if (toPad) { spAddFiles(files); return; }
+    if (toAv) { pickAvatar(files.find((f) => /^image\//.test(f.type)) || files[0]); return; }
     if (!$('dm').classList.contains('hidden')) { dmSendFiles(files); return; }
     if (inAnyCall()) queueFiles(files);
   });
@@ -3097,7 +3350,7 @@ function bind() {
     const mid = newMid();
     const re = composeTakeReply(composers.call);
     send({ t: 'chat', text, ts, mid, re: reOut(re) });
-    chatMsg(S.callConv, S.nick, text, true, ts, null, { mid, re });
+    setTickEl(chatMsg(S.callConv, S.nick, text, true, ts, null, { mid, re }), 'sent');
     record(S.callConv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
     $('chatInput').value = '';
   };
@@ -3123,6 +3376,9 @@ function bind() {
   const appMap = { appTray: 'tray', appCloseToTray: 'closeToTray', appMinToTray: 'minToTray', appAutostart: 'autostart', appStartHidden: 'startHidden', appBossKey: 'bossKey', appNotify: 'notify' };
   for (const [el, key] of Object.entries(appMap)) {
     $(el).onchange = async () => { await window.duo.appSettingsSet({ [key]: $(el).checked }); syncAppChecks(); };
+  }
+  {
+    $('appMinTaskbar').onchange = async () => { if ($('appMinTaskbar').checked) await window.duo.appSettingsSet({ minToTray: false }); };
   }
   // звук звонка
   $('btnRingPick').onclick = () => $('ringFileInput').click();
@@ -3222,6 +3478,7 @@ function bind() {
     if (what === 'leave') { if (G.active) grpLeave(); else if (S.inCall) leaveCall(); return; }
     if (what === 'ctl-stop') { ctlEnd('ты забрал управление (Ctrl+Shift+X)'); return; }
     if (what === 'clip') { saveClip(); return; }
+    if (what === 'clear') { clearMyScreen(); return; }
     if (what.startsWith('sound:')) { if (inAnyCall()) spPlay(what.slice(6)); return; }
     if (!inAnyCall()) return;
     if (what === 'mute') $('btnMute').click();
@@ -3702,6 +3959,9 @@ function onFriendMsg({ id, msg }) {
     case 'dm':
       if (f) onDmText(id, nick, msg);
       return;
+    case 'dm-read':
+      if (f) { const conv = getConv(id, nick); loadHistory(conv).then(() => onReadMids(conv, msg.mids)); }
+      return;
     case 'dm-op':
       if (f) { const conv = getConv(id, nick); loadHistory(conv).then(() => applyOp(conv, msg, 'peer')); }
       return;
@@ -4162,8 +4422,15 @@ async function pickAvatar(file) {
   let bytes, mime;
   try {
     if (file.type === 'image/gif') {
-      if (file.size > 2 * 1024 * 1024) { toast('Гифка больше 2 МБ — выбери поменьше'); return; }
-      bytes = new Uint8Array(await file.arrayBuffer());
+      const AV_LIMIT = 2 * 1024 * 1024 - 64 * 1024; // друзья (и старые версии) принимают аватарку до 2 МБ
+      if (file.size > 60 * 1024 * 1024) { toast('Гифка больше 60 МБ — выбери поменьше'); return; }
+      if (file.size <= AV_LIMIT) bytes = new Uint8Array(await file.arrayBuffer());
+      else {
+        toast('Гифка большая — уменьшаю…');
+        bytes = await window.shrinkGif?.(file, AV_LIMIT);
+        if (!bytes) { toast('Не получилось уменьшить гифку — выбери поменьше'); return; }
+        L('avatar', { gifShrunk: true, fromKB: Math.round(file.size / 1024), toKB: Math.round(bytes.length / 1024) });
+      }
       mime = 'image/gif';
     } else {
       // обрезаем по центру в квадрат 256×256
@@ -4216,7 +4483,7 @@ async function openDm(id) {
   await loadHistory(conv);
   scrollEnd(conv, true);
   renderFriends();
-  setTimeout(() => $('dmInput').focus(), 50);
+  setTimeout(() => { $('dmInput').focus(); flushRead(conv); }, 50);
 }
 
 function updateDmHead() {
@@ -4246,7 +4513,7 @@ async function dmSendText() {
   record(conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
   const r = await window.duo.friendsSend(conv.id, { t: 'dm', mid, text, ts, nick: S.nick, re: reOut(re) });
   m.classList.remove('sending');
-  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); }
+  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); } else setTickEl(m, 'sent');
 }
 
 async function onDmText(id, nick, msg) {
@@ -4259,6 +4526,7 @@ async function onDmText(id, nick, msg) {
   chatMsg(conv, nick, text, false, ts, null, { mid, re });
   record(conv, { mid, ts, who: 'peer', nick, type: 'text', text, re: re || undefined });
   dmNotice(conv, text);
+  noteUnseen(conv, mid);
 }
 
 // новое сообщение не на виду → счётчик, звук, уведомление
@@ -4536,8 +4804,32 @@ function duckTick() {
    Поверх стрима: указка, рисование, реакции, картинки на экран друга
    ========================================================= */
 const REACTIONS = ['😂', '🔥', '👍', '❤️', '😮', '👏', '💀', '🤡'];
-const COLORS = ['#ff3c50', '#ffd23c', '#3ddc84', '#3cc8ff', '#ffffff'];
-const tools = { mode: null, color: COLORS[0], stroke: null, flushT: null, ptrLast: 0, local: new Map(), raf: 0, myPtr: null };
+const COLORS = ['#ff3c50', '#ffd23c', '#3ddc84', '#3cc8ff', '#ffffff', '#ff8a1f', '#b06bff', '#111111'];
+/* Кисти и фигуры. Фигура уходит другу обычной линией из точек — её видят и старые версии.
+   w — толщина, hl — маркер (полупрозрачный); старые версии рисуют их обычной линией */
+const DRAW_KINDS = [
+  { id: 'pen', icon: '✏️', name: 'Карандаш' }, { id: 'hl', icon: '🖍', name: 'Маркер' },
+  { id: 'line', icon: '➖', name: 'Линия' }, { id: 'arrow', icon: '↗', name: 'Стрелка' },
+  { id: 'rect', icon: '▭', name: 'Прямоугольник' }, { id: 'oval', icon: '◯', name: 'Овал' },
+];
+const DRAW_SIZES = [{ w: 3, name: 'Тонкая' }, { w: 5, name: 'Средняя' }, { w: 9, name: 'Толстая' }];
+// точки фигуры от a до b (доли экрана); asp — ширина/высота картинки, чтобы стрелка не сплющивалась
+function shapePts(kind, a, b, asp = 16 / 9) {
+  const [x1, y1] = a, [x2, y2] = b;
+  if (kind === 'rect') return [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]];
+  if (kind === 'oval') {
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+    return Array.from({ length: 49 }, (_, i) => { const t = (i / 48) * Math.PI * 2; return [cx + rx * Math.cos(t), cy + ry * Math.sin(t)]; });
+  }
+  if (kind === 'arrow') {
+    const dx = (x2 - x1) * asp, dy = y2 - y1, len = Math.hypot(dx, dy) || 1e-6;
+    const h = Math.min(0.04, len * 0.35), ang = Math.atan2(dy, dx);
+    const wing = (s) => [x2 - (h * Math.cos(ang + s)) / asp, y2 - h * Math.sin(ang + s)];
+    return [a, b, wing(0.5), b, wing(-0.5)];
+  }
+  return [a, b];
+}
+const tools = { mode: null, color: COLORS[0], kind: 'pen', w: 5, stroke: null, flushT: null, ptrLast: 0, local: new Map(), raf: 0, myPtr: null };
 
 function myPerm() {
   const o = settings();
@@ -4559,6 +4851,37 @@ function normPt(e, v) {
 }
 const n4 = (x) => Math.round(x * 10000) / 10000;
 
+function toggleToolMenu(id) {
+  const m = $(id);
+  const open = m.classList.contains('hidden');
+  closeToolMenus();
+  m.classList.toggle('hidden', !open);
+}
+function closeToolMenus() { for (const m of document.querySelectorAll('.tmenu')) m.classList.add('hidden'); }
+function buildDrawMenu() {
+  const mk = (box, items, isOn, pick) => {
+    box.replaceChildren();
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tbtn' + (isOn(it) ? ' on' : '');
+      b.title = it.name;
+      if (it.swatch) { b.classList.add('color'); b.style.background = it.swatch; } else if (it.w) {
+        const i = document.createElement('i');
+        i.className = 'tsize';
+        i.style.height = it.w + 'px';
+        b.appendChild(i);
+      } else b.textContent = it.icon;
+      b.onclick = (e) => { e.stopPropagation(); pick(it); buildDrawMenu(); updateToolbar(); };
+      box.appendChild(b);
+    }
+  };
+  mk($('drawKinds'), DRAW_KINDS, (k) => k.id === tools.kind, (k) => { tools.kind = k.id; if (tools.mode !== 'draw') setTool('draw'); });
+  mk($('drawSizes'), DRAW_SIZES, (z) => z.w === tools.w, (z) => { tools.w = z.w; });
+  mk($('drawColors'), COLORS.map((c) => ({ swatch: c, name: 'Цвет' })), (c) => c.swatch === tools.color, (c) => { tools.color = c.swatch; });
+  $('toolDraw').textContent = DRAW_KINDS.find((k) => k.id === tools.kind)?.icon || '✏️';
+}
+
 function setTool(mode) {
   if (CV.state === 'on') return;
   tools.mode = tools.mode === mode ? null : mode;
@@ -4573,6 +4896,8 @@ function updateToolbar() {
   set('toolPtr', tools.mode === 'ptr', !fp.draw || controlling, fp.draw ? 'Указка — друг видит точку поверх своего экрана' : 'Друг не разрешил указку и рисование');
   set('toolDraw', tools.mode === 'draw', !fp.draw || controlling, fp.draw ? 'Рисовать поверх экрана друга' : 'Друг не разрешил указку и рисование');
   set('toolClear', false, !fp.draw);
+  set('toolDrawMenu', false, !fp.draw || controlling);
+  set('toolEmoji', false, !fp.react);
   $('toolColor').style.background = tools.color;
   for (const b of document.querySelectorAll('#reactBar button')) { b.disabled = !fp.react; b.title = fp.react ? '' : 'Друг не включил реакции в настройках'; }
   set('toolImg', false, !fp.react, fp.react ? 'Показать картинку или гифку поверх экрана друга' : 'Друг не включил картинки в настройках');
@@ -4620,7 +4945,7 @@ function paintStrokes(g, strokes, X, Y, now) {
     const a = age < 2500 ? 1 : 1 - (age - 2500) / 1500;
     if (a <= 0) { strokes.delete(id); continue; }
     alive = true;
-    g.globalAlpha = a; g.strokeStyle = s.c; g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.globalAlpha = a * (s.hl ? 0.45 : 1); g.strokeStyle = s.c; g.lineWidth = s.w || 4; g.lineCap = 'round'; g.lineJoin = 'round';
     g.beginPath();
     s.pts.forEach(([x, y], i) => (i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
     if (s.pts.length === 1) g.lineTo(X(s.pts[0][0]) + 0.1, Y(s.pts[0][1]));
@@ -4634,8 +4959,9 @@ function kickLocal() { if (!tools.raf) tools.raf = requestAnimationFrame(drawLoc
 function flushStroke(done) {
   const st = tools.stroke;
   if (!st) return;
-  const pts = st.pending.splice(0);
-  if (pts.length || done) send({ t: 'draw', id: st.id, c: st.c, pts, done: !!done });
+  let pts = st.pending.splice(0);
+  if (st.shape) { if (!done) return; pts = tools.local.get(st.id)?.pts || [st.a]; }
+  if (pts.length || done) send({ t: 'draw', id: st.id, c: st.c, w: st.w, hl: st.hl ? 1 : 0, pts: pts.slice(0, 300), done: !!done });
   if (done) tools.stroke = null;
 }
 
@@ -4941,7 +5267,8 @@ function onOverlayData(d) {
   switch (d.t) {
     case 'draw':
       if (!ovlAllowed('draw') || !Array.isArray(d.pts)) return;
-      window.duo.ovlMsg({ t: 'stroke', id: String(d.id).slice(0, 20), c: /^#[0-9a-f]{6}$/i.test(d.c) ? d.c : '#ff3c50', w: 5, pts: d.pts.slice(0, 300).map((p) => [clamp(p[0]), clamp(p[1])]), done: !!d.done });
+      window.duo.ovlMsg({ t: 'stroke', id: String(d.id).slice(0, 20), c: (/^#[0-9a-f]{6}$/i.test(d.c) ? d.c : '#ff3c50') + (d.hl ? '73' : ''),
+        w: Math.max(2, Math.min(14, Number(d.w) || 5)), pts: d.pts.slice(0, 300).map((p) => [clamp(p[0]), clamp(p[1])]), done: !!d.done });
       return;
     case 'ptr':
       if (ovlAllowed('draw')) window.duo.ovlMsg({ t: 'ptr', x: clamp(d.x), y: clamp(d.y), nick: S.friendNick });
@@ -4996,7 +5323,7 @@ async function onScreenImage(blob, meta) {
    Зритель (CV) шлёт мышь/клавиши/геймпад; стримящий (CS) разрешает и передаёт в Windows.
    ========================================================= */
 const CV = { link: null, state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: null, reqTimer: null, lastPad: '', lastPadSent: 0, hadPad: false, padObj: null, moveQ: null, rel: [0, 0], raf: 0, rumble: { l: 0, s: 0, iv: null } };
-const CS = { link: null, on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null };
+const CS = { link: null, on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null, mods: new Set() };
 
 /* С кем идёт управление: CV.link — тот, кем я управляю ('v'), CS.link — тот, кто управляет мной ('s').
    В звонке на двоих это всегда друг (CTL_FRIEND), в группе — конкретный участник (grpCtlLink).
@@ -5039,14 +5366,17 @@ function ctlViewStart(perm) {
   tools.mode = null;
   if (!G.active) send({ t: 'ptr-off' });
   const what = [CV.perm.mouse && 'мышь', CV.perm.kb && 'клавиатура', CV.perm.pad && 'геймпад'].filter(Boolean).join(', ');
-  toast(`Управление разрешено: ${what}. Кликни по экрану друга`);
+  toast(`Управление разрешено: ${what}. Кликни по экрану друга. Выйти — Ctrl+Shift+X`);
   sysMsg(`Ты управляешь компьютером ${ctlNick('v')} (${what})`);
   L('control', { view: 'start', perm: CV.perm });
   CV.hbTimer = setInterval(() => ctlSend(['hb']), 1000);
   if (CV.perm.pad) { CV.hadPad = false; CV.padTimer = setInterval(padPoll, 8); }
-  if (document.fullscreenElement && navigator.keyboard?.lock) navigator.keyboard.lock().catch(() => {});
+  if (document.fullscreenElement) kbLockEsc();
   updateToolbar();
 }
+// в полноэкранном режиме перехватываем только Esc (уходит в игру; выйти — удерживать Esc).
+// Раньше перехватывалось всё: Alt+Tab и Win уходили другу, горячие клавиши зрителя не работали
+function kbLockEsc() { navigator.keyboard?.lock?.(['Escape']).catch(() => {}); }
 
 function ctlViewStop(notify, why) {
   if (CV.state === 'off') return;
@@ -5129,8 +5459,15 @@ function bindLiveTools() {
     }
     if (tools.mode === 'draw' && tools.stroke) {
       const p = normPt(e).map(n4);
-      tools.stroke.pending.push(p);
-      tools.local.get(tools.stroke.id)?.pts.push(p);
+      const st = tools.stroke;
+      const l = tools.local.get(st.id);
+      if (st.shape) {
+        const r = videoRect();
+        if (l) l.pts = shapePts(st.shape, st.a, p, r.w / Math.max(1, r.h)).map((q) => q.map(n4));
+      } else {
+        st.pending.push(p);
+        l?.pts.push(p);
+      }
       kickLocal();
     } else if (tools.mode === 'ptr') {
       const [x, y] = normPt(e);
@@ -5149,12 +5486,16 @@ function bindLiveTools() {
       return;
     }
     if (tools.mode === 'draw' && e.button === 0) {
+      closeToolMenus();
       const id = newMid();
       const p = normPt(e).map(n4);
-      tools.stroke = { id, c: tools.color, pending: [p] };
-      tools.local.set(id, { c: tools.color, pts: [p], done: false, ts: Date.now() });
+      const hl = tools.kind === 'hl';
+      const w = hl ? Math.min(14, tools.w * 2 + 4) : tools.w;
+      const shape = !['pen', 'hl'].includes(tools.kind) ? tools.kind : null;
+      tools.stroke = { id, c: tools.color, w, hl, shape, a: p, pending: shape ? [] : [p] };
+      tools.local.set(id, { c: tools.color, w, hl, pts: [p], done: false, ts: Date.now() });
       clearInterval(tools.flushT);
-      tools.flushT = setInterval(() => flushStroke(false), 50);
+      if (!shape) tools.flushT = setInterval(() => flushStroke(false), 50); // фигура уходит целиком, когда отпустил
       kickLocal();
     }
   });
@@ -5190,6 +5531,14 @@ function bindLiveTools() {
       return;
     }
     if (placer) return;
+    // Ctrl+Shift+X у управляющего — отдать управление (другу не передаём)
+    if (CV.state === 'on' && e.code === 'KeyX' && e.ctrlKey && e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      ctlViewStop(true);
+      toast('Управление отдано');
+      return;
+    }
     if (CV.state !== 'on' || !CV.perm.kb || !e.code || isTyping()) return;
     if (!ctlLink('v')?.focused()) return;
     e.preventDefault();
@@ -5206,13 +5555,23 @@ function bindLiveTools() {
   }, true);
   window.addEventListener('blur', () => { for (const code of CV.keys) ctlSend(['k', code, 0]); CV.keys.clear(); });
   document.addEventListener('fullscreenchange', () => {
-    if (CV.state === 'on' && document.fullscreenElement && navigator.keyboard?.lock) navigator.keyboard.lock().catch(() => {});
+    if (CV.state === 'on' && document.fullscreenElement) kbLockEsc();
   });
 
   // панель над стримом
   $('toolPtr').onclick = () => setTool('ptr');
   $('toolDraw').onclick = () => setTool('draw');
-  $('toolColor').onclick = () => { tools.color = COLORS[(COLORS.indexOf(tools.color) + 1) % COLORS.length]; updateToolbar(); };
+  $('toolColor').onclick = () => { tools.color = COLORS[(COLORS.indexOf(tools.color) + 1) % COLORS.length]; buildDrawMenu(); updateToolbar(); };
+  buildDrawMenu();
+  $('toolDrawMenu').onclick = (e) => { e.stopPropagation(); toggleToolMenu('drawMenu'); };
+  $('toolEmoji').onclick = (e) => { e.stopPropagation(); toggleToolMenu('emojiMenu'); };
+  $('toolPad').onclick = () => $('btnSoundpad').click();
+  // в полноэкранном режиме видно только содержимое полноэкранного элемента — саундпад и подсказки переносим туда
+  document.addEventListener('fullscreenchange', () => {
+    const host = document.fullscreenElement || document.body;
+    for (const id of ['soundpad', 'toast']) if ($(id).parentElement !== host) host.appendChild($(id));
+  });
+  document.addEventListener('mousedown', (e) => { if (!e.target.closest?.('.tdrop')) closeToolMenus(); });
   $('toolClear').onclick = () => { tools.local.clear(); kickLocal(); send({ t: 'draw-clear' }); };
   const rb = $('reactBar');
   for (const e of REACTIONS) {
@@ -5225,7 +5584,6 @@ function bindLiveTools() {
   $('toolImg').onclick = () => $('screenImgInput').click();
   $('screenImgInput').onchange = (e) => { sendScreenImage(e.target.files[0]); e.target.value = ''; };
   $('toolCtl').onclick = ctlRequest;
-  $('toolFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $('remoteScreenWrap').requestFullscreen()).catch(() => {});
   $('toolLock').onclick = () => {
     try { const p = layer.requestPointerLock({ unadjustedMovement: true }); p?.catch?.(() => layer.requestPointerLock()); } catch { layer.requestPointerLock(); }
     toast('Мышь захвачена для игры — Esc, чтобы отпустить');
@@ -5273,6 +5631,7 @@ async function ctlGrant() {
   if (!r.ok) { toast('Управление не запустилось: ' + r.error); ctlSig({ t: 'ctl-deny', why: 'не запустилось у него' }, 's'); return; }
   CS.on = true;
   CS.perm = perm;
+  CS.mods.clear();
   CS.lastMsg = Date.now();
   CS.released = true;
   ctlSig({ t: 'ctl-grant', ...perm }, 's');
@@ -5282,7 +5641,7 @@ async function ctlGrant() {
   sysMsg(`${ctlNick('s')} управляет твоим компьютером. Забрать — Ctrl+Shift+X или кнопка на превью`);
   ctlLink('s')?.changed();
   // друг пропал (нет сигналов 4 с) — отпускаем все зажатые клавиши
-  CS.wd = setInterval(() => { if (CS.on && !CS.released && Date.now() - CS.lastMsg > 4000) { window.duo.inputCmd('rel'); CS.released = true; } }, 1000);
+  CS.wd = setInterval(() => { if (CS.on && !CS.released && Date.now() - CS.lastMsg > 4000) { window.duo.inputCmd('rel'); CS.released = true; CS.mods.clear(); } }, 1000);
   L('control', { granted: perm, admin: r.admin });
 }
 
@@ -5356,7 +5715,15 @@ function onCtlMsg(a) {
     case 'r': { const dx = int(a[1], 2000), dy = int(a[2], 2000); if (p.mouse && dx != null && dy != null) window.duo.inputCmd(`r ${dx} ${dy}`); break; }
     case 'b': { const b = int(a[1], 9); if (p.mouse && b != null && b >= 0 && b <= 4) window.duo.inputCmd(`b ${b} ${a[2] ? 1 : 0}`); break; }
     case 'w': { const dy = int(a[1], 1200), dx = int(a[2], 1200); if (p.mouse && dy != null && dx != null) window.duo.inputCmd(`w ${dy} ${dx}`); break; }
-    case 'k': { const k = KEYMAP[a[1]]; if (p.kb && k) window.duo.inputCmd(`k ${k[0]} ${k[1]} ${a[2] ? 1 : 0}`); break; }
+    case 'k': {
+      const k = KEYMAP[a[1]];
+      if (!p.kb || !k) break;
+      const down = !!a[2];
+      if (/^(Alt|Control)(Left|Right)$/.test(a[1])) { if (down) CS.mods.add(a[1]); else CS.mods.delete(a[1]); }
+      if (down && blockedCombo(a[1])) break;
+      window.duo.inputCmd(`k ${k[0]} ${k[1]} ${down ? 1 : 0}`);
+      break;
+    }
     case 'p': {
       if (!p.pad) break;
       const v = a.slice(1, 8).map((x, i) => int(x, i === 0 ? 65535 : i < 3 ? 255 : 32767));
@@ -5367,6 +5734,14 @@ function onCtlMsg(a) {
   }
 }
 
+// сочетания, которыми можно уйти из показанного окна к остальному компьютеру: Alt+Tab, Alt+Esc,
+// Ctrl+Esc (Пуск), Alt+F4 (закрыть окно), Alt+Space (меню окна). Win не пропускает помощник
+function blockedCombo(code) {
+  const alt = CS.mods.has('AltLeft') || CS.mods.has('AltRight');
+  const ctrl = CS.mods.has('ControlLeft') || CS.mods.has('ControlRight');
+  if (alt && (code === 'Tab' || code === 'Escape' || code === 'F4' || code === 'Space')) return true;
+  return ctrl && code === 'Escape';
+}
 function onInputEvt(line) {
   if (line === 'local') { ctlSend({ t: 'ctl-info', what: 'local' }, true); return; }
   if (line.startsWith('rumble ')) { const [, l, s] = line.split(' ').map(Number); ctlSend({ t: 'rumble', l, s }, true); return; }
@@ -5420,7 +5795,7 @@ async function refreshClip() {
   stopClip();
   if (!t || !t.video) return;
   S.clipKey = key;
-  const mix = clipAudioMix(t.audio);
+  const mix = settings().clipAudio === true ? clipAudioMix(t.audio) : { track: null, stop() {} };
   S.clipMix = mix;
   const rec = new window.ClipRecorder(Math.max(5, Math.min(120, Number(settings().clipSeconds) || 30)));
   S.clip = rec;

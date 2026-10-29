@@ -125,17 +125,19 @@
         <div id="inputLayer" class="input-layer"></div>
         <div class="stoolbar" id="stoolbar">
           <button class="tbtn" id="toolPtr" title="Указка">👆</button>
-          <button class="tbtn" id="toolDraw" title="Рисовать">✏️</button>
-          <button class="tbtn color" id="toolColor" title="Цвет"></button>
+          <span class="tdrop"><button class="tbtn" id="toolDraw" title="Рисовать">✏️</button><button class="tbtn tcaret" id="toolDrawMenu" title="Кисть, фигуры, толщина, цвет">▾</button>
+            <div class="tmenu hidden" id="drawMenu"><div class="tmenu-row" id="drawKinds"></div><div class="tmenu-row" id="drawSizes"></div><div class="tmenu-row" id="drawColors"></div></div></span>
+          <button class="tbtn color" id="toolColor" title="Цвет (клик — следующий)"></button>
           <button class="tbtn" id="toolClear" title="Стереть рисунки">🧹</button>
           <span class="tsep"></span>
-          <span id="reactBar" class="react-bar"></span>
+          <span class="tdrop"><button class="tbtn" id="toolEmoji" title="Реакции">😀<small>▾</small></button>
+            <div class="tmenu hidden" id="emojiMenu"><span id="reactBar" class="react-bar"></span></div></span>
           <button class="tbtn" id="toolImg" title="Картинка, гифка или видео на экран друга">🖼</button>
+          <button class="tbtn" id="toolPad" title="Саундпад">🎵</button>
           <input type="file" id="screenImgInput" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska,.mkv,.mov" class="hidden" />
           <span class="tsep"></span>
           <button class="tbtn wide" id="toolCtl">🎮 Управление</button>
           <button class="tbtn wide hidden" id="toolLock" title="Для игр, где мышь крутит камеру">🖱 Захват мыши</button>
-          <button class="tbtn" id="toolFull" title="На весь экран / обратно">⛶</button>
         </div>
         <div class="overlay">
           <span class="tag">Экран: <b id="remoteScreenOwner">друг</b> <span id="remoteScreenTitle" class="muted"></span></span>
@@ -155,6 +157,7 @@
       </div>
     </div>
 
+    <div class="chat-split" title="Потяни — ширина чата; двойной клик — как было"></div>
     <aside class="chat">
       <div class="chat-head">Чат <button type="button" id="chatSearchBtn" class="icon-btn small" title="Поиск по переписке">🔍</button></div>
       <div id="messages" class="messages"></div>
@@ -194,6 +197,7 @@
   </header>
   <main class="stage">
     <div class="view gview"><div id="gGrid" class="ggrid"></div></div>
+    <div class="chat-split" title="Потяни — ширина чата; двойной клик — как было"></div>
     <aside class="chat">
       <div class="chat-head">Чат группы</div>
       <div id="gMessages" class="messages"></div>
@@ -416,19 +420,24 @@
       <div class="favatar big" id="avatarPreview"><span id="avatarInitial">?</span></div>
       <div>
         <div class="netbox-head">Аватарка</div>
-        <small class="muted">Картинка или гифка до 2 МБ — друзья увидят её в списке и в звонке</small><br />
+        <small class="muted">Картинка или гифка — можно перетащить сюда. Большая сама уменьшится до нужного размера. Друзья увидят её в списке и в звонке</small><br />
         <button type="button" id="btnAvatarPick" class="btn small">Выбрать…</button>
         <button type="button" id="btnAvatarClear" class="btn small">Убрать</button>
         <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
       </div>
     </div>
 
-    <div class="ringbox">
-      <div class="ringbox-head">Оформление</div>
+    <details class="scat" data-cat="theme">
+      <summary>🎨 Оформление</summary>
+      <div class="scat-body">
       <div id="themeGrid" class="theme-grid"></div>
       <small class="muted">Тема только у тебя — у друга остаётся его собственная.</small>
-    </div>
+      </div>
+    </details>
 
+    <details class="scat" data-cat="sound">
+      <summary>🔊 Звук и микрофон</summary>
+      <div class="scat-body">
     <label class="field">
       <span>Микрофон</span>
       <select id="micSelect"></select>
@@ -440,7 +449,7 @@
       <select id="outSelect"></select>
     </label>
 
-    <label class="check"><input type="checkbox" id="optRnn" checked /> <span>Шумодав (нейросеть RNNoise) <small class="muted">— кнопка в звонке, <kbd>Ctrl+Shift+N</kbd></small></span></label>
+    <label class="check"><input type="checkbox" id="optRnn" checked /> <span>Шумодав (нейросеть RNNoise) <small class="muted">— кнопка в звонке</small></span></label>
     <label class="check"><input type="checkbox" id="optNoise" checked /> <span>Встроенное шумоподавление Chromium <small class="muted">(слабое)</small></span></label>
     <label class="check"><input type="checkbox" id="optEcho" checked /> <span>Эхоподавление</span></label>
     <label class="check"><input type="checkbox" id="optAgc" checked /> <span>Автогромкость микрофона</span></label>
@@ -454,33 +463,6 @@
       <label class="check"><input type="checkbox" id="optDuckStream" /> <span>Звук стрима друга в alloconnect тоже</span></label>
     </div>
     <div class="ringbox">
-      <div class="ringbox-head">Поверх моего стрима</div>
-      <label class="check"><input type="checkbox" id="optOvlDraw" /> <span>Друг может показывать указку и рисовать поверх моего экрана</span></label>
-      <label class="check"><input type="checkbox" id="optOvlReact" /> <span>Друг может присылать реакции, картинки, гифки и видео поверх моего экрана <small class="muted">(картинки — на пару секунд, видео — до минуты)</small></span></label>
-      <label class="check"><input type="checkbox" id="optSvidSound" /> <span>Звук у видео, которые присылает друг</span></label>
-      <label class="field inline ring-vol"><span>Громкость видео</span><input type="range" id="svidInVol" min="0" max="100" step="5" value="80" /><b id="svidInVolVal" class="small">80%</b></label>
-      <label class="check"><input type="checkbox" id="optCtlAllow" /> <span>Друг может попросить управление <small class="muted">(каждый раз спрошу разрешение)</small></span></label>
-      <p class="muted small">Поверх игры видно в оконном режиме и «без рамки», в эксклюзивном полноэкранном — нет.</p>
-    </div>
-    <div class="ringbox">
-      <div class="ringbox-head">Повтор последних секунд</div>
-      <label class="check"><input type="checkbox" id="optClip" /> <span>Держать повтор стрима <small class="muted">(сохранить — <kbd>Ctrl+Shift+C</kbd>, работает пока идёт показ экрана)</small></span></label>
-      <label class="field inline ring-vol"><span>Длина</span><input type="range" id="clipSeconds" min="10" max="60" step="5" value="30" /><b id="clipSecondsVal" class="small">30 с</b></label>
-    </div>
-    <div class="ringbox">
-      <div class="ringbox-head">Рация и статус</div>
-      <label class="check"><input type="checkbox" id="optPtt" /> <span>Рация (push-to-talk): микрофон открыт, только пока держишь клавишу <small class="muted">(работает и в игре)</small></span></label>
-      <button type="button" id="pttKey" class="btn small">Клавиша рации: не задана</button>
-      <label class="check"><input type="checkbox" id="optActivity" /> <span>Показывать друзьям, во что играю <small class="muted">(только полноэкранная игра; браузер и плееры не показываются)</small></span></label>
-    </div>
-    <div class="ringbox">
-      <div class="ringbox-head">Обновление</div>
-      <label class="check"><input type="checkbox" id="optAutoUpd" /> <span>Проверять новую версию на GitHub <small class="muted">(раз в несколько часов; ставится только по твоему нажатию)</small></span></label>
-      <div class="row-btns"><button type="button" id="btnGhCheck" class="btn small">Проверить сейчас</button> <span id="ghStatus" class="muted small"></span></div>
-      <p class="muted small">Ещё новая версия может приехать от друга, когда вы оба в сети: нажми «⬆» у друга в списке. Подпись проверяется в обоих случаях, старая версия остаётся для отката.</p>
-      <div id="rollbackRow"><button type="button" id="btnRollback" class="btn small">Откатиться на прошлую версию</button></div>
-    </div>
-    <div class="ringbox">
       <div class="ringbox-head">Звук входящего звонка</div>
       <div class="ring-row">
         <span id="ringName" class="muted small">стандартный</span>
@@ -492,6 +474,28 @@
       <label class="field inline ring-vol"><span>Громкость</span><input type="range" id="ringVol" min="0" max="100" value="80" /></label>
       <label class="check"><input type="checkbox" id="optRingMute" /> <span>Без звука (только окно и мигание)</span></label>
     </div>
+      </div>
+    </details>
+
+    <details class="scat" data-cat="screen">
+      <summary>🖥 Демонстрация экрана</summary>
+      <div class="scat-body">
+    <label class="check"><input type="checkbox" id="optStreamFrame" checked /> <span>Рамка вокруг стрима друга <small class="muted">(у каждой темы своя)</small></span></label>
+    <div class="ringbox">
+      <div class="ringbox-head">Поверх моего стрима</div>
+      <label class="check"><input type="checkbox" id="optOvlDraw" /> <span>Друг может показывать указку и рисовать поверх моего экрана</span></label>
+      <label class="check"><input type="checkbox" id="optOvlReact" /> <span>Друг может присылать реакции, картинки, гифки и видео поверх моего экрана <small class="muted">(картинки — на пару секунд, видео — до минуты)</small></span></label>
+      <label class="check"><input type="checkbox" id="optSvidSound" /> <span>Звук у видео, которые присылает друг</span></label>
+      <label class="field inline ring-vol"><span>Громкость видео</span><input type="range" id="svidInVol" min="0" max="100" step="5" value="80" /><b id="svidInVolVal" class="small">80%</b></label>
+      <label class="check"><input type="checkbox" id="optCtlAllow" /> <span>Друг может попросить управление <small class="muted">(каждый раз спрошу разрешение)</small></span></label>
+      <p class="muted small">Поверх игры видно в оконном режиме и «без рамки», в эксклюзивном полноэкранном — нет.</p>
+    </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Повтор последних секунд</div>
+      <label class="check"><input type="checkbox" id="optClip" /> <span>Держать повтор стрима <small class="muted">(работает, пока идёт показ экрана; клавиша сохранения — в «Горячих клавишах»)</small></span></label>
+      <label class="field inline ring-vol"><span>Длина</span><input type="range" id="clipSeconds" min="10" max="60" step="5" value="30" /><b id="clipSecondsVal" class="small">30 с</b></label>
+      <label class="check"><input type="checkbox" id="optClipAudio" /> <span>Повтор со звуком <small class="muted">(звук экрана и голоса)</small></span></label>
+    </div>
     <label class="field">
       <span>Нижняя планка качества стрима, который ты смотришь</span>
       <select id="minKbps">
@@ -501,18 +505,51 @@
       </select>
     </label>
     <label class="check"><input type="checkbox" id="optAv1" /> <span>AV1 через видеокарту <small class="muted">(экспериментально: RTX 40/50, RX 7000, Arc; применится после перезапуска)</small></span></label>
+      </div>
+    </details>
 
+    <details class="scat" data-cat="keys">
+      <summary>⌨ Горячие клавиши</summary>
+      <div class="scat-body">
+    <div id="hkList" class="hk-list"></div>
+    <p class="muted small">Нажми на сочетание, чтобы поменять (Backspace — выключить, Esc — отмена), ↺ — вернуть как было. Клавиши работают и в играх.
+      Забрать управление у друга — <kbd>Ctrl+Shift+X</kbd>, отдать управление, когда управляешь ты, — тоже <kbd>Ctrl+Shift+X</kbd>.</p>
+    <div class="ringbox">
+      <div class="ringbox-head">Рация</div>
+      <label class="check"><input type="checkbox" id="optPtt" /> <span>Рация (push-to-talk): микрофон открыт, только пока держишь клавишу <small class="muted">(работает и в игре)</small></span></label>
+      <button type="button" id="pttKey" class="btn small">Клавиша рации: не задана</button>
+    </div>
+      </div>
+    </details>
+
+    <details class="scat" data-cat="app">
+      <summary>🪟 Программа</summary>
+      <div class="scat-body">
     <div class="netbox">
-      <div class="netbox-head">Программа</div>
       <label class="check"><input type="checkbox" id="appTray" /> <span>Значок в трее (возле часов)</span></label>
       <label class="check"><input type="checkbox" id="appCloseToTray" /> <span>Крестик прячет в трей, а не закрывает <small class="muted">(чтобы друзья могли дозвониться)</small></span></label>
-      <label class="check"><input type="checkbox" id="appMinToTray" /> <span>Сворачивать в трей</span></label>
+      <div class="radio-row"><span>Кнопка «свернуть» (—):</span>
+        <label class="check"><input type="radio" name="appMin" id="appMinTaskbar" /> <span>на панель задач, как обычно</span></label>
+        <label class="check"><input type="radio" name="appMin" id="appMinToTray" /> <span>в трей</span></label></div>
       <label class="check"><input type="checkbox" id="appAutostart" /> <span>Запускать вместе с Windows</span></label>
       <label class="check"><input type="checkbox" id="appStartHidden" /> <span>При автозапуске — сразу в трей, без окна</span></label>
       <label class="check"><input type="checkbox" id="appBossKey" /> <span>Мгновенно скрыть/показать: <kbd>Ctrl+Shift+H</kbd></span></label>
       <label class="check"><input type="checkbox" id="appNotify" /> <span>Уведомления Windows о звонках и сообщениях, когда окно скрыто</span></label>
+      <label class="check"><input type="checkbox" id="optActivity" /> <span>Показывать друзьям, во что играю <small class="muted">(только полноэкранная игра; браузер и плееры не показываются)</small></span></label>
     </div>
+    <div class="ringbox">
+      <div class="ringbox-head">Обновление</div>
+      <label class="check"><input type="checkbox" id="optAutoUpd" /> <span>Проверять новую версию на GitHub <small class="muted">(раз в несколько часов; ставится только по твоему нажатию)</small></span></label>
+      <div class="row-btns"><button type="button" id="btnGhCheck" class="btn small">Проверить сейчас</button> <span id="ghStatus" class="muted small"></span></div>
+      <p class="muted small">Ещё новая версия может приехать от друга, когда вы оба в сети: нажми «⬆» у друга в списке. Подпись проверяется в обоих случаях, старая версия остаётся для отката.</p>
+      <div id="rollbackRow"><button type="button" id="btnRollback" class="btn small">Откатиться на прошлую версию</button></div>
+    </div>
+      </div>
+    </details>
 
+    <details class="scat" data-cat="net">
+      <summary>🌐 Сеть</summary>
+      <div class="scat-body">
     <div class="netbox">
       <div class="netbox-head">Сеть и звонки друзьям</div>
       <div id="netVerdict" class="net-verdict wait">Проверяю сеть…</div>
@@ -533,8 +570,9 @@
       <label class="field"><span>TURN пароль</span><input id="turnPass" type="password" /></label>
       <label class="check"><input type="checkbox" id="optRelay" /> <span>Только через TURN (для проверки)</span></label>
     </details>
+      </div>
+    </details>
 
-    <p class="muted small">Хоткеи работают и в играх: <kbd>Ctrl+Shift+M</kbd> — микрофон, <kbd>Ctrl+Shift+D</kbd> — звук, <kbd>Ctrl+Shift+X</kbd> — забрать управление, <kbd>Ctrl+Shift+L</kbd> — метка «лагает» в логе.</p>
     <button id="btnHistClearAll" class="btn logs-btn">🗑 Очистить историю всех чатов</button>
     <button id="btnOpenLogs" class="btn logs-btn">📁 Открыть папку с логами</button>
     <button id="btnSaveSettings" class="btn primary">Готово</button>
@@ -546,12 +584,12 @@
   <div class="sp-head">
     <b>Саундпад</b>
     <button id="spAdd" class="btn small primary">＋ Звук</button>
-    <button id="spStop" class="btn small" title="Правый клик — назначить клавишу">■ Стоп всё <small id="spStopKey" class="muted"></small></button>
+    <button id="spStop" class="btn small" title="Правый клик — назначить клавишу (или в Настройки → Горячие клавиши)">■ Стоп всё <small id="spStopKey" class="muted"></small></button>
     <button id="spClose" class="icon-btn">✕</button>
-    <input type="file" id="spFile" multiple accept="audio/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac" class="hidden" />
+    <input type="file" id="spFile" multiple accept="audio/*,video/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac,.mp4,.webm,.mkv,.mov" class="hidden" />
   </div>
   <div id="spGrid" class="sp-grid"></div>
-  <div id="spEmpty" class="sp-empty muted small">Перетащи сюда mp3/ogg/wav или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
+  <div id="spEmpty" class="sp-empty muted small">Перетащи сюда звук или видео (из видео возьмётся звук) или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
   <div class="sp-opts">
     <label class="sp-vol">Другу <input type="range" id="spVolOut" min="0" max="150" value="100" /></label>
     <label class="sp-vol"><input type="checkbox" id="spMonitor" checked /> Слышать себя <input type="range" id="spVolMon" min="0" max="100" value="60" /></label>
@@ -560,8 +598,7 @@
   <div id="spEdit" class="sp-edit hidden">
     <input id="spEditName" maxlength="40" placeholder="Название" />
     <label class="sp-vol">Громкость <input type="range" id="spEditVol" min="0" max="200" value="100" /></label>
-    <button id="spEditKey" class="btn small">Клавиша: —</button>
-    <button id="spEditKeyClear" class="btn small">✕ клавишу</button>
+    <span class="sp-keygrp"><button id="spEditKey" class="btn small">⌨ Клавиша: —</button><button id="spEditKeyClear" class="sp-keyx" title="Убрать клавишу">✕</button></span>
     <button id="spEditShare" class="btn small" title="Отправить этот звук другу в звонке">📤 Другу</button>
     <button id="spEditDel" class="btn small danger-btn">Удалить</button>
     <button id="spEditDone" class="btn small primary">Готово</button>
@@ -578,6 +615,7 @@
 <script src="stun-lists.js"></script>
 <script src="vendor/mp4-muxer.js"></script>
 <script src="clip.js"></script>
+<script src="gif-shrink.js"></script>
 <script src="group.js"></script>
 <script src="renderer.js"></script>
 </body>

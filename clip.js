@@ -82,6 +82,7 @@
           try { res = await reader.read(); } catch { break; }
           if (res.done) break;
           let frame = res.value;
+          this.vWall = { ts: frame.timestamp, at: performance.now() }; // для сведения часов звука и видео
           try {
             if (frame.timestamp - lastFrameTs < minGap) { frame.close(); continue; }
             lastFrameTs = frame.timestamp;
@@ -102,27 +103,41 @@
       pump();
     }
 
+    // кодер звука настраиваем по первому куску (частота/каналы берём из него, а не из getSettings —
+    // там бывает пусто, и при несовпадении кодер молча отбрасывал всё). Часы звука сводим с часами
+    // видео по моменту прихода: иначе метки звука могли оказаться вне окна клипа
     async _startAudio(track) {
-      const s = track.getSettings();
-      const rate = s.sampleRate || 48000;
-      const ch = Math.min(2, s.channelCount || 2);
-      const enc = new root.AudioEncoder({
-        output: (chunk) => { this.audio.push({ ts: chunk.timestamp, chunk }); this._prune(); },
-        error: (e) => log('clip-audio', e.message),
-      });
-      enc.configure({ codec: 'opus', sampleRate: rate, numberOfChannels: ch, bitrate: 128000 });
-      this.aenc = enc;
-      this.aconf = { sampleRate: rate, numberOfChannels: ch };
       const proc = new root.MediaStreamTrackProcessor({ track });
       const reader = proc.readable.getReader();
       this.areader = reader;
+      let off = null;
+      const setup = async (d) => {
+        const ch = Math.min(2, d.numberOfChannels || 2);
+        const cfg = { codec: 'opus', sampleRate: d.sampleRate, numberOfChannels: ch, bitrate: 128000 };
+        const sup = await root.AudioEncoder.isConfigSupported(cfg).catch(() => null);
+        if (!sup?.supported) { log('clip-audio', 'unsupported ' + d.sampleRate + '/' + ch); return false; }
+        const enc = new root.AudioEncoder({
+          output: (chunk) => { this.audio.push({ ts: chunk.timestamp + off, chunk }); this._prune(); },
+          error: (e) => log('clip-audio', e.message),
+        });
+        enc.configure(cfg);
+        this.aenc = enc;
+        this.aconf = { sampleRate: d.sampleRate, numberOfChannels: ch };
+        return true;
+      };
       const pump = async () => {
+        let dead = false;
         while (this.running) {
           let res;
           try { res = await reader.read(); } catch { break; }
           if (res.done) break;
           const data = res.value;
-          try { if (this.aenc.state === 'configured') this.aenc.encode(data); } catch { /* */ } finally { data.close(); }
+          try {
+            if (dead || !this.vWall) continue; // пока нет видео — звук не нужен
+            if (off == null) off = Math.round(this.vWall.ts + (performance.now() - this.vWall.at) * 1000 - data.timestamp);
+            if (!this.aenc && !(await setup(data))) { dead = true; continue; }
+            if (this.aenc.state === 'configured') this.aenc.encode(data);
+          } catch (e) { log('clip-audio', e.message); } finally { data.close(); }
         }
       };
       pump();
@@ -187,6 +202,7 @@
         }
       }
       muxer.finalize();
+      log('clip-audio', { saved: this.audio.length, rate: this.aconf?.sampleRate || 0 });
       return new Blob([muxer.target.buffer], { type: 'video/mp4' });
     }
 

@@ -1,5 +1,6 @@
 Шрифты тем оформления (SIL Open Font License 1.1):
-Press Start 2P — CodeMan38; JetBrains Mono — JetBrains; Rubik Mono One — Hubert & Fischer; Exo 2 — Natanael Gama; Russo One — Jovanny Lemonad.
+Press Start 2P — CodeMan38; JetBrains Mono — JetBrains; Rubik Mono One — Hubert & Fischer; Exo 2 — Natanael Gama; Russo One — Jovanny Lemonad;
+Caveat — The Caveat Project Authors; PT Serif — ParaType.
 Файлы взяты из пакетов @fontsource (npm).
 
 Copyright 2012 The Press Start 2P Project Authors (cody@zone38.net), with Reserved Font Name "Press Start 2P"

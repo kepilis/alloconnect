@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.16.1",
+  "version": "1.17.0",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -40,6 +40,7 @@
       "overlay-preload.js",
       "stun-lists.js",
       "clip.js",
+      "gif-shrink.js",
       "vendor/mp4-muxer.js",
       "vendor/LICENSE-mp4-muxer",
       "themes.css",

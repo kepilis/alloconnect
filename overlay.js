@@ -172,6 +172,13 @@ window.ovl.on((m) => {
       break;
     }
     case 'clear': strokes.clear(); kick(); break;
+    // «убрать всё с экрана» (горячая клавиша у того, кто показывает): видео, картинки, гифки, рисунки, указки, реакции
+    case 'clear-all':
+      strokes.clear(); ptrs.clear(); kick();
+      vidBox?.kill?.();
+      while (imgs.length) imgs.shift().remove();
+      for (const el of document.querySelectorAll('.react')) el.remove();
+      break;
     case 'ptr': ptrs.set(String(m.pid || 'one').slice(0, 64), { x: clamp(m.x), y: clamp(m.y), nick: String(m.nick || '').slice(0, 24), c: /^#[0-9a-f]{6}$/i.test(m.c) ? m.c : '#ff3c50', ts: Date.now() }); kick(); break;
     case 'ptr-off': if (m.pid) ptrs.delete(String(m.pid)); else ptrs.clear(); kick(); break;
     case 'react': react(String(m.e || '').slice(0, 8)); break;

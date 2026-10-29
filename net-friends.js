@@ -198,12 +198,24 @@ class FriendsNet extends EventEmitter {
     this.loadFriends();
     this.loadCodes();
     const cfg = this.readJson('net.json', {});
-    const tryPorts = [preferredPort, cfg.port, ...Array.from({ length: 5 }, () => 40000 + Math.floor(Math.random() * 20000))].filter(Boolean);
-    for (const p of tryPorts) {
-      try { await this.bind(p); break; } catch (e) { this.log('friends', `port ${p} busy: ${e.code || e.message}`); }
+    // порт должен быть постоянным: друзья помнят мой адрес с этим портом, а за строгим NAT
+    // (symmetric, порт сохраняется) по другому порту меня не найти. Занят — обычно это прошлая копия
+    // ещё закрывается (перезапуск, обновление): ждём её до ~6 с
+    const saved = preferredPort || cfg.port;
+    for (let i = 0; saved && i < 12 && !this.sock; i++) {
+      try { await this.bind(saved); } catch (e) {
+        if (i === 0) this.log('friends', `port ${saved} busy: ${e.code || e.message}, waiting`);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    for (let i = 0; i < 5 && !this.sock; i++) {
+      const p = 40000 + Math.floor(Math.random() * 20000);
+      try { await this.bind(p); } catch (e) { this.log('friends', `port ${p} busy: ${e.code || e.message}`); }
     }
     if (!this.sock) throw new Error('не удалось открыть UDP-порт');
-    if (cfg.port !== this.port) this.writeJson('net.json', { ...cfg, port: this.port });
+    // временный порт не запоминаем: в следующий раз снова пробуем свой постоянный
+    if (!saved) this.writeJson('net.json', { ...cfg, port: this.port });
+    else if (this.port !== saved) this.log('friends', { tempPort: true });
     this.timer = setInterval(() => this.pingAll(), PING_EVERY);
     this.punchTimer = setInterval(() => { if (Date.now() < this.punchUntil) this.pingAll(); }, PUNCH_EVERY);
     this.punch();

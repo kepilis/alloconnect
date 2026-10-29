@@ -167,7 +167,7 @@ app.whenReady().then(async () => {
     if (ROLE === 'A') {
       await js(`ctlRequest(); true`);
       res.ctlGranted = await waitFor(W, `CV.state === 'on'`, 15000);
-      res.ctlCompact = await js(`document.getElementById('remoteScreenWrap').classList.contains('ctl-active') && getComputedStyle(document.querySelector('#remoteScreenWrap .overlay')).display === 'none' && getComputedStyle(document.getElementById('reactBar')).display === 'none' && getComputedStyle(document.getElementById('toolCtl')).display !== 'none'`);
+      res.ctlCompact = await js(`document.getElementById('remoteScreenWrap').classList.contains('ctl-active') && getComputedStyle(document.getElementById('remoteStats')).display === 'none' && getComputedStyle(document.getElementById('btnFull')).display !== 'none' && document.getElementById('reactBar').offsetParent === null && getComputedStyle(document.getElementById('toolCtl')).display !== 'none'`);
       const r = await js(`(() => { const b = document.getElementById('remoteScreen').getBoundingClientRect(); return { x: Math.round(b.left + b.width * 0.25), y: Math.round(b.top + b.height * 0.25) }; })()`);
       W.webContents.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
       await sleep(100);

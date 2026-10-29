@@ -214,3 +214,152 @@ html[data-theme] .tag.warn { color: #ffb547; }
 [data-theme="terminal"] .soundpad { box-shadow: 0 0 0 1px var(--line); }
 [data-theme="manga"] .soundpad { border: 3px solid #111; box-shadow: 6px 6px 0 #111; }
 [data-theme="neon"] .soundpad { border-color: rgba(255, 43, 214, .45); box-shadow: 0 0 30px rgba(255, 43, 214, .18); }
+
+/* ======================================================================
+   Темы 1.17: Чертёж, Ретро-ОС, Тетрадь, Газета
+   ====================================================================== */
+@font-face { font-family: 'Caveat'; font-weight: 400; src: url(vendor/fonts/caveat-cyrillic-400-normal.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Caveat'; font-weight: 400; src: url(vendor/fonts/caveat-latin-400-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Caveat'; font-weight: 700; src: url(vendor/fonts/caveat-cyrillic-700-normal.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Caveat'; font-weight: 700; src: url(vendor/fonts/caveat-latin-700-normal.woff2) format('woff2'); }
+@font-face { font-family: 'PTSerif'; font-weight: 400; src: url(vendor/fonts/pt-serif-cyrillic-400-normal.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'PTSerif'; font-weight: 400; src: url(vendor/fonts/pt-serif-latin-400-normal.woff2) format('woff2'); }
+@font-face { font-family: 'PTSerif'; font-weight: 700; src: url(vendor/fonts/pt-serif-cyrillic-700-normal.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'PTSerif'; font-weight: 700; src: url(vendor/fonts/pt-serif-latin-700-normal.woff2) format('woff2'); }
+
+/* =================== 12. Чертёж: синяя калька, белые линии, жёлтый карандаш =================== */
+html[data-theme="blueprint"] {
+  --bg: #0d3b6f; --panel: rgba(13, 52, 100, .92); --panel-2: rgba(255, 255, 255, .08); --line: rgba(255, 255, 255, .55);
+  --text: #f4f8ff; --muted: #a9c4e8; --accent: #ffd34d; --accent-2: #ffe38a; --ok: #7dffb2; --warn: #ffb547; --bad: #ff7b7b; --radius: 2px;
+}
+[data-theme="blueprint"] body { font-family: 'JBMono', Consolas, monospace; font-size: 13px;
+  background:
+    linear-gradient(rgba(255, 255, 255, .16) 1px, transparent 1px) 0 0 / 100px 100px,
+    linear-gradient(90deg, rgba(255, 255, 255, .16) 1px, transparent 1px) 0 0 / 100px 100px,
+    linear-gradient(rgba(255, 255, 255, .06) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, rgba(255, 255, 255, .06) 1px, transparent 1px) 0 0 / 20px 20px, #0d3b6f; }
+[data-theme="blueprint"] #lobby { background: transparent; }
+[data-theme="blueprint"] .logo, [data-theme="blueprint"] h2, [data-theme="blueprint"] .chat-head, [data-theme="blueprint"] .ringbox-head, [data-theme="blueprint"] .friends-head, [data-theme="blueprint"] .scat > summary { text-transform: uppercase; letter-spacing: .12em; font-weight: 700; }
+[data-theme="blueprint"] .lobby-card, [data-theme="blueprint"] .modal-card, [data-theme="blueprint"] .friends, [data-theme="blueprint"] .soundpad { border: 1.5px solid var(--line); box-shadow: 6px 6px 0 rgba(0, 0, 0, .18); }
+[data-theme="blueprint"] .lobby-card { position: relative; }
+[data-theme="blueprint"] .lobby-card::after { content: "ЛИСТ 1 · М 1:1"; position: absolute; right: 10px; bottom: 6px; font-size: 10px; letter-spacing: .1em; color: var(--muted); pointer-events: none; }
+[data-theme="blueprint"] .topbar, [data-theme="blueprint"] .controls { background: rgba(9, 40, 78, .9); border-color: var(--line); }
+[data-theme="blueprint"] .chat { background: rgba(9, 40, 78, .78); border-left: 1.5px dashed var(--line); }
+[data-theme="blueprint"] .btn, [data-theme="blueprint"] .ctl { background: transparent; border: 1.5px solid var(--line); color: var(--text); }
+[data-theme="blueprint"] .btn:hover, [data-theme="blueprint"] .ctl:hover { border-color: var(--accent); color: var(--accent); background: rgba(255, 211, 77, .06); }
+[data-theme="blueprint"] .btn.primary, [data-theme="blueprint"] .ctl.share { background: var(--accent); color: #0d2a4d; border-color: var(--accent); }
+[data-theme="blueprint"] .ctl.off { background: var(--bad); color: #fff; border-color: var(--bad); }
+[data-theme="blueprint"] input:not([type]), [data-theme="blueprint"] select, [data-theme="blueprint"] textarea { background: rgba(0, 0, 0, .15); border: 1px dashed var(--line); }
+[data-theme="blueprint"] .avatar, [data-theme="blueprint"] .favatar, [data-theme="blueprint"] .call-avatar { background: transparent; border: 1.5px dashed #fff; color: #fff; }
+[data-theme="blueprint"] .person.speaking .avatar, [data-theme="blueprint"] .gtile.speaking .avatar { border: 2px solid var(--accent); box-shadow: 0 0 0 6px rgba(255, 211, 77, .2); }
+[data-theme="blueprint"] .msg .bubble { background: transparent; border: 1px solid var(--line); }
+[data-theme="blueprint"] .msg.me .bubble { border-color: var(--accent); color: var(--accent-2); }
+[data-theme="blueprint"] .screenwrap { border: 1.5px solid #fff; box-shadow: 0 0 0 6px rgba(255, 255, 255, .06), 0 0 0 7px rgba(255, 255, 255, .35); }
+[data-theme="blueprint"] .scat { border-style: dashed; border-color: var(--line); }
+
+/* =================== 13. Ретро-ОС: серые объёмные кнопки, синие заголовки окон =================== */
+html[data-theme="retro98"] {
+  --bg: #008080; --panel: #c0c0c0; --panel-2: #d4d0c8; --line: #808080;
+  --text: #000000; --muted: #404040; --accent: #000080; --accent-2: #1084d0; --ok: #008000; --warn: #806000; --bad: #c00000; --radius: 0px;
+}
+[data-theme="retro98"] body { font-family: Tahoma, 'Segoe UI', sans-serif; font-size: 13px; background: #008080; }
+[data-theme="retro98"] *, [data-theme="retro98"] *::before { border-radius: 0 !important; }
+[data-theme="retro98"] #lobby { background: transparent; }
+[data-theme="retro98"] .lobby-card, [data-theme="retro98"] .modal-card, [data-theme="retro98"] .friends, [data-theme="retro98"] .soundpad {
+  background: #c0c0c0; border: 2px solid; border-color: #ffffff #000000 #000000 #ffffff; box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #dfdfdf, 4px 4px 0 rgba(0, 0, 0, .35); }
+[data-theme="retro98"] .modal-head, [data-theme="retro98"] .chat-head, [data-theme="retro98"] .friends-head {
+  background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700; padding: 4px 8px; }
+[data-theme="retro98"] .modal-head h2 { color: #fff; font-size: 14px; margin: 0; }
+[data-theme="retro98"] .modal-head .icon-btn { background: #c0c0c0; color: #000; width: 22px; height: 20px; font-size: 11px;
+  border: 2px solid; border-color: #ffffff #000000 #000000 #ffffff; box-shadow: inset -1px -1px 0 #808080; }
+[data-theme="retro98"] .logo { font-family: 'PressStart', monospace; font-size: 15px; color: #000080; }
+[data-theme="retro98"] .topbar, [data-theme="retro98"] .controls { background: #c0c0c0; border-color: #ffffff; border-width: 2px; color: #000; }
+[data-theme="retro98"] .chat { background: #c0c0c0; border-left: 2px solid #808080; }
+[data-theme="retro98"] .messages, [data-theme="retro98"] input:not([type]), [data-theme="retro98"] select, [data-theme="retro98"] textarea {
+  background: #ffffff; color: #000; border: 2px solid; border-color: #808080 #ffffff #ffffff #808080; box-shadow: inset 1px 1px 0 #000; }
+[data-theme="retro98"] .btn, [data-theme="retro98"] .ctl, [data-theme="retro98"] .tbtn.wide {
+  background: #c0c0c0; color: #000; border: 2px solid; border-color: #ffffff #000000 #000000 #ffffff; box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #dfdfdf; }
+[data-theme="retro98"] .btn:active, [data-theme="retro98"] .ctl:active, [data-theme="retro98"] .ctl.off {
+  border-color: #000000 #ffffff #ffffff #000000; box-shadow: inset 1px 1px 0 #808080; }
+[data-theme="retro98"] .btn.primary, [data-theme="retro98"] .ctl.share { outline: 1px dotted #000; outline-offset: -5px; font-weight: 700; }
+[data-theme="retro98"] .ctl.off { background: #a0a0a0; }
+[data-theme="retro98"] .avatar, [data-theme="retro98"] .favatar, [data-theme="retro98"] .call-avatar { background: #000080; color: #fff; border: 2px solid; border-color: #808080 #ffffff #ffffff #808080; }
+[data-theme="retro98"] .person.speaking .avatar, [data-theme="retro98"] .gtile.speaking .avatar { outline: 3px solid #00c000; outline-offset: 2px; }
+[data-theme="retro98"] .msg .bubble { background: #ffffe1; color: #000; border: 1px solid #000; }
+[data-theme="retro98"] .msg.me .bubble { background: #d4e4ff; }
+[data-theme="retro98"] .view { background: #008080; }
+[data-theme="retro98"] .screenwrap { border: 2px solid; border-color: #808080 #ffffff #ffffff #808080; box-shadow: inset 1px 1px 0 #000; }
+[data-theme="retro98"] .scat { background: #c0c0c0; border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff; }
+[data-theme="retro98"] .scat[open] > summary { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; }
+[data-theme="retro98"] .scat > summary::after { color: inherit; }
+[data-theme="retro98"] .modal { background: rgba(0, 0, 0, .25); }
+[data-theme="retro98"] ::-webkit-scrollbar { width: 16px; background: #dfdfdf; }
+[data-theme="retro98"] ::-webkit-scrollbar-thumb { background: #c0c0c0; border: 2px solid; border-color: #ffffff #000000 #000000 #ffffff; }
+[data-theme="retro98"] .danger-btn:hover { background: #c00000; color: #fff; }
+[data-theme="retro98"] .toast { background: #ffffe1; color: #000; border: 1px solid #000; }
+
+/* =================== 14. Тетрадь: листок в линейку, поля, рукописный шрифт =================== */
+html[data-theme="notebook"] {
+  --bg: #fdfcf6; --panel: #fffef9; --panel-2: #f4f1e4; --line: #9fb4d8;
+  --text: #1e3a8a; --muted: #6474a3; --accent: #d6336c; --accent-2: #f06595; --ok: #2b8a3e; --warn: #e67700; --bad: #d6336c; --radius: 4px;
+}
+[data-theme="notebook"] body { font-family: 'Caveat', 'Segoe Print', cursive; font-size: 19px; line-height: 1.35;
+  background: linear-gradient(90deg, transparent 54px, rgba(214, 51, 108, .55) 54px, rgba(214, 51, 108, .55) 56px, transparent 56px),
+    repeating-linear-gradient(#fdfcf6 0 25px, #b9cbea 25px 26px); }
+[data-theme="notebook"] #lobby { background: transparent; }
+[data-theme="notebook"] input, [data-theme="notebook"] select, [data-theme="notebook"] button, [data-theme="notebook"] textarea { font-family: 'Caveat', 'Segoe Print', cursive; font-size: 18px; }
+[data-theme="notebook"] .logo, [data-theme="notebook"] h2, [data-theme="notebook"] .chat-head, [data-theme="notebook"] .ringbox-head, [data-theme="notebook"] .friends-head, [data-theme="notebook"] .scat > summary { font-weight: 700; font-size: 1.2em; text-decoration: underline wavy rgba(214, 51, 108, .6); text-underline-offset: 4px; }
+[data-theme="notebook"] .lobby-card, [data-theme="notebook"] .modal-card, [data-theme="notebook"] .friends, [data-theme="notebook"] .soundpad {
+  background: #fffef9; border: 2px solid #1e3a8a; border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px; box-shadow: 3px 4px 0 rgba(30, 58, 138, .25); }
+[data-theme="notebook"] .topbar, [data-theme="notebook"] .controls { background: rgba(255, 254, 249, .92); border-color: #1e3a8a; border-width: 2px; }
+[data-theme="notebook"] .chat { background: rgba(255, 254, 249, .7); border-left: 2px solid #1e3a8a; }
+[data-theme="notebook"] .btn, [data-theme="notebook"] .ctl { background: #fffef9; color: #1e3a8a; border: 2px solid #1e3a8a; border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px; }
+[data-theme="notebook"] .btn:hover, [data-theme="notebook"] .ctl:hover { background: #fff3bf; }
+[data-theme="notebook"] .btn.primary, [data-theme="notebook"] .ctl.share { background: #ffec99; color: #1e3a8a; border-color: #1e3a8a; }
+[data-theme="notebook"] .ctl.off { background: #ffc9c9; color: #a61e4d; border-color: #a61e4d; }
+[data-theme="notebook"] input:not([type]), [data-theme="notebook"] select, [data-theme="notebook"] textarea { background: transparent; border: 0; border-bottom: 2px solid #1e3a8a; border-radius: 0; }
+[data-theme="notebook"] .avatar, [data-theme="notebook"] .favatar, [data-theme="notebook"] .call-avatar { background: #fffef9; color: #1e3a8a; border: 2px solid #1e3a8a; }
+[data-theme="notebook"] .person.speaking .avatar, [data-theme="notebook"] .gtile.speaking .avatar { border-color: var(--ok); box-shadow: 0 0 0 5px rgba(43, 138, 62, .2); }
+[data-theme="notebook"] .msg .bubble { background: #fff9db; color: #1e3a8a; border: 1px solid rgba(30, 58, 138, .25); box-shadow: 2px 3px 0 rgba(0, 0, 0, .08); }
+[data-theme="notebook"] .msg.me .bubble { background: #e7f5ff; }
+[data-theme="notebook"] .msg .meta { font-size: 15px; }
+[data-theme="notebook"] .screenwrap { border: 2px solid #1e3a8a; box-shadow: 4px 5px 0 rgba(30, 58, 138, .25); }
+[data-theme="notebook"] .scat { background: rgba(255, 254, 249, .8); border: 2px solid #1e3a8a; border-radius: 255px 12px 225px 12px / 12px 225px 12px 255px; }
+[data-theme="notebook"] .danger-btn { color: #d6336c; }
+[data-theme="notebook"] .danger-btn:hover { background: #d6336c; color: #fff; }
+[data-theme="notebook"] .tbtn.wide { background: #fff; color: #1e3a8a; }
+[data-theme="notebook"] .modal { background: rgba(30, 58, 138, .2); }
+[data-theme="notebook"] kbd { font-family: 'JBMono', monospace; font-size: 12px; }
+
+/* =================== 15. Газета: газетная бумага, засечки, двойные линейки =================== */
+html[data-theme="newspaper"] {
+  --bg: #efebe1; --panel: #f7f4ec; --panel-2: #e9e4d6; --line: #1b1b1b;
+  --text: #161616; --muted: #5c574d; --accent: #b3261e; --accent-2: #d6463c; --ok: #2f6b2f; --warn: #8a5a00; --bad: #b3261e; --radius: 0px;
+}
+[data-theme="newspaper"] body { font-family: 'PTSerif', Georgia, serif; font-size: 14px;
+  background: radial-gradient(rgba(0, 0, 0, .05) 1px, transparent 1px) 0 0 / 4px 4px, #efebe1; }
+[data-theme="newspaper"] *, [data-theme="newspaper"] *::before { border-radius: 0 !important; }
+[data-theme="newspaper"] #lobby { background: transparent; }
+[data-theme="newspaper"] .logo { font-family: 'PTSerif', Georgia, serif; font-weight: 700; letter-spacing: -.01em; border-top: 4px double #1b1b1b; border-bottom: 4px double #1b1b1b; padding: 4px 0; }
+[data-theme="newspaper"] h2, [data-theme="newspaper"] .chat-head, [data-theme="newspaper"] .ringbox-head, [data-theme="newspaper"] .friends-head {
+  font-weight: 700; text-transform: uppercase; letter-spacing: .08em; border-bottom: 3px double #1b1b1b; }
+[data-theme="newspaper"] .scat > summary { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+[data-theme="newspaper"] .scat[open] > summary { border-bottom: 3px double #1b1b1b; margin-bottom: 8px; }
+[data-theme="newspaper"] .lobby-card, [data-theme="newspaper"] .modal-card, [data-theme="newspaper"] .friends, [data-theme="newspaper"] .soundpad { background: #f7f4ec; border: 1px solid #1b1b1b; box-shadow: 0 0 0 4px #f7f4ec, 0 0 0 5px #1b1b1b; }
+[data-theme="newspaper"] .topbar, [data-theme="newspaper"] .controls { background: #f7f4ec; border-color: #1b1b1b; border-width: 3px; border-style: double; }
+[data-theme="newspaper"] .chat { background: #f7f4ec; border-left: 3px double #1b1b1b; }
+[data-theme="newspaper"] .btn, [data-theme="newspaper"] .ctl { background: transparent; color: #161616; border: 1px solid #1b1b1b; font-weight: 700; }
+[data-theme="newspaper"] .btn:hover, [data-theme="newspaper"] .ctl:hover { background: #161616; color: #f7f4ec; }
+[data-theme="newspaper"] .btn.primary, [data-theme="newspaper"] .ctl.share { background: #161616; color: #f7f4ec; }
+[data-theme="newspaper"] .ctl.off { background: var(--accent); color: #fff; border-color: var(--accent); }
+[data-theme="newspaper"] input:not([type]), [data-theme="newspaper"] select, [data-theme="newspaper"] textarea { background: #fbf9f3; border: 1px solid #1b1b1b; }
+[data-theme="newspaper"] .avatar, [data-theme="newspaper"] .favatar, [data-theme="newspaper"] .call-avatar { background: #e9e4d6; color: #161616; border: 1px solid #1b1b1b; filter: grayscale(.6) contrast(1.1); }
+[data-theme="newspaper"] .person.speaking .avatar, [data-theme="newspaper"] .gtile.speaking .avatar { border: 3px solid var(--accent); filter: none; }
+[data-theme="newspaper"] .msg .bubble { background: transparent; border: 0; border-left: 3px solid #1b1b1b; padding-left: 10px; }
+[data-theme="newspaper"] .msg.me .bubble { border-left: 0; border-right: 3px solid var(--accent); padding-right: 10px; }
+[data-theme="newspaper"] .msg .meta { font-style: italic; }
+[data-theme="newspaper"] .screenwrap { border: 1px solid #1b1b1b; box-shadow: 0 0 0 4px #efebe1, 0 0 0 5px #1b1b1b; }
+[data-theme="newspaper"] .scat { background: #f7f4ec; border: 1px solid #1b1b1b; }
+[data-theme="newspaper"] .tbtn.wide { background: #fff; color: #111; }
+[data-theme="newspaper"] .danger-btn:hover { background: var(--accent); color: #fff; }
+[data-theme="newspaper"] .modal { background: rgba(30, 26, 20, .4); }

@@ -79,7 +79,10 @@ app.commandLine.appendSwitch('enable-features', enable.join(','));
 app.commandLine.appendSwitch('force_high_performance_gpu');
 
 app.setAppUserModelId('local.alloconnect');
-if (!app.requestSingleInstanceLock()) app.quit();
+// вторая копия — сразу выходим: app.quit() не мгновенный, и она успевала занять другой UDP-порт
+// и записать его в net.json — после перезапуска друзья стучались на старый порт
+const firstInstance = app.requestSingleInstanceLock();
+if (!firstInstance) app.exit(0);
 
 let win = null;
 // Источник для демонстрации, который пользователь выбрал в нашем окне выбора
@@ -245,6 +248,7 @@ app.on('second-instance', () => showWindow());
 app.on('before-quit', () => { appQuitting = true; });
 
 app.whenReady().then(() => {
+  if (!firstInstance) return;
   Menu.setApplicationMenu(null);
   openLog();
   logSystemInfo();
@@ -288,14 +292,8 @@ app.whenReady().then(() => {
   setInterval(boostPriority, 10000);
   setInterval(logCpu, 1000);
 
-  // Глобальная горячая клавиша: вкл/выкл микрофон, даже когда окно не в фокусе (например, в игре)
-  globalShortcut.register('CommandOrControl+Shift+M', () => win?.webContents.send('hotkey', 'mute'));
-  globalShortcut.register('CommandOrControl+Shift+D', () => win?.webContents.send('hotkey', 'deafen'));
-  globalShortcut.register('CommandOrControl+Shift+N', () => win?.webContents.send('hotkey', 'ns'));
-  // Метка в логе: нажми, когда стрим начал лагать
-  globalShortcut.register('CommandOrControl+Shift+L', () => { log('MARK', '===== пользователь отметил момент (лаг) ====='); win?.webContents.send('hotkey', 'mark'); });
-  // Повтор последних секунд стрима
-  globalShortcut.register('CommandOrControl+Shift+C', () => win?.webContents.send('hotkey', 'clip'));
+  // Глобальные горячие клавиши (работают и в игре); сочетания меняются в настройках
+  registerAppHotkeys();
   applyPtt();
 });
 
@@ -707,6 +705,50 @@ function writeSounds(d) {
   fs.writeFileSync(soundsIndex() + '.tmp', JSON.stringify(d, null, 1));
   fs.renameSync(soundsIndex() + '.tmp', soundsIndex());
 }
+/* ---------- Горячие клавиши программы: микрофон, звук, шумодав, повтор, метка, «убрать всё с экрана» ----------
+   Сочетания — в hotkeys.json; пустая строка — клавиша выключена. */
+const HOTKEY_DEFAULTS = {
+  mute: 'CommandOrControl+Shift+M', deafen: 'CommandOrControl+Shift+D', ns: 'CommandOrControl+Shift+N',
+  clip: 'CommandOrControl+Shift+C', mark: 'CommandOrControl+Shift+L', clear: 'CommandOrControl+Alt+End',
+};
+function hotkeysFile() { return path.join(app.getPath('userData'), 'hotkeys.json'); }
+function readHotkeys() {
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(hotkeysFile(), 'utf-8')) || {}; } catch { /* */ }
+  const out = {};
+  for (const k of Object.keys(HOTKEY_DEFAULTS)) out[k] = typeof saved[k] === 'string' ? saved[k].slice(0, 60) : HOTKEY_DEFAULTS[k];
+  return out;
+}
+let appKeys = [];
+let appKeysBusy = [];
+function registerAppHotkeys() {
+  for (const k of appKeys) { try { globalShortcut.unregister(k); } catch { /* */ } }
+  appKeys = [];
+  appKeysBusy = [];
+  const keys = readHotkeys();
+  for (const [what, acc] of Object.entries(keys)) {
+    if (!acc) continue;
+    const fire = what === 'mark'
+      ? () => { log('MARK', '===== пользователь отметил момент (лаг) ====='); win?.webContents.send('hotkey', 'mark'); }
+      : () => win?.webContents.send('hotkey', what);
+    try { if (globalShortcut.register(acc, fire)) appKeys.push(acc); else appKeysBusy.push(what); } catch { appKeysBusy.push(what); }
+  }
+  if (appKeysBusy.length) log('hotkeys', { busy: appKeysBusy });
+}
+ipcMain.handle('hotkeys-get', () => ({ keys: readHotkeys(), defaults: HOTKEY_DEFAULTS, busy: appKeysBusy, stopKey: readSounds().stopKey }));
+ipcMain.handle('hotkeys-set', (_e, what, acc) => {
+  if (!Object.prototype.hasOwnProperty.call(HOTKEY_DEFAULTS, what)) return { ok: false };
+  acc = String(acc ?? HOTKEY_DEFAULTS[what]).slice(0, 60);
+  const keys = readHotkeys();
+  // одно сочетание — одно действие: у прежнего владельца снимаем
+  if (acc) for (const k of Object.keys(keys)) if (k !== what && keys[k] === acc) keys[k] = '';
+  keys[what] = acc;
+  try { fs.writeFileSync(hotkeysFile(), JSON.stringify(keys, null, 1)); } catch (e) { log('main-error', 'hotkeys: ' + e.message); }
+  registerAppHotkeys();
+  registerSoundHotkeys();
+  return { ok: !appKeysBusy.includes(what), keys: readHotkeys() };
+});
+
 let soundKeys = [];
 function registerSoundHotkeys() {
   for (const k of soundKeys) { try { globalShortcut.unregister(k); } catch { /* */ } }
@@ -1060,7 +1102,7 @@ ipcMain.handle('hist-search', (_e, id, q) => {
 });
 ipcMain.handle('hist-media-save', (_e, id, bytes, name) => {
   const buf = Buffer.from(bytes);
-  if (!buf.length || buf.length > 30 * 1024 * 1024) throw new Error('too big');
+  if (!buf.length || buf.length > 210 * 1024 * 1024) throw new Error('too big');
   const ext = (/\.([a-z0-9]{1,5})$/i.exec(String(name || '')) || [, 'bin'])[1].toLowerCase();
   const rel = `media/${require('crypto').randomBytes(8).toString('hex')}.${ext}`;
   fs.mkdirSync(path.join(histDir(id), 'media'), { recursive: true });
@@ -1428,4 +1470,4 @@ function checkUpdateResult() {
   } catch { /* обновления не было */ }
 }
 ipcMain.handle('upd-result', () => { const r = updResult; updResult = null; return r; });
-app.whenReady().then(() => { checkUpdateResult(); loadOwnUpdate(); });
+app.whenReady().then(() => { if (!firstInstance) return; checkUpdateResult(); loadOwnUpdate(); });

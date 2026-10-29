@@ -443,10 +443,10 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .screenwrap:not(:hover) .stoolbar, .screenwrap:not(:hover) .overlay,
 .screenwrap.idle .stoolbar, .screenwrap.idle .overlay { pointer-events: none; }
 /* во время управления экран друга почти целиком свободен: маленькая панель в углу */
-.screenwrap.ctl-active .overlay { display: none; }
+.screenwrap.ctl-active .overlay > :not(#btnFull) { display: none; }
 .screenwrap.ctl-active .stoolbar { left: 8px; top: 8px; transform: none; opacity: .55; }
 .screenwrap.ctl-active .stoolbar:hover { opacity: 1; }
-.screenwrap.ctl-active .stoolbar > :not(#toolCtl):not(#toolLock):not(#toolFull) { display: none; }
+.screenwrap.ctl-active .stoolbar > :not(#toolCtl):not(#toolLock) { display: none; }
 .screenwrap.ctl-active.idle .stoolbar { opacity: .35; pointer-events: auto; }
 
 .stun-custom { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: 12px/1.4 Consolas, monospace; color: var(--text); outline: none; resize: vertical; user-select: text; }
@@ -483,7 +483,7 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .placer-snd { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .placer-bar input.placer-vol { width: 90px; }
 .placer-volval { min-width: 64px; }
-.svid-echo { animation: none; }
+.screenimg-echo.placed.svid-echo { animation: none; opacity: 1; }
 .svid-echo video { width: 100%; height: 100%; display: block; border-radius: 8px; object-fit: fill; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
 .svid-status { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 3; pointer-events: none;
   background: rgba(15,16,20,.88); color: #e8e9ee; border-radius: 10px; padding: 6px 14px; font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
@@ -602,3 +602,56 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
 .gtile .gctl { right: 8px; top: 8px; }
 .ginput[data-mode="ctl"] { cursor: default; }
 .gtile.ctl-active { box-shadow: inset 0 0 0 2px var(--bad); }
+
+/* ---------- Настройки по разделам (1.17) ---------- */
+.scat { border: 1px solid var(--line); border-radius: 12px; margin: 10px 0; }
+.scat > summary { list-style: none; cursor: pointer; padding: 11px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; user-select: none; }
+.scat > summary::-webkit-details-marker { display: none; }
+.scat > summary::after { content: '›'; margin-left: auto; font-size: 20px; line-height: 1; color: var(--muted); transition: transform .15s ease; }
+.scat[open] > summary::after { transform: rotate(90deg); }
+.scat > summary:hover { color: var(--accent); }
+.scat-body { padding: 0 14px 12px; }
+.scat-body > .netbox:first-child, .scat-body > .ringbox:first-child { margin-top: 0; }
+.radio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 6px 0; }
+.radio-row > span:first-child { flex: 1 1 100%; }
+.hk-list { display: flex; flex-direction: column; gap: 6px; }
+.hk-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; }
+.hk-row > span { font-size: 13px; }
+.hk-key { min-width: 120px; font-family: ui-monospace, Consolas, monospace; }
+.hk-key.capture { border-color: var(--accent); color: var(--accent); }
+.hk-key.busy { border-color: var(--bad); color: var(--bad); }
+.hk-reset:disabled { opacity: .3; cursor: default; }
+
+/* ---------- Рамка вокруг стрима друга — можно выключить ---------- */
+html.no-stream-frame .screenwrap { border-color: transparent !important; border-width: 0 !important; box-shadow: none !important; outline: none !important; }
+
+/* ---------- Саундпад: клавиша звука с красным «убрать» ---------- */
+.sp-keygrp { display: inline-flex; align-items: stretch; }
+.sp-keygrp #spEditKey { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.sp-keyx { border: 1px solid var(--bad); background: rgba(255,84,104,.15); color: var(--bad); font-weight: 800; font-size: 12px; padding: 0 9px; cursor: pointer;
+  border-radius: 0 10px 10px 0; margin-left: -1px; }
+.sp-keyx:hover { background: var(--bad); color: #fff; }
+.drop-overlay.to-pad { background: rgba(255,170,40,.14); border-color: #ffaa28; }
+.msg .meta .tick { color: var(--muted); letter-spacing: -2px; margin-left: 2px; }
+.msg .meta .tick.read { color: var(--accent); font-weight: 700; }
+
+/* ---------- Граница «демонстрация | чат» ---------- */
+.stage > .chat { width: var(--chat-w, clamp(230px, 30vw, 300px)); max-width: calc(100% - 320px); min-width: 220px; flex-shrink: 0; }
+.chat-split { flex: 0 0 6px; margin: 0 -3px; position: relative; z-index: 4; cursor: col-resize; touch-action: none; }
+.chat-split::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background .15s; }
+.chat-split:hover::after, body.resizing .chat-split::after { background: var(--accent); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
+body.resizing video, body.resizing iframe { pointer-events: none; }
+
+/* ---------- Панель над стримом: выпадающие меню кисти и реакций ---------- */
+.tdrop { position: relative; display: inline-flex; align-items: center; }
+.tbtn.tcaret { padding: 4px 3px; font-size: 11px; margin-left: -3px; }
+#toolEmoji small { font-size: 10px; margin-left: 1px; opacity: .7; }
+.tmenu { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; gap: 4px;
+  background: rgba(15,16,20,.96); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.tmenu-row { display: flex; gap: 2px; align-items: center; justify-content: center; }
+.tmenu .react-bar { flex-wrap: wrap; max-width: 220px; justify-content: center; }
+.tmenu .tbtn.color { width: 20px; height: 20px; }
+.tsize { display: block; width: 18px; border-radius: 4px; background: currentColor; color: var(--text); }
+.screenwrap:fullscreen .soundpad, .gtile:fullscreen .soundpad { z-index: 8; }
+.screenwrap:fullscreen .toast { z-index: 9; }

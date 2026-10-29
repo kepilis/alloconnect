@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('duo', {
   fcPending: () => ipcRenderer.invoke('fc-pending'),
   onFriendCode: (fn) => ipcRenderer.on('friends-fr', (_e, ev) => fn(ev)),
   histSearch: (id, q) => ipcRenderer.invoke('hist-search', id, q),
+  hotkeysGet: () => ipcRenderer.invoke('hotkeys-get'),
+  hotkeysSet: (what, acc) => ipcRenderer.invoke('hotkeys-set', what, acc),
   onFriends: (fn) => ipcRenderer.on('friends-update', (_e, l) => fn(l)),
   onFriendMsg: (fn) => ipcRenderer.on('friends-msg', (_e, m) => fn(m)),
   netConfig: (c) => ipcRenderer.invoke('net-config', c),

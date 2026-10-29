@@ -520,6 +520,7 @@ function grpOnData(p, d) {
       return;
     }
     case 'chat-op': applyOp(G.conv, d, p.id); return;
+    case 'sp-stop': spStopAll(); return; // участник убрал всё со своего экрана
     case 'bye': grpMemberGone(p.id, 'вышел'); grpSendAll({ t: 'gone', id: p.id }); return;
     default:
   }
@@ -753,7 +754,7 @@ function grpAddTools(el, id) {
     + '<button class="tbtn" data-a="clear" title="Стереть рисунки">🧹</button><span class="tsep"></span>'
     + REACTIONS.map((r) => `<button class="tbtn" data-r="${r}">${r}</button>`).join('')
     + '<span class="tsep"></span><button class="tbtn wide" data-a="ctl">🎮 Управление</button><button class="tbtn wide hidden" data-a="lock" title="Для игр, где мышь крутит камеру">🖱 Захват мыши</button>'
-    + '<button class="tbtn" data-a="full" title="На весь экран / обратно">⛶</button>';
+    + '<button class="tbtn" data-a="pad" title="Саундпад">🎵</button><button class="tbtn" data-a="full" title="На весь экран / обратно">⛶</button>';
   for (const x of [bar, inp]) { x.onclick = (e) => e.stopPropagation(); x.ondblclick = (e) => e.stopPropagation(); }
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -762,6 +763,7 @@ function grpAddTools(el, id) {
     else if (b.dataset.r) grpReact(id, b.dataset.r);
     else if (b.dataset.a === 'clear') { grpSendAll({ t: 'gclear', to: id }); GT.strokes.clear(); grpKickMarks(); }
     else if (b.dataset.a === 'full') grpToggleFs(el);
+    else if (b.dataset.a === 'pad') $('gSoundpad').click();
     else if (b.dataset.a === 'ctl') grpCtlClick(id);
     else if (b.dataset.a === 'lock') {
       try { const r = inp.requestPointerLock({ unadjustedMovement: true }); r?.catch?.(() => inp.requestPointerLock()); } catch { inp.requestPointerLock(); }
@@ -1002,7 +1004,7 @@ function grpEnterUi() {
   closeDm();
   $('lobby').classList.remove('active');
   $('group').classList.add('active');
-  G.conv = { id: G.gid, nick: 'Группа', box: newConvBox(), loaded: false, histStart: null, unread: 0, blobs: [], pending: [], msgs: new Map(), nickOf: (w) => grpNick(w) };
+  G.conv = { id: G.gid, nick: 'Группа', box: newConvBox(), loaded: false, histStart: null, unread: 0, blobs: [], pending: [], msgs: new Map(), nickOf: (w) => grpNick(w), group: true };
   mountConv(G.conv, $('gMessages'));
   loadHistory(G.conv);
   G.tiles.clear();
