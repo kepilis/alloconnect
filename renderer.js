@@ -4439,18 +4439,21 @@ function myAvatarFile() {
 
 async function pickAvatar(file) {
   if (!file) return;
-  if (!/^image\/(png|jpeg|webp|gif|bmp)$/.test(file.type)) { toast('Нужна картинка: png, jpg, webp или gif'); return; }
+  // формат — по содержимому: из браузера тип бывает пустой, а «гифки без фона» там обычно анимированные WebP/PNG
+  const kind = window.sniffImage?.(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()));
+  if (!kind) { toast('Нужна картинка: png, jpg, webp или gif'); return; }
   let bytes, mime;
   try {
-    if (file.type === 'image/gif') {
+    if (kind.animated) {
       const AV_LIMIT = 2 * 1024 * 1024 - 64 * 1024; // друзья (и старые версии) принимают аватарку до 2 МБ
       if (file.size > 60 * 1024 * 1024) { toast('Гифка больше 60 МБ — выбери поменьше'); return; }
-      if (file.size <= AV_LIMIT) bytes = new Uint8Array(await file.arrayBuffer());
+      if (kind.mime === 'image/gif' && file.size <= AV_LIMIT) bytes = new Uint8Array(await file.arrayBuffer());
       else {
-        toast('Гифка большая — уменьшаю…');
-        bytes = await window.shrinkGif?.(file, AV_LIMIT);
-        if (!bytes) { toast('Не получилось уменьшить гифку — выбери поменьше'); return; }
-        L('avatar', { gifShrunk: true, fromKB: Math.round(file.size / 1024), toKB: Math.round(bytes.length / 1024) });
+        // большая гифка или анимированный WebP/PNG → GIF нужного размера (прозрачность сохраняется)
+        toast(kind.mime === 'image/gif' ? 'Гифка большая — уменьшаю…' : 'Перевожу анимацию в гифку…');
+        bytes = await window.shrinkGif?.(new Blob([file], { type: kind.mime }), AV_LIMIT, kind.mime);
+        if (!bytes) { toast('Не получилось подготовить анимацию — выбери другую'); return; }
+        L('avatar', { gifMade: kind.mime, fromKB: Math.round(file.size / 1024), toKB: Math.round(bytes.length / 1024) });
       }
       mime = 'image/gif';
     } else {
@@ -4468,7 +4471,7 @@ async function pickAvatar(file) {
     await loadMyAvatar();
     refreshAvatars();
     announceAvatar(hash);
-    toast('Аватарка сохранена — друзья увидят её при следующей связи');
+    toast(S.connected || G.active ? 'Аватарка сохранена — в звонке её уже видят' : 'Аватарка сохранена — друзья увидят её в звонке или в чате');
   } catch (e) { toast('Не получилось: ' + (e.message || e)); }
 }
 
@@ -4481,6 +4484,7 @@ async function clearAvatar() {
 
 function announceAvatar(hash) {
   if (S.connected) send({ t: 'av-hash', av: hash });
+  if (G.active) grpSendAll({ t: 'av-hash', av: hash });
   for (const l of links.values()) { try { if (l.dc.readyState === 'open') l.dc.send(JSON.stringify({ t: 'ident', av: hash })); } catch { /* */ } }
 }
 

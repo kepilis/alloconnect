@@ -7,9 +7,9 @@
 (function (root) {
   const SIDES = [200, 160, 128, 96, 72];
 
-  async function readFrames(file) {
+  async function readFrames(file, type) {
     if (!root.ImageDecoder) return null;
-    const dec = new root.ImageDecoder({ data: await file.arrayBuffer(), type: 'image/gif' });
+    const dec = new root.ImageDecoder({ data: await file.arrayBuffer(), type });
     await dec.tracks.ready;
     const n = Math.min(dec.tracks.selectedTrack?.frameCount || 1, 300);
     const frames = [];
@@ -150,9 +150,10 @@
     return o.done();
   }
 
-  async function shrinkGif(file, maxBytes) {
+  // type — формат исходника: гифка, а также анимированные WebP/PNG (их «гифки без фона» из браузера) — на выходе всегда GIF
+  async function shrinkGif(file, maxBytes, type = 'image/gif') {
     let frames;
-    try { frames = await readFrames(file); } catch { return null; }
+    try { frames = await readFrames(file, type); } catch { return null; }
     if (!frames?.length) return null;
     try {
       for (const max of [120, 60]) {
@@ -166,5 +167,29 @@
     } finally { for (const f of frames) f.bmp.close(); }
   }
 
+  // формат по содержимому, а не по типу файла (из браузера тип бывает пустой или неверный):
+  // { mime, animated } или null — не картинка
+  function sniffImage(b) {
+    const s = (i, n) => String.fromCharCode(...b.subarray(i, i + n));
+    if (b.length < 12) return null;
+    if (s(0, 6) === 'GIF87a' || s(0, 6) === 'GIF89a') return { mime: 'image/gif', animated: true };
+    if (s(0, 4) === 'RIFF' && s(8, 4) === 'WEBP') {
+      // анимация — чанк ANIM (или флаг анимации в VP8X)
+      const vp8x = s(12, 4) === 'VP8X' && (b[20] & 0x02);
+      let anim = !!vp8x;
+      for (let i = 12; !anim && i + 8 < b.length;) { const id = s(i, 4); const len = b[i + 4] | (b[i + 5] << 8) | (b[i + 6] << 16) | (b[i + 7] << 24); if (id === 'ANIM' || id === 'ANMF') anim = true; i += 8 + len + (len & 1); }
+      return { mime: 'image/webp', animated: anim };
+    }
+    if (b[0] === 0x89 && s(1, 3) === 'PNG') {
+      let anim = false;
+      for (let i = 8; i + 8 < b.length;) { const len = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0; const id = s(i + 4, 4); if (id === 'acTL') { anim = true; break; } if (id === 'IDAT') break; i += 12 + len; }
+      return { mime: 'image/png', animated: anim };
+    }
+    if (b[0] === 0xff && b[1] === 0xd8) return { mime: 'image/jpeg', animated: false };
+    if (s(0, 2) === 'BM') return { mime: 'image/bmp', animated: false };
+    return null;
+  }
+
   root.shrinkGif = shrinkGif;
+  root.sniffImage = sniffImage;
 })(typeof window !== 'undefined' ? window : globalThis);

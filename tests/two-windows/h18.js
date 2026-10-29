@@ -117,6 +117,13 @@ app.whenReady().then(async () => {
         res.pinnedStays = s3.x === s2.x && s3.y === s2.y;
         await js(`document.querySelector('#remoteScreenWrap .wbtn[data-a="pin"]').click(); true`);
         res.layoutSaved = await js(`!!store.get('winLayout', null)`);
+        // на весь экран: заголовка окна нет, видео с самого верха
+        await W.webContents.executeJavaScript(`document.getElementById('remoteScreenWrap').requestFullscreen().then(() => true)`, true);
+        await sleep(1200);
+        res.fsInfo = await js(`({ fs: document.fullscreenElement?.id || null, head: getComputedStyle(document.querySelector('#remoteScreenWrap > .whead')).display, top: Math.round(document.getElementById('remoteScreen').getBoundingClientRect().top), wrapTop: Math.round(document.getElementById('remoteScreenWrap').getBoundingClientRect().top) })`);
+        res.fsNoHeader = res.fsInfo.fs === 'remoteScreenWrap' && res.fsInfo.head === 'none' && res.fsInfo.top <= 2;
+        await js(`document.exitFullscreen().then(() => true)`);
+        await sleep(800);
         await shot('free');
       });
       await step('pop', async () => {

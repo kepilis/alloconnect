@@ -747,3 +747,7 @@ body.popbody > .chat.popped { width: auto !important; }
 .stage.free > #gChat.wpinned .chat-head { cursor: default; }
 body.popbody > #gView.popped > .whead { display: flex !important; }
 body.popbody > #gView.popped > .ggrid { flex: 1; min-height: 0; }
+
+/* на весь экран — без заголовка окна и уголка размера (свободное расположение) */
+:fullscreen > .whead, :fullscreen .wresize { display: none !important; }
+.stage.free #remoteScreenWrap:fullscreen .stoolbar { top: 10px; }
