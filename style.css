@@ -666,7 +666,7 @@ body.resizing video, body.resizing iframe { pointer-events: none; }
 .camwrap.solo-self .camself { position: static; width: 100% !important; height: 100% !important; border: 0; border-radius: 0; }
 .camwrap:not(.solo-self) .camself:not([src]):not(.on) { }
 .camname { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 7px; }
-.camwrap.in-fs { right: 24px; bottom: 80px; width: 22vw; z-index: 6; }
+.camwrap.in-fs { right: 24px; bottom: 24px; width: 22vw; height: auto; z-index: 6; cursor: move; }
 .ctl.on b { filter: none; }
 #btnCam.on { background: rgba(61,220,132,.16); border-color: var(--ok); color: var(--ok); }
 
@@ -749,5 +749,55 @@ body.popbody > #gView.popped > .whead { display: flex !important; }
 body.popbody > #gView.popped > .ggrid { flex: 1; min-height: 0; }
 
 /* на весь экран — без заголовка окна и уголка размера (свободное расположение) */
-:fullscreen > .whead, :fullscreen .wresize { display: none !important; }
+:fullscreen > .whead, :fullscreen > .wresize { display: none !important; }
 .stage.free #remoteScreenWrap:fullscreen .stoolbar { top: 10px; }
+
+/* 1.21: своя камера в углу — только когда включена; на весь экран камеру можно двигать и тянуть за угол */
+.camwrap:not(.self-on) .camself { display: none; }
+.camwrap.in-fs .wresize { display: block !important; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 9;
+  background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,.45) 50%, rgba(255,255,255,.45) 58%, transparent 58%, transparent 70%, rgba(255,255,255,.45) 70%, rgba(255,255,255,.45) 78%, transparent 78%); }
+.camwrap.in-fs .whead .wbtn { display: none; }
+:fullscreen #btnScreenMin { display: none; }
+
+/* ---------- Друзья во время звонка (1.21) ---------- */
+.fr-btn { position: relative; }
+.fr-btn .badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+.fr-drawer { position: fixed; top: 60px; right: 12px; width: 300px; max-height: calc(100vh - 140px); z-index: 45; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.5); overflow: hidden; }
+.fr-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.fr-drawer-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.fr-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.fr-row:hover { background: var(--panel-2); }
+.fr-row .favatar { flex: 0 0 auto; }
+.fr-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fr-name small { color: var(--muted); font-size: 11px; }
+.fr-row:not(.online) { opacity: .7; }
+.fr-row .badge { position: static; background: var(--bad); color: #fff; border-radius: 9px; padding: 1px 7px; font-size: 11px; }
+
+/* ---------- Стикеры (1.21) ---------- */
+.stk-picker { position: fixed; z-index: 46; height: min(420px, 60vh); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.5); overflow: hidden; }
+.stk-tabs { display: flex; gap: 4px; padding: 8px; overflow-x: auto; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.stk-tab { flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stk-tab.on { border-color: var(--accent); background: rgba(124,92,255,.25); }
+.stk-grid { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; padding: 8px; align-content: start; }
+.stk-item { aspect-ratio: 1; border: 1px solid transparent; border-radius: 10px; background: var(--panel-2); padding: 4px; cursor: pointer; display: grid; place-items: center; }
+.stk-item:hover { border-color: var(--accent); }
+.stk-item img { width: 100%; height: 100%; object-fit: contain; }
+.stk-empty { grid-column: 1 / -1; padding: 16px 8px; text-align: center; }
+.stk-foot { display: flex; gap: 6px; align-items: center; padding: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.stk-foot small { margin-left: auto; }
+.stk-settings { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 240px; overflow-y: auto; }
+.stk-pack-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: 8px; }
+.stk-pack-row:hover { background: var(--panel-2); }
+/* стикер в ленте: без плашки файла, просто картинка */
+.msg.sticker .bubble.file { background: none !important; border: 0 !important; box-shadow: none !important; padding: 0; position: relative; }
+.msg.sticker .bubble.file::after { display: none; }
+.msg.sticker .bubble.file img { max-width: 160px; max-height: 160px; border-radius: 0; display: block; }
+.msg.sticker .fstat, .msg.sticker .fprog { display: none; }
+.msg.sticker .fcard { opacity: .6; }
+.stk-take { position: absolute; right: -6px; top: -6px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.msg.sticker:hover .stk-take, .stk-take:disabled { opacity: 1; }
+
+/* «✂ Фон» — меню вариантов */
+.placer-bgwrap .tmenu { top: auto; bottom: calc(100% + 6px); flex-direction: column; align-items: stretch; min-width: 190px; }
+.placer-bgwrap .tmenu .btn { text-align: left; white-space: nowrap; }

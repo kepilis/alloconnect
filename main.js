@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, ipcMain, desktopCapturer, session, globalShortcut, shell, clipboard,
-  Tray, Menu, nativeImage, Notification, screen,
+  Tray, Menu, nativeImage, Notification, screen, dialog,
 } = require('electron');
 const path = require('path');
 const os = require('os');
@@ -89,8 +89,12 @@ let win = null;
 let pendingSource = null; // { id, audio }
 
 /* ---------- Трей, автозапуск, скрытие ---------- */
-const APP_DEFAULTS = { tray: true, closeToTray: true, minToTray: false, autostart: false, startHidden: true, bossKey: true, notify: true };
+const APP_DEFAULTS = { tray: true, closeToTray: true, minToTray: false, autostart: false, startHidden: true, bossKey: true, notify: true, ownNotify: true };
 let appSet = { ...APP_DEFAULTS, ...(FLAGS.app || {}) };
+// 1.21: «сворачивать в трей» осталось включённым у тех, кто включил его в старых версиях (тогда это была одна
+// неприметная галочка), и кнопка «свернуть» у них прятала окно в трей. Один раз возвращаем обычное сворачивание
+let minReset = !!FLAGS.minReset;
+if (!minReset) { appSet.minToTray = false; minReset = true; }
 let tray = null;
 let appQuitting = false;
 let trayHintShown = !!FLAGS.trayHintShown;
@@ -99,7 +103,7 @@ let trayState = { inCall: false, friend: '', online: 0, muted: false };
 const launchedHidden = process.argv.includes('--hidden');
 
 function saveFlags() {
-  try { fs.writeFileSync(path.join(app.getPath('userData'), 'flags.json'), JSON.stringify({ ...readFlags(), app: appSet, trayHintShown, minHintShown })); } catch (e) { log('main-error', 'flags: ' + e.message); }
+  try { fs.writeFileSync(path.join(app.getPath('userData'), 'flags.json'), JSON.stringify({ ...readFlags(), app: appSet, trayHintShown, minHintShown, minReset })); } catch (e) { log('main-error', 'flags: ' + e.message); }
 }
 function showWindow() {
   if (!win) return;
@@ -197,9 +201,54 @@ ipcMain.handle('app-settings-set', (_e, s) => {
   return appSet;
 });
 ipcMain.handle('tray-state', (_e, st) => { trayState = { ...trayState, ...st }; updateTray(); });
-ipcMain.handle('notify', (_e, { title, body, kind }) => {
-  if (!appSet.notify || !Notification.isSupported()) return;
+/* ---------- Свои уведомления (1.21): окно в углу в стиле темы — аватарка (гифки играют), ник, текст, картинка ----------
+   Окно не забирает фокус и спрятано от захвата экрана (друг его в демонстрации не увидит).
+   appSet.ownNotify === false — уведомления Windows, как раньше. */
+let ntfWin = null, ntfReady = null, ntfSeq = 0;
+const NTF_W = 380;
+function ntfEnsure() {
+  if (ntfWin && !ntfWin.isDestroyed()) return ntfWin;
+  ntfWin = new BrowserWindow({
+    width: NTF_W, height: 120, show: false, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+    focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, backgroundColor: '#00000000', title: 'alloconnect-notify',
+    webPreferences: { preload: path.join(__dirname, 'notify-preload.js'), contextIsolation: true, sandbox: true },
+  });
+  ntfWin.setAlwaysOnTop(true, 'screen-saver');
+  try { ntfWin.setContentProtection(true); } catch { /* */ }
+  ntfWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  ntfReady = new Promise((r) => ntfWin.webContents.once('did-finish-load', r));
+  ntfWin.loadFile('notify.html');
+  ntfWin.on('closed', () => { ntfWin = null; });
+  return ntfWin;
+}
+ipcMain.on('ntf-size', (_e, h, n) => {
+  if (!ntfWin || ntfWin.isDestroyed()) return;
+  if (!n) { ntfWin.hide(); return; }
+  const wa = screen.getPrimaryDisplay().workArea;
+  const H = Math.max(40, Math.min(Math.ceil(h), wa.height - 16));
+  ntfWin.setBounds({ x: wa.x + wa.width - NTF_W - 8, y: wa.y + wa.height - H - 8, width: NTF_W, height: H });
+  if (!ntfWin.isVisible()) ntfWin.showInactive();
+});
+ipcMain.on('ntf-click', (_e, d) => { showWindow(); win?.webContents.send('ntf-open', { peer: d?.peer || null, kind: d?.kind || '' }); });
+ipcMain.handle('notify', async (_e, { title, body, kind, peer, media, theme }) => {
+  if (!appSet.notify) return;
   if (win && win.isVisible() && win.isFocused()) return;
+  if (appSet.ownNotify !== false) {
+    try {
+      const w = ntfEnsure();
+      await ntfReady;
+      const okId = typeof peer === 'string' && /^[A-Za-z0-9_-]{43}$/.test(peer);
+      const a = okId ? avRead(peer) : null;
+      const m = media?.bytes && media.bytes.length <= 8 * 1024 * 1024 && /^image\/(png|jpeg|gif|webp)$/.test(String(media.mime)) ? { bytes: Buffer.from(media.bytes), mime: media.mime } : null;
+      w.webContents.send('ntf-show', {
+        id: ++ntfSeq, title: String(title || '').slice(0, 80), body: String(body || '').slice(0, 200), kind: kind === 'call' ? 'call' : 'msg',
+        peer: okId ? peer : null, key: okId ? peer + ':' + (kind || '') : null, theme: /^[a-z0-9]{0,20}$/.test(String(theme || '')) ? String(theme || '') : '',
+        avatar: a?.bytes ? { bytes: a.bytes, mime: a.mime } : null, media: m,
+      });
+      return;
+    } catch (e) { log('main-error', 'ntf: ' + e.message); }
+  }
+  if (!Notification.isSupported()) return;
   try {
     const n = new Notification({ title: String(title).slice(0, 80), body: String(body || '').slice(0, 200), icon: path.join(__dirname, 'icon.png'), silent: kind === 'msg' });
     n.on('click', showWindow);
@@ -240,6 +289,7 @@ function createWindow() {
     return { action: 'deny' };
   });
   win.on('focus', () => win.flashFrame(false));
+  win.on('closed', () => { try { ntfWin?.destroy(); } catch { /* */ } });
   win.on('close', (e) => {
     if (!appQuitting && tray && appSet.closeToTray) { e.preventDefault(); hideToTray(); }
   });
@@ -266,6 +316,7 @@ app.on('before-quit', () => { appQuitting = true; });
 
 app.whenReady().then(() => {
   if (!firstInstance) return;
+  if (!FLAGS.minReset) saveFlags(); // запомнить, что обычное сворачивание уже вернули
   Menu.setApplicationMenu(null);
   openLog();
   logSystemInfo();
@@ -656,6 +707,8 @@ ipcMain.handle('friends-info', () => (friends ? { id: friends.id, port: friends.
 ipcMain.handle('friends-add', (_e, f) => { const ok = friends?.addFriend(f); if (ok) setTimeout(() => friends.probe(f.id), 1500); return ok; });
 ipcMain.handle('friends-remove', (_e, id) => friends?.removeFriend(id));
 // код дружбы (ник — для кода и запроса)
+// мой ник — сразу в сеть друзей (уходит в пингах)
+ipcMain.handle('friends-nick', (_e, nick) => { if (!friends) return false; const was = friends.nick; friends.setNick(String(nick || '')); if (friends.nick !== was) friends.pingAll(); return true; });
 ipcMain.handle('fc-make', (_e, nick) => { if (!friends?.id) return null; friends.setNick(nick); return friends.makeInvite(); });
 ipcMain.handle('fc-parse', (_e, code) => friends?.parseCode(code) || { ok: false, error: 'bad' });
 ipcMain.handle('fc-use', (_e, code, nick) => { if (!friends?.id) return { ok: false, error: 'bad' }; friends.setNick(nick); return friends.useCode(code); });
@@ -1364,16 +1417,46 @@ async function ghGet(url, asJson) {
 /* ---------- Картинка, перетащенная из браузера ссылкой (не файлом) ----------
    Не все браузеры отдают при перетаскивании сам файл — часто только адрес картинки. Качаем здесь, без CORS. */
 const DROP_MAX = 100 * 1024 * 1024;
-ipcMain.handle('fetch-dropped', async (_e, url) => {
+// страница (пин Pinterest и т. п.) вместо файла: ищем в ней настоящее видео, иначе картинку страницы
+function mediaFromPage(html, base) {
+  const un = (s) => String(s).replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
+  const abs = (s) => { try { return new URL(un(s), base).href; } catch { return null; } };
+  const meta = (prop) => {
+    const re = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, 'i');
+    const tag = re.exec(html)?.[0];
+    return tag ? /content=["']([^"']+)["']/i.exec(tag)?.[1] || null : null;
+  };
+  const found = [];
+  // Pinterest: видео лежит mp4 на pinimg.com (720p лучше, hls/m3u8 не годится)
+  const pins = [...html.matchAll(/https?:(?:\\?\/){2}v\d*\.pinimg\.com(?:\\?\/)videos(?:\\?\/)[^"'\s<>]+?\.mp4/gi)].map((m) => un(m[0]));
+  pins.sort((a, b) => (/720p/.test(b) ? 1 : 0) - (/720p/.test(a) ? 1 : 0));
+  found.push(...pins);
+  for (const p of ['og:video:secure_url', 'og:video:url', 'og:video', 'twitter:player:stream']) { const v = meta(p); if (v) found.push(v); }
+  for (const m of html.matchAll(/"contentUrl"\s*:\s*"([^"]+\.(?:mp4|webm|mov)[^"]*)"/gi)) found.push(m[1]);
+  for (const m of html.matchAll(/<(?:video|source)[^>]+src=["'](https?:[^"']+)["']/gi)) found.push(m[1]);
+  const vids = found.map(abs).filter((x) => x && /^https?:/.test(x) && !/\.m3u8(\?|$)/i.test(x));
+  if (vids.length) return vids[0];
+  const img = meta('og:image:secure_url') || meta('og:image') || meta('twitter:image');
+  return img ? abs(img) : null;
+}
+async function ipcMainFetchDropped(url, depth = 0) {
   try {
     const u = new URL(String(url));
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'bad-url' };
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 30000);
     try {
-      const r = await enet.fetch(u.href, { signal: ac.signal, headers: { Accept: 'image/*,video/*;q=0.9,*/*;q=0.5' } });
+      const r = await enet.fetch(u.href, { signal: ac.signal, headers: { Accept: 'image/*,video/*;q=0.9,text/html;q=0.8,*/*;q=0.5', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36' } });
       if (!r.ok) return { error: 'http ' + r.status };
       const mime = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (mime === 'text/html' && depth === 0) {
+        const html = (await r.text()).slice(0, 4 * 1024 * 1024);
+        const media = mediaFromPage(html, u.href);
+        log('drop-fetch', { page: u.hostname, found: media ? new URL(media).pathname.split('.').pop() : null });
+        if (!media) return { error: 'not-media' };
+        clearTimeout(t);
+        return await ipcMainFetchDropped(media, 1);
+      }
       if (!/^(image|video)\//.test(mime)) return { error: 'not-media' };
       if (Number(r.headers.get('content-length')) > DROP_MAX) return { error: 'too-big' };
       const chunks = []; let size = 0;
@@ -1389,7 +1472,282 @@ ipcMain.handle('fetch-dropped', async (_e, url) => {
     log('drop-fetch', { error: e.name === 'AbortError' ? 'timeout' : String(e.message || e).slice(0, 80) });
     return { error: 'fail' };
   }
+}
+ipcMain.handle('fetch-dropped', (_e, url) => ipcMainFetchDropped(url, 0));
+/* =========================================================
+   Стикеры (1.21): свои наборы картинок и гифок. Папка userData/stickers/<набор>/<id>.<ext>, список — stickers.json.
+   Добавить: файлы или папку (каждая подпапка с картинками — свой набор, имя — имя папки).
+   Формат определяется по содержимому (gif/png/jpg/webp), до 3 МБ на стикер, не больше 6000 всего.
+   ========================================================= */
+const STK_MAX = 3 * 1024 * 1024;
+const STK_TOTAL = 6000;
+function stkDir() { return path.join(app.getPath('userData'), 'stickers'); }
+function stkIndex() { return path.join(stkDir(), 'stickers.json'); }
+function stkRead() { try { const d = JSON.parse(fs.readFileSync(stkIndex(), 'utf-8')); return { packs: Array.isArray(d.packs) ? d.packs : [] }; } catch { return { packs: [] }; } }
+function stkWrite(d) { fs.mkdirSync(stkDir(), { recursive: true }); fs.writeFileSync(stkIndex() + '.tmp', JSON.stringify(d)); fs.renameSync(stkIndex() + '.tmp', stkIndex()); }
+const stkId = () => require('crypto').randomBytes(5).toString('hex');
+function stkSniff(b) {
+  if (b.length < 12) return null;
+  const s = (i, n) => b.toString('latin1', i, i + n);
+  if (s(0, 6) === 'GIF87a' || s(0, 6) === 'GIF89a') return ['image/gif', 'gif'];
+  if (b[0] === 0x89 && s(1, 3) === 'PNG') return ['image/png', 'png'];
+  if (b[0] === 0xff && b[1] === 0xd8) return ['image/jpeg', 'jpg'];
+  if (s(0, 4) === 'RIFF' && s(8, 4) === 'WEBP') return ['image/webp', 'webp'];
+  return null;
+}
+// добавить файлы в набор (новый или существующий по имени); возвращает сколько добавлено/пропущено
+function stkAddFiles(d, packName, files) {
+  let pack = d.packs.find((p) => p.name === packName);
+  if (!pack) { pack = { id: stkId(), name: String(packName).slice(0, 40) || 'Стикеры', items: [] }; d.packs.push(pack); }
+  fs.mkdirSync(path.join(stkDir(), pack.id), { recursive: true });
+  const total = () => d.packs.reduce((n, p) => n + p.items.length, 0);
+  let added = 0, skipped = 0;
+  for (const f of files) {
+    try {
+      if (total() >= STK_TOTAL) { skipped++; continue; }
+      const st = fs.statSync(f);
+      if (!st.isFile() || st.size > STK_MAX || st.size < 12) { skipped++; continue; }
+      const buf = fs.readFileSync(f);
+      const kind = stkSniff(buf);
+      if (!kind) { skipped++; continue; }
+      const id = stkId();
+      fs.writeFileSync(path.join(stkDir(), pack.id, `${id}.${kind[1]}`), buf);
+      pack.items.push({ id, mime: kind[0], ext: kind[1], name: path.basename(f).replace(/\.[^.]+$/, '').slice(0, 40) });
+      added++;
+    } catch { skipped++; }
+  }
+  if (!pack.items.length) d.packs = d.packs.filter((p) => p !== pack);
+  return { added, skipped };
+}
+// папка: картинки в каждой подпапке — отдельный набор (до 4 уровней), имя набора — имя папки
+function stkWalk(dir, depth, out) {
+  let ents = [];
+  try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  const files = ents.filter((e) => e.isFile()).map((e) => path.join(dir, e.name)).sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }));
+  if (files.length) out.push({ name: path.basename(dir), files });
+  if (depth < 4) for (const e of ents) if (e.isDirectory()) stkWalk(path.join(dir, e.name), depth + 1, out);
+}
+ipcMain.handle('stickers-list', () => stkRead());
+ipcMain.handle('stickers-get', (_e, packId, id) => {
+  const d = stkRead();
+  const p = d.packs.find((x) => x.id === packId);
+  const it = p?.items.find((x) => x.id === id);
+  if (!it || !/^[a-f0-9]{10}$/.test(p.id) || !/^[a-f0-9]{10}$/.test(it.id)) return null;
+  try { return { bytes: fs.readFileSync(path.join(stkDir(), p.id, `${it.id}.${it.ext}`)), mime: it.mime }; } catch { return null; }
 });
+ipcMain.handle('stickers-pick', async (_e, mode) => {
+  // ALOCALLS_STK_PICK — только для автотеста: путь вместо окна выбора
+  const r = process.env.ALOCALLS_STK_PICK ? { canceled: false, filePaths: [process.env.ALOCALLS_STK_PICK] } : await dialog.showOpenDialog(win, mode === 'folder'
+    ? { title: 'Папка со стикерами', properties: ['openDirectory'] }
+    : { title: 'Стикеры — картинки и гифки', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Картинки и гифки', extensions: ['gif', 'png', 'jpg', 'jpeg', 'webp'] }] });
+  if (r.canceled || !r.filePaths.length) return null;
+  const d = stkRead();
+  let added = 0, skipped = 0, packs = 0;
+  if (mode === 'folder') {
+    const groups = [];
+    stkWalk(r.filePaths[0], 0, groups);
+    for (const g of groups) { const x = stkAddFiles(d, g.name, g.files); added += x.added; skipped += x.skipped; if (x.added) packs++; }
+  } else {
+    const x = stkAddFiles(d, 'Мои стикеры', r.filePaths);
+    added = x.added; skipped = x.skipped; packs = x.added ? 1 : 0;
+  }
+  stkWrite(d);
+  log('stickers', { import: mode, added, skipped, packs });
+  return { added, skipped, packs };
+});
+// стикер из чата — в набор «Полученные»
+ipcMain.handle('stickers-add-bytes', (_e, bytes, name) => {
+  const buf = Buffer.from(bytes);
+  if (buf.length > STK_MAX || !stkSniff(buf)) return false;
+  const tmp = path.join(app.getPath('temp'), `alc-stk-${stkId()}`);
+  fs.writeFileSync(tmp, buf);
+  const d = stkRead();
+  const x = stkAddFiles(d, 'Полученные', [tmp]);
+  try { fs.unlinkSync(tmp); } catch { /* */ }
+  if (x.added) { const p = d.packs.find((q) => q.name === 'Полученные'); const it = p?.items[p.items.length - 1]; if (it && name) it.name = String(name).slice(0, 40); }
+  stkWrite(d);
+  return x.added > 0;
+});
+ipcMain.handle('stickers-del-pack', (_e, id) => {
+  const d = stkRead();
+  if (!/^[a-f0-9]{10}$/.test(String(id))) return false;
+  d.packs = d.packs.filter((p) => p.id !== id);
+  stkWrite(d);
+  try { fs.rmSync(path.join(stkDir(), id), { recursive: true, force: true }); } catch { /* */ }
+  return true;
+});
+ipcMain.handle('stickers-del', (_e, packId, id) => {
+  const d = stkRead();
+  const p = d.packs.find((x) => x.id === packId);
+  const it = p?.items.find((x) => x.id === id);
+  if (!it) return false;
+  p.items = p.items.filter((x) => x !== it);
+  if (!p.items.length) d.packs = d.packs.filter((x) => x !== p);
+  stkWrite(d);
+  try { fs.unlinkSync(path.join(stkDir(), p.id, `${it.id}.${it.ext}`)); } catch { /* */ }
+  return true;
+});
+
+/* =========================================================
+   «Убрать фон» нейросетью (1.22): MODNet — человек, IS-Net — любой предмет. Движок onnxruntime (Windows x64, DirectML →
+   процессор) и модели скачиваются один раз по требованию из служебного релиза этого репозитория (models-v1),
+   с проверкой SHA-256, в userData/ai. В app.asar их нет: автообновление меняет только app.asar.
+   ai-mask: RGBA кадра → маска (0–255) того же размера. Кадры гифки приходят по одному из окна.
+   ========================================================= */
+const AI_BASE = process.env.ALOCALLS_AI_BASE || `https://github.com/${GH_REPO}/releases/download/models-v1`;
+const AI_FILES = {
+  runtime: { n: 'ort-win-x64-1.31.1.tar.gz', sha: '8b0d6f34161adb47d1c469f629cde715dd4370305565e5f048cae80566e17d8a', size: 29073316 },
+  person: { n: 'modnet.onnx', sha: '07c308cf0fc7e6e8b2065a12ed7fc07e1de8febb7dc7839d7b7f15dd66584df9', size: 25888640 },
+  object: { n: 'isnet-general-use.onnx', sha: '60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a', size: 178648008 },
+};
+// как готовить вход: размер (MODNet — кратно 32 по короткой стороне 512, IS-Net — ровно 1024) и нормировка
+const AI_MODEL = { person: { mean: 0.5, std: 0.5, size: 512, keep: true }, object: { mean: 0.5, std: 1, size: 1024, keep: false } };
+const aiDir = () => path.join(app.getPath('userData'), 'ai');
+const AI = { ort: null, sess: {}, busy: Promise.resolve(), ep: null };
+
+function aiHave(kind) {
+  const f = AI_FILES[kind];
+  if (kind === 'runtime') return fs.existsSync(path.join(aiDir(), 'runtime', 'onnxruntime-node', 'package.json')) && fs.existsSync(path.join(aiDir(), 'runtime', '.ok-' + f.sha.slice(0, 16)));
+  try { return fs.statSync(path.join(aiDir(), f.n)).size === f.size && fs.existsSync(path.join(aiDir(), '.ok-' + f.sha.slice(0, 16))); } catch { return false; }
+}
+// обрыв на большом файле — не повод сдаваться: до трёх попыток
+async function aiDownload(kind, progress) {
+  let err = null;
+  for (let i = 0; i < 3; i++) {
+    try { return await aiDownloadOnce(kind, progress); } catch (e) { err = e; log('ai', { retry: kind, n: i + 1, error: String(e.message).slice(0, 80) }); if (/повреждён|больше ожидаемого/.test(e.message)) break; await new Promise((r) => setTimeout(r, 1500)); }
+  }
+  throw err;
+}
+async function aiDownloadOnce(kind, progress) {
+  const f = AI_FILES[kind];
+  fs.mkdirSync(aiDir(), { recursive: true });
+  const out = path.join(aiDir(), f.n);
+  const part = out + '.part';
+  const r = await enet.fetch(`${AI_BASE}/${f.n}`, { headers: { 'User-Agent': 'alloconnect' } });
+  if (!r.ok) throw new Error('не скачалось: ' + r.status);
+  const h = require('crypto').createHash('sha256');
+  const ws = fs.createWriteStream(part);
+  let got = 0, last = 0;
+  try {
+    for await (const c of r.body) {
+      got += c.length;
+      if (got > f.size) throw new Error('файл больше ожидаемого');
+      h.update(c);
+      if (!ws.write(c)) await new Promise((res) => ws.once('drain', res));
+      if (Date.now() - last > 250) { last = Date.now(); progress?.(kind, got, f.size); }
+    }
+  } finally { await new Promise((res) => ws.end(res)); }
+  if (got !== f.size || h.digest('hex') !== f.sha) { try { fs.unlinkSync(part); } catch { /* */ } throw new Error('файл повреждён (контрольная сумма не совпала)'); }
+  fs.renameSync(part, out);
+  progress?.(kind, f.size, f.size);
+  if (kind === 'runtime') {
+    const dir = path.join(aiDir(), 'runtime');
+    fs.rmSync(dir, { recursive: true, force: true });
+    aiUntar(require('zlib').gunzipSync(fs.readFileSync(out)), dir);
+    fs.unlinkSync(out);
+    fs.writeFileSync(path.join(dir, '.ok-' + f.sha.slice(0, 16)), '');
+  } else fs.writeFileSync(path.join(aiDir(), '.ok-' + f.sha.slice(0, 16)), '');
+  log('ai', { downloaded: kind, mb: Math.round(f.size / 1048576) });
+}
+// tar (ustar) → папка; только обычные файлы и папки внутри dir
+function aiUntar(buf, dir) {
+  for (let off = 0; off + 512 <= buf.length;) {
+    const hdr = buf.subarray(off, off + 512);
+    if (hdr.every((b) => b === 0)) break;
+    const str = (a, n) => hdr.toString('utf8', a, a + n).replace(/\0.*$/s, '');
+    const name = (str(345, 155) ? str(345, 155) + '/' : '') + str(0, 100);
+    const size = parseInt(str(124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(hdr[156] || 48);
+    const dest = path.resolve(dir, name);
+    if (!dest.startsWith(path.resolve(dir) + path.sep)) throw new Error('плохой путь в архиве');
+    if (type === '5') fs.mkdirSync(dest, { recursive: true });
+    else if (type === '0' || type === '\0') { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, buf.subarray(off + 512, off + 512 + size)); }
+    off += 512 + Math.ceil(size / 512) * 512;
+  }
+}
+async function aiSession(kind) {
+  if (AI.sess[kind]) return AI.sess[kind];
+  if (!AI.ort) AI.ort = require(path.join(aiDir(), 'runtime', 'onnxruntime-node'));
+  const file = path.join(aiDir(), AI_FILES[kind].n);
+  for (const ep of AI.ep ? [AI.ep] : ['dml', 'cpu']) {
+    try {
+      AI.sess[kind] = await AI.ort.InferenceSession.create(file, { executionProviders: [ep], graphOptimizationLevel: 'all' });
+      AI.ep = ep;
+      log('ai', { session: kind, ep });
+      return AI.sess[kind];
+    } catch (e) { log('ai', { sessionFailed: kind, ep, error: String(e.message).slice(0, 120) }); }
+  }
+  throw new Error('нейросеть не запустилась');
+}
+// билинейное масштабирование одного канала (Float32) / RGBA → CHW с нормировкой
+function aiInput(rgba, w, h, W, H, mean, std) {
+  const out = new Float32Array(3 * W * H);
+  const sx = w / W, sy = h / H;
+  for (let y = 0; y < H; y++) {
+    const fy = Math.min(h - 1, Math.max(0, (y + 0.5) * sy - 0.5)), y0 = Math.floor(fy), y1 = Math.min(h - 1, y0 + 1), dy = fy - y0;
+    for (let x = 0; x < W; x++) {
+      const fx = Math.min(w - 1, Math.max(0, (x + 0.5) * sx - 0.5)), x0 = Math.floor(fx), x1 = Math.min(w - 1, x0 + 1), dx = fx - x0;
+      for (let c = 0; c < 3; c++) {
+        const a = rgba[(y0 * w + x0) * 4 + c], b = rgba[(y0 * w + x1) * 4 + c], cc = rgba[(y1 * w + x0) * 4 + c], d = rgba[(y1 * w + x1) * 4 + c];
+        const v = (a * (1 - dx) + b * dx) * (1 - dy) + (cc * (1 - dx) + d * dx) * dy;
+        out[c * W * H + y * W + x] = (v / 255 - mean) / std;
+      }
+    }
+  }
+  return out;
+}
+// sharp — IS-Net даёт мягкую маску (всё полупрозрачное): поднимаем контраст, уверенное — плотное, сомнительное — прочь
+function aiMaskBack(m, W, H, w, h, sharp) {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < m.length; i++) { if (m[i] < lo) lo = m[i]; if (m[i] > hi) hi = m[i]; }
+  const k = hi - lo > 1e-6 ? 1 / (hi - lo) : 1;
+  const out = new Uint8Array(w * h);
+  const sx = W / w, sy = H / h;
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(H - 1, Math.max(0, (y + 0.5) * sy - 0.5)), y0 = Math.floor(fy), y1 = Math.min(H - 1, y0 + 1), dy = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(W - 1, Math.max(0, (x + 0.5) * sx - 0.5)), x0 = Math.floor(fx), x1 = Math.min(W - 1, x0 + 1), dx = fx - x0;
+      const v = (m[y0 * W + x0] * (1 - dx) + m[y0 * W + x1] * dx) * (1 - dy) + (m[y1 * W + x0] * (1 - dx) + m[y1 * W + x1] * dx) * dy;
+      let t = (v - lo) * k;
+      if (sharp) { t = Math.max(0, Math.min(1, (t - 0.25) / 0.4)); t = t * t * (3 - 2 * t); }
+      out[y * w + x] = Math.max(0, Math.min(255, Math.round(t * 255)));
+    }
+  }
+  return out;
+}
+ipcMain.handle('ai-status', () => ({ runtime: aiHave('runtime'), person: aiHave('person'), object: aiHave('object'), sizes: { runtime: AI_FILES.runtime.size, person: AI_FILES.person.size, object: AI_FILES.object.size } }));
+ipcMain.handle('ai-prepare', async (e, kind) => {
+  if (!AI_MODEL[kind]) return { ok: false, error: 'нет такой модели' };
+  if (process.platform !== 'win32' || process.arch !== 'x64') return { ok: false, error: 'нейросеть есть только для Windows x64' };
+  const progress = (k, got, total) => { try { e.sender.send('ai-progress', { kind: k, got, total }); } catch { /* */ } };
+  try {
+    if (!aiHave('runtime')) await aiDownload('runtime', progress);
+    if (!aiHave(kind)) await aiDownload(kind, progress);
+    await aiSession(kind);
+    return { ok: true, ep: AI.ep };
+  } catch (err) { log('ai', { prepareFailed: kind, error: String(err.message).slice(0, 120) }); return { ok: false, error: err.message }; }
+});
+ipcMain.handle('ai-mask', (_e, kind, rgba, w, h) => {
+  // по одному кадру за раз — нейросеть не любит параллельных запусков
+  const job = AI.busy.then(async () => {
+    const cfg = AI_MODEL[kind];
+    if (!cfg || !(w > 0 && h > 0 && w * h * 4 === rgba.length)) throw new Error('плохой кадр');
+    const s = await aiSession(kind);
+    let W = cfg.size, H = cfg.size;
+    if (cfg.keep) { // MODNet: короткая сторона 512, обе — кратно 32
+      const k = cfg.size / Math.min(w, h);
+      W = Math.max(32, Math.round((w * k) / 32) * 32); H = Math.max(32, Math.round((h * k) / 32) * 32);
+    }
+    const x = new AI.ort.Tensor('float32', aiInput(rgba, w, h, W, H, cfg.mean, cfg.std), [1, 3, H, W]);
+    const out = await s.run({ [s.inputNames[0]]: x });
+    const t = out[s.outputNames[0]];
+    const [oh, ow] = t.dims.slice(-2);
+    return aiMaskBack(t.data, ow, oh, w, h, kind === 'object');
+  });
+  AI.busy = job.catch(() => {});
+  return job;
+});
+
 async function ghCheck() {
   if (!/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return { ok: false, error: 'no-repo' };
   // 1) ветка updates в репозитории: update.json + файлы рядом; 2) запасной путь — раздел релизов

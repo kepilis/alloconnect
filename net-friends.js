@@ -166,7 +166,7 @@ class FriendsNet extends EventEmitter {
   }
   saveFriends() {
     this.writeJson('friends.json', [...this.friends.values()].map((f) => ({
-      id: f.id, nick: f.nick, addrs: f.addrs, hints: f.hints || [], observed: f.observed, added: f.added,
+      id: f.id, nick: f.nick, addrs: f.addrs, hints: f.hints || [], observed: f.observed, added: f.added, renamed: f.renamed || undefined,
     })));
   }
 
@@ -324,6 +324,7 @@ class FriendsNet extends EventEmitter {
     const f = this.friends.get(id);
     if (!f) return;
     f.nick = String(nick).slice(0, 24);
+    f.renamed = true;
     this.saveFriends();
     this.emitList();
   }
@@ -464,7 +465,8 @@ class FriendsNet extends EventEmitter {
   }
 
   /* ---------- пульс ---------- */
-  ping(id) { this.sendAll(id, { t: 'ping', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity }); }
+  // в пинге — и мой ник (1.21): друзья видят новый ник сразу, а не тот, под которым меня добавили
+  ping(id) { this.sendAll(id, { t: 'ping', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); }
   pingAll() {
     for (const id of this.friends.keys()) this.ping(id);
     this.knockAll();
@@ -474,7 +476,7 @@ class FriendsNet extends EventEmitter {
      A даёт свой код (ID, секрет, адреса) → B вставляет его и стучится к A запросом 'fr-req' с секретом →
      A видит «B хочет в друзья» → принял — оба друзья ('fr-ok'). Если A не достучаться (строгий роутер без
      проброса порта), у B есть ответный код с тем же секретом: A вставляет его — и добавляет B сам. */
-  setNick(nick) { if (typeof nick === 'string') this.nick = nick.trim().slice(0, 24); }
+  setNick(nick) { if (typeof nick === 'string') this.nick = nick.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24); }
   activeInvites() {
     const now = Date.now();
     this.invites = this.invites.filter((x) => x.exp > now);
@@ -738,12 +740,15 @@ class FriendsNet extends EventEmitter {
       const ver = /^\d+\.\d+\.\d+$/.test(String(msg.ver || '')) ? String(msg.ver) : null;
       const act = msg.act && typeof msg.act.game === 'string' ? { game: String(msg.act.game).slice(0, 48) } : null;
       if (ver !== (f.ver || null) || JSON.stringify(act) !== JSON.stringify(f.act || null)) { f.ver = ver; f.act = act; if (prevOnline) this.emitList(); }
+      // друг сменил ник — обновляем (если я сам его не переименовал); любой язык, без управляющих символов
+      const nk = typeof msg.nick === 'string' ? msg.nick.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24) : '';
+      if (nk && nk !== f.nick && !f.renamed) { f.nick = nk; this.saveFriends(); this.emitList(); this.log('friends', { nickChanged: id.slice(0, 8) }); }
     }
     if (!prevOnline) { this.log('friends', { presence: id.slice(0, 8), online: true, via: f.via }); this.emitList(); }
 
     const reply = (o) => this.sendTo(id, o, { ...src, kind: 'reply' });
     switch (msg.t) {
-      case 'ping': reply({ t: 'pong', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity }); return;
+      case 'ping': reply({ t: 'pong', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); return;
       case 'pong': return;
       case 'probe':
         this.log('net-check', { inboundFromFriend: id.slice(0, 8), viaMyAddr: msg.kind, srcKind: ipKind(src.ip) });

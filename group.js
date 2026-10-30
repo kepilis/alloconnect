@@ -144,7 +144,7 @@ function grpOnInvite(id, msg, nick) {
   $('gInvModal').classList.remove('hidden');
   startRing();
   window.duo.focusWindow();
-  window.duo.notify({ title: `${nick} зовёт в групповой звонок`, body: 'alloconnect', kind: 'call' });
+  notifyUser({ title: `${nick} зовёт в групповой звонок`, body: 'alloconnect', kind: 'call', peer: id });
   G.invite.timer = setTimeout(() => { if (G.invite?.gid === gid) grpDeclineInvite(`Пропущен групповой звонок от ${nick}`); }, 40000);
 }
 
@@ -674,7 +674,7 @@ function grpUpdateControls() {
 }
 
 /* ---------- Файлы всем: одна отправка на каждого, один пузырь у меня ---------- */
-function grpQueueFiles(list, p = 'chat') {
+function grpQueueFiles(list, p = 'chat', extra = {}) {
   const chans = [...G.peers.values()].filter((x) => x.connected).map((x) => x.chan);
   const viaBridge = [...(G.vpeers?.values() || [])].filter((v) => v.connected && !G.peers.get(v.id)?.connected);
   if (viaBridge.length) sysMsg(`Файлы до ${viaBridge.map((v) => grpNick(v.id)).join(', ')} не дойдут: нет прямой связи`);
@@ -684,7 +684,7 @@ function grpQueueFiles(list, p = 'chat') {
     if (f.size > MAX_FILE) { toast(`${f.name}: больше 2 ГБ — не отправлю`); continue; }
     const fid = crypto.getRandomValues(new Uint32Array(1))[0];
     const name = f.name || `картинка-${Date.now()}.${((f.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
-    const meta = { fid, name, size: f.size, mime: f.type || 'application/octet-stream', p, kind: fileKind(f.type || '') };
+    const meta = { fid, name, size: f.size, mime: f.type || 'application/octet-stream', p, kind: fileKind(f.type || ''), ...(extra.st ? { st: 1 } : {}) };
     const ui = fileBubble(G.conv, S.nick || 'Я', meta, true, { mid: fmid(fid) });
     ui.progress(0);
     const prog = new Array(chans.length).fill(0);
@@ -694,7 +694,7 @@ function grpQueueFiles(list, p = 'chat') {
       if (url) ui.done(url); else ui.fail(why || 'не дошло');
       if (url && why) sysMsg(`«${name}» дошёл не до всех: ${why}`);
     };
-    chans.forEach((ch, i) => ch.queue([f], p, { fid, ui: {
+    chans.forEach((ch, i) => ch.queue([f], p, { fid, st: extra.st, ui: {
       progress(n) { prog[i] = n; ui.progress(Math.min(...prog)); },
       done(u) { if (!url) url = u; else URL.revokeObjectURL(u); settle(); },
       fail(w) { why = w; settle(); },

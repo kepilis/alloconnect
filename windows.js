@@ -306,6 +306,7 @@ function winAction(c, id, a) {
 
 // свернуть: окно (и прицепленные к нему) — в кнопку внизу; у демонстрации/участников пропадает звук экрана
 function winSetMinIn(c, id, v) {
+  if (v && document.fullscreenElement && winEl(c, id)?.contains(document.fullscreenElement)) document.exitFullscreen().catch(() => {});
   const extra = winFree() && c.lay ? winFollowers(c, id) : (c === WIN && id === 'screen' ? ['cam'] : []);
   for (const k of [id, ...extra]) c.min[k] = v;
   if (!v && winFree()) winFront(c, id);

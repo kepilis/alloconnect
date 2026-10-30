@@ -128,22 +128,23 @@
     out.byte(0);
   }
 
-  function encode(list, side) {
+  function encode(list, side, H = side) {
+    const W = side;
     const pal = palette(list);
     const near = indexer(pal);
     const o = new Out();
     o.str('GIF89a');
-    o.u16(side); o.u16(side);
+    o.u16(W); o.u16(H);
     o.byte(0xF7); o.byte(255); o.byte(0); // общая палитра на 256 цветов, фон — прозрачный индекс
     for (const p of pal) { o.byte(p[0]); o.byte(p[1]); o.byte(p[2]); }
     o.byte(0); o.byte(0); o.byte(0); // 255 — прозрачный
     o.byte(0x21); o.byte(0xFF); o.byte(11); o.str('NETSCAPE2.0'); o.byte(3); o.byte(1); o.u16(0); o.byte(0); // повтор без конца
-    const idx = new Uint8Array(side * side);
+    const idx = new Uint8Array(W * H);
     for (const { px, ms } of list) {
       for (let i = 0, j = 0; j < idx.length; i += 4, j++) idx[j] = px[i + 3] < 128 ? 255 : near(px[i], px[i + 1], px[i + 2]);
       // кадр целиком; перед следующим — очистка до фона (иначе прозрачные места накапливают старое)
       o.byte(0x21); o.byte(0xF9); o.byte(4); o.byte((2 << 2) | 1); o.u16(Math.max(2, Math.round(ms / 10))); o.byte(255); o.byte(0);
-      o.byte(0x2C); o.u16(0); o.u16(0); o.u16(side); o.u16(side); o.byte(0);
+      o.byte(0x2C); o.u16(0); o.u16(0); o.u16(W); o.u16(H); o.byte(0);
       lzw(o, idx);
     }
     o.byte(0x3B);
@@ -190,6 +191,116 @@
     return null;
   }
 
+  /* ---------- «Убрать фон» (1.21): однотонный фон по краям становится прозрачным ----------
+     Цвет фона — самый частый цвет рамки картинки; заливка от краёв по похожим цветам (допуск tol).
+     Работает без интернета и для гифок (каждый кадр). Сложный фон (фото, градиент) так не убрать. */
+  function bgColor(px, w, h) {
+    const cnt = new Map();
+    const add = (i) => { if (px[i + 3] < 128) return; const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4); cnt.set(k, (cnt.get(k) || 0) + 1); };
+    for (let x = 0; x < w; x++) { add(x * 4); add(((h - 1) * w + x) * 4); }
+    for (let y = 0; y < h; y++) { add(y * w * 4); add((y * w + w - 1) * 4); }
+    let best = -1, n = 0;
+    for (const [k, v] of cnt) if (v > n) { n = v; best = k; }
+    if (best < 0) return null;
+    return [((best >> 8) & 15) * 16 + 8, ((best >> 4) & 15) * 16 + 8, (best & 15) * 16 + 8];
+  }
+  function clearBg(px, w, h, tol, ref) {
+    const c = ref || bgColor(px, w, h);
+    if (!c) return 0;
+    const t2 = tol * tol;
+    const near = (i) => px[i + 3] < 128 || ((px[i] - c[0]) ** 2 + (px[i + 1] - c[1]) ** 2 + (px[i + 2] - c[2]) ** 2) <= t2;
+    const seen = new Uint8Array(w * h);
+    const stack = [];
+    const push = (p) => { if (!seen[p] && near(p * 4)) { seen[p] = 1; stack.push(p); } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    let n = 0;
+    while (stack.length) {
+      const p = stack.pop();
+      px[p * 4 + 3] = 0; n++;
+      const x = p % w, y = (p / w) | 0;
+      if (x > 0) push(p - 1);
+      if (x < w - 1) push(p + 1);
+      if (y > 0) push(p - w);
+      if (y < h - 1) push(p + w);
+    }
+    // край: полупрозрачные соседи вырезанного — мягче
+    for (let p = 0; p < w * h; p++) {
+      if (seen[p]) continue;
+      const x = p % w, y = (p / w) | 0;
+      if ((x > 0 && seen[p - 1]) || (x < w - 1 && seen[p + 1]) || (y > 0 && seen[p - w]) || (y < h - 1 && seen[p + w])) px[p * 4 + 3] = Math.min(px[p * 4 + 3], 200);
+    }
+    return n / (w * h);
+  }
+  // file → { blob, share } (share — какая доля картинки стала прозрачной) или null
+  async function removeBg(file, type, tol = 40, maxSide = 640) {
+    const animated = (type === 'image/gif' || type === 'image/webp' || type === 'image/png') && root.ImageDecoder;
+    let frames = null;
+    if (animated) { try { frames = await readFrames(file, type); } catch { frames = null; } }
+    if (!frames || frames.length <= 1) {
+      const bmp = frames?.[0]?.bmp || await createImageBitmap(file);
+      const k = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+      const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+      const c = new OffscreenCanvas(w, h), g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(bmp, 0, 0, w, h);
+      bmp.close?.();
+      const d = g.getImageData(0, 0, w, h);
+      const share = clearBg(d.data, w, h, tol);
+      g.putImageData(d, 0, 0);
+      return { blob: await c.convertToBlob({ type: 'image/png' }), share };
+    }
+    try {
+      const fr = thin(frames, 120);
+      const b0 = fr[0].bmp;
+      const k = Math.min(1, maxSide / Math.max(b0.width, b0.height));
+      const w = Math.round(b0.width * k), h = Math.round(b0.height * k);
+      const c = new OffscreenCanvas(w, h), g = c.getContext('2d', { willReadFrequently: true });
+      let ref = null, share = 0;
+      const list = fr.map((f) => {
+        g.clearRect(0, 0, w, h);
+        g.drawImage(f.bmp, 0, 0, w, h);
+        const d = g.getImageData(0, 0, w, h);
+        ref ??= bgColor(d.data, w, h); // один цвет фона на всю гифку — кадры не мигают
+        share = Math.max(share, clearBg(d.data, w, h, tol, ref));
+        return { px: d.data, ms: f.ms };
+      });
+      return { blob: new Blob([encode(list, w, h)], { type: 'image/gif' }), share };
+    } finally { for (const f of frames) f.bmp.close(); }
+  }
+
+  /* «Убрать фон» нейросетью (1.22): kind — 'person' (человек) или 'object' (любой предмет). Маску кадра считает main (ai-mask),
+     здесь — только кадры и сборка. onStep(i, n) — сколько кадров готово. */
+  async function removeBgAi(file, type, kind, onStep, maxSide = 512) {
+    const animated = (type === 'image/gif' || type === 'image/webp' || type === 'image/png') && root.ImageDecoder;
+    let frames = null;
+    if (animated) { try { frames = await readFrames(file, type); } catch { frames = null; } }
+    const still = !frames || frames.length <= 1;
+    const src = still ? [{ bmp: frames?.[0]?.bmp || await createImageBitmap(file), ms: 100 }] : thin(frames, 90);
+    try {
+      const b0 = src[0].bmp;
+      const k = Math.min(1, (still ? 1600 : maxSide) / Math.max(b0.width, b0.height));
+      const w = Math.max(1, Math.round(b0.width * k)), h = Math.max(1, Math.round(b0.height * k));
+      const c = new OffscreenCanvas(w, h), g = c.getContext('2d', { willReadFrequently: true });
+      const list = [];
+      let kept = 0;
+      for (let i = 0; i < src.length; i++) {
+        g.clearRect(0, 0, w, h);
+        g.drawImage(src[i].bmp, 0, 0, w, h);
+        const d = g.getImageData(0, 0, w, h);
+        const mask = await root.duo.aiMask(kind, new Uint8Array(d.data.buffer), w, h);
+        let on = 0;
+        for (let p = 0, j = 3; p < mask.length; p++, j += 4) { const a = Math.min(d.data[j], mask[p]); d.data[j] = a; if (a > 127) on++; }
+        kept = Math.max(kept, on / mask.length);
+        if (still) { g.putImageData(d, 0, 0); return { blob: await c.convertToBlob({ type: 'image/png' }), share: 1 - kept }; }
+        list.push({ px: d.data, ms: src[i].ms });
+        onStep?.(i + 1, src.length);
+      }
+      return { blob: new Blob([encode(list, w, h)], { type: 'image/gif' }), share: 1 - kept };
+    } finally { for (const f of frames || src) f.bmp.close?.(); }
+  }
+
   root.shrinkGif = shrinkGif;
+  root.removeBg = removeBg;
+  root.removeBgAi = removeBgAi;
   root.sniffImage = sniffImage;
 })(typeof window !== 'undefined' ? window : globalThis);

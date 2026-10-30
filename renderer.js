@@ -1022,7 +1022,7 @@ function onData(d) {
       record(S.callConv, { mid, ts: Number(d.ts) || Date.now(), who: 'peer', nick: S.friendNick, type: 'text', text: String(d.text || '').slice(0, 2000), re: re || undefined });
       noteUnseen(S.callConv, mid);
       sound('msg');
-      window.duo?.notify({ title: S.friendNick, body: String(d.text || '').slice(0, 200), kind: 'msg' });
+      notifyUser({ title: S.friendNick, body: String(d.text || '').slice(0, 200), kind: 'msg', peer: S.peerIdent?.id });
       if (!document.hasFocus()) window.duo?.attention();
       break;
     }
@@ -1185,7 +1185,7 @@ function friendGone(reason) {
   closePc();
   setFriendPresent(false);
   sound('gone');
-  if (!document.hasFocus()) window.duo.notify({ title: reason, body: 'alloconnect', kind: 'msg' });
+  if (!document.hasFocus()) notifyUser({ title: reason, body: 'alloconnect', kind: 'msg' });
   $('btnShare').disabled = true;
   $('btnAddFriend').classList.add('hidden'); // собеседника уже нет — добавить можно только у себя, он не узнает
   // друг (ID подтверждён ключом) может вернуться в этот же звонок — ждём его; по коду с не-другом вернуться нечем
@@ -1577,8 +1577,44 @@ function stopSendStats() {
   $('localStats').textContent = '';
 }
 
+/* ---------- Камера на полноэкранной демонстрации ----------
+   Место — доли полноэкранного окна (store camFs): x, y — левый верхний угол, w — ширина. При переходе на весь экран
+   берём место камеры относительно демонстрации, если она лежит на ней, иначе — сохранённое (по умолчанию — правый нижний угол). */
+function camRelToScreen(cam) {
+  const c = cam.getBoundingClientRect(), s = $('remoteScreenWrap').getBoundingClientRect();
+  if (!s.width || !c.width || c.right <= s.left || c.left >= s.right || c.bottom <= s.top || c.top >= s.bottom) return store.get('camFs', null);
+  return { x: (c.left - s.left) / s.width, y: (c.top - s.top) / s.height, w: c.width / s.width };
+}
+function camFsPlace(cam, r) {
+  const o = r && Number.isFinite(r.x) ? r : { x: 0.74, y: 0.7, w: 0.24 };
+  const w = Math.max(0.1, Math.min(0.6, o.w));
+  const h = w * (window.innerWidth / Math.max(1, window.innerHeight)) * 0.75; // 4:3 в долях высоты
+  const x = Math.max(0, Math.min(1 - w, o.x)), y = Math.max(0, Math.min(1 - h, o.y));
+  Object.assign(cam.style, { left: (x * 100) + '%', top: (y * 100) + '%', width: (w * 100) + '%', height: 'auto', right: 'auto', bottom: 'auto' });
+  return { x, y, w };
+}
+// перетаскивание и размер камеры, пока она на полноэкранной демонстрации (в любом режиме окон)
+document.addEventListener('pointerdown', (e) => {
+  const cam = $('camWrap');
+  if (!cam?.classList.contains('in-fs') || e.button !== 0 || !cam.contains(e.target) || e.target.closest('button')) return;
+  const host = cam.parentElement.getBoundingClientRect();
+  const c = cam.getBoundingClientRect();
+  const resize = !!e.target.closest('.wresize');
+  const start = { x: e.clientX, y: e.clientY, l: (c.left - host.left) / host.width, t: (c.top - host.top) / host.height, w: c.width / host.width };
+  e.preventDefault();
+  e.stopPropagation();
+  let last = null;
+  const move = (ev) => {
+    const dx = (ev.clientX - start.x) / host.width, dy = (ev.clientY - start.y) / host.height;
+    last = camFsPlace(cam, resize ? { x: start.l, y: start.t, w: start.w + dx } : { x: start.l + dx, y: start.t + dy, w: start.w });
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (last) store.set('camFs', last); };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}, true);
+
 // окно alloconnect не попадает в показ всего экрана (настройка hideSelf, по умолчанию вкл)
-function capHide(on) { window.duo?.captureHide?.(!!on && settings().hideSelf !== false); }
+function capHide(on) { window.duo?.captureHide?.(!!on && settings().hideSelf !== false); setTimeout(() => camTune?.(), 300); }
 
 function stopShare(silent) {
   if (!S.localScreen) return;
@@ -1852,6 +1888,8 @@ function setStatus(kind, text) {
   el.querySelector('span').textContent = text;
 }
 
+// уведомление: своё окно в стиле темы (или Windows — по настройке); peer — чья аватарка, media — картинка/гифка
+function notifyUser(o) { window.duo?.notify({ ...o, theme: settings().theme || '' }).catch?.(() => {}); }
 const initial = (s) => (s || '?').trim().charAt(0).toUpperCase() || '?';
 
 
@@ -2434,7 +2472,7 @@ const NOUI = { progress() {}, done() {}, fail() {}, loading() {}, gone() {} };
 
 function fileBubble(conv, who, meta, mine, opt = {}) {
   const m = document.createElement('div');
-  m.className = 'msg' + (mine ? ' me' : '');
+  m.className = 'msg' + (mine ? ' me' : '') + (meta.st ? ' sticker' : '');
   const head = document.createElement('div');
   head.className = 'meta';
   head.textContent = `${who} · ${timeStr(opt.ts)}`;
@@ -2473,9 +2511,28 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
         const img = document.createElement('img');
         img.src = url;
         img.alt = meta.name;
-        img.onload = () => scrollEnd(conv);
+        img.onload = () => {
+          // мелкий стикер (смайлики по 20–40 px) — крупнее: до 96 px, не больше чем втрое
+          if (meta.st) { const m = Math.max(img.naturalWidth, img.naturalHeight); if (m && m < 96) { const k = Math.min(3, 96 / m); img.style.width = Math.round(img.naturalWidth * k) + 'px'; img.style.height = Math.round(img.naturalHeight * k) + 'px'; } }
+          scrollEnd(conv);
+        };
         img.onclick = () => { $('lightboxImg').src = url; $('lightbox').classList.remove('hidden'); };
         view.replaceChildren(img);
+        // чужой стикер — можно забрать себе
+        if (meta.st && !mine) {
+          const add = document.createElement('button');
+          add.type = 'button';
+          add.className = 'stk-take';
+          add.title = 'Добавить в мои стикеры';
+          add.textContent = '＋';
+          add.onclick = async (e) => {
+            e.stopPropagation();
+            const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+            if (await window.duo.stickersAddBytes(bytes, meta.name.replace(/\.[^.]+$/, ''))) { add.textContent = '✓'; add.disabled = true; stkInvalidate?.(); toast('Стикер добавлен в набор «Полученные»'); }
+            else toast('Не получилось добавить стикер');
+          };
+          view.appendChild(add);
+        }
       } else if (meta.kind === 'video' || meta.kind === 'audio') {
         const el = document.createElement(meta.kind);
         el.src = url;
@@ -2524,7 +2581,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
 async function recordFile(conv, mine, meta, blob, from = {}) {
   if (!conv || meta.p !== 'chat' && meta.p !== 'sound') return;
   const entry = { mid: meta.fid != null ? fmid(meta.fid) : newMid(), ts: Date.now(), who: mine ? 'me' : (from.who || 'peer'), nick: mine ? S.nick : (from.nick || conv.nick), type: 'file',
-    file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p } };
+    file: { name: meta.name, size: meta.size, mime: meta.mime, kind: meta.kind, p: meta.p, ...(meta.st ? { st: 1 } : {}) } };
   if (blob && meta.size <= HIST_FILE_MAX && conv.id) {
     try { entry.file.stored = await window.duo.histMediaSave(conv.id, new Uint8Array(await blob.arrayBuffer()), meta.name); } catch { /* без самого файла */ }
   }
@@ -2564,6 +2621,7 @@ class FileChan {
       const name = f.name || `картинка-${Date.now()}.${((f.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
       const meta = { fid: extra.fid ?? crypto.getRandomValues(new Uint32Array(1))[0], name, size: f.size, mime: f.type || 'application/octet-stream', p };
       if (extra.pl) meta.pl = extra.pl;
+      if (extra.st && p === 'chat') meta.st = 1; // стикер (1.21): у новых версий — без плашки файла
       if (p === 'screenvid') { meta.vol = extra.vol; meta.snd = extra.snd ? 1 : 0; }
       meta.kind = fileKind(meta.mime);
       const conv = this.getConv();
@@ -2583,7 +2641,7 @@ class FileChan {
       const fdc = this.fdc;
       try {
         if (fdc.readyState !== 'open') throw new Error('нет связи');
-        fdc.send(JSON.stringify({ t: 'file-start', fid: job.meta.fid, name: job.meta.name, size: job.meta.size, mime: job.meta.mime, p: job.meta.p, pl: job.meta.pl, vol: job.meta.vol, snd: job.meta.snd }));
+        fdc.send(JSON.stringify({ t: 'file-start', fid: job.meta.fid, name: job.meta.name, size: job.meta.size, mime: job.meta.mime, p: job.meta.p, pl: job.meta.pl, vol: job.meta.vol, snd: job.meta.snd, st: job.meta.st }));
         let last = 0;
         for (let off = 0; off < job.meta.size; off += CHUNK) {
           if (fdc.bufferedAmount > (8 << 20)) await waitLow(fdc);
@@ -2623,6 +2681,7 @@ class FileChan {
         const p = ['chat', 'sound', 'avatar', 'screenimg', 'screenvid', 'update'].includes(m.p) ? m.p : 'chat';
         const meta = { fid: m.fid >>> 0, name: String(m.name || 'файл').slice(0, 200), size: Math.max(0, Number(m.size) || 0), mime: String(m.mime || 'application/octet-stream').slice(0, 100), p };
         if (p === 'screenimg' || p === 'screenvid') meta.pl = cleanPlacement(m.pl);
+        if (p === 'chat' && m.st === 1 && /^image\/(gif|png|jpeg|webp)$/.test(meta.mime) && meta.size <= 3 * 1024 * 1024) meta.st = 1;
         if (p === 'screenvid') { meta.vol = Math.max(0, Math.min(1, Number(m.vol) || 0)); meta.snd = m.snd === 1; }
         if (meta.size > MAX_FILE) return;
         if ((p === 'avatar' && meta.size > 2 * 1024 * 1024) || (p === 'screenimg' && meta.size > 8 * 1024 * 1024)) return;
@@ -2649,6 +2708,14 @@ class FileChan {
         e.ui.done(url);
         recordFile(conv, false, e.meta, blob, this.handlers.from?.());
         this.handlers.chatIn?.(conv, e.meta);
+        if (!document.hasFocus() && e.meta.p === 'chat') {
+          const from = this.handlers.from?.();
+          const isImg = /^image\/(png|jpeg|gif|webp)$/.test(safeMime) && blob.size <= 8 * 1024 * 1024;
+          const who = from?.nick || conv?.nick || 'Друг';
+          const what = e.meta.st ? 'стикер' : isImg ? (safeMime === 'image/gif' ? 'гифка' : 'картинка') : `файл «${e.meta.name}»`;
+          const send = (media) => notifyUser({ title: who, body: what, kind: 'msg', peer: from?.who && from.who.length === 43 ? from.who : conv?.id, media });
+          if (isImg) blob.arrayBuffer().then((b) => send({ bytes: new Uint8Array(b), mime: safeMime })); else send(null);
+        }
       }
       return;
     }
@@ -2671,7 +2738,7 @@ class FileChan {
 
 // файлы в звонке
 function queueFiles(list, p = 'chat', extra) {
-  if (G.active) { grpQueueFiles(list, p); return; }
+  if (G.active) { grpQueueFiles(list, p, extra || {}); return; }
   if (!S.connected || !S.fileChan) { toast('Файлы можно отправить только в звонке'); return; }
   S.fileChan.queue(list, p, extra);
 }
@@ -2692,7 +2759,16 @@ function droppedMediaUrl(dt) {
   try {
     const html = dt.getData('text/html');
     if (html) {
-      const el = new DOMParser().parseFromString(html, 'text/html').querySelector('img[src], video[src], video source[src]');
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      // видео: прямая ссылка — её; видео через blob: (Pinterest и др.) — ссылку на страницу, там main найдёт сам файл
+      const v = doc.querySelector('video[src], video source[src]');
+      const vsrc = v?.getAttribute('src');
+      if (ok(vsrc)) return vsrc;
+      if (doc.querySelector('video')) {
+        const page = doc.querySelector('a[href^="http"]')?.getAttribute('href') || (dt.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'))?.trim();
+        if (ok(page)) return page;
+      }
+      const el = doc.querySelector('img[src]');
       const src = el?.getAttribute('src');
       if (ok(src)) return src;
     }
@@ -2712,7 +2788,7 @@ async function fileFromUrl(url) {
       bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
     } catch { return null; }
   } else {
-    toast('Загружаю картинку…');
+    toast('Загружаю…');
     const r = await window.duo.fetchDropped(url).catch(() => ({ error: 'fail' }));
     if (r.error) { toast(r.error === 'too-big' ? 'Слишком большой файл (больше 100 МБ)' : r.error === 'not-media' ? 'По ссылке не картинка и не видео' : 'Не удалось скачать картинку'); return null; }
     ({ bytes, mime, name } = r);
@@ -3058,7 +3134,7 @@ async function openSettings() {
   $('stunCustom').value = o.stunCustom || '';
   window.duo?.appSettingsGet().then((a) => {
     $('appTray').checked = a.tray; $('appCloseToTray').checked = a.closeToTray; $('appMinToTray').checked = a.minToTray; $('appMinTaskbar').checked = !a.minToTray;
-    $('appAutostart').checked = a.autostart; $('appStartHidden').checked = a.startHidden; $('appBossKey').checked = a.bossKey; $('appNotify').checked = a.notify;
+    $('appAutostart').checked = a.autostart; $('appStartHidden').checked = a.startHidden; $('appBossKey').checked = a.bossKey; $('appNotify').checked = a.notify; $('appOwnNotify').checked = a.ownNotify !== false;
     syncAppChecks();
   });
   $('minKbps').value = String(o.minKbps || 2500);
@@ -3232,6 +3308,19 @@ async function saveSettings() {
    ========================================================= */
 function bind() {
   $('nick').value = store.get('nick', '');
+  // ник сохраняется сразу (раньше — только при начале звонка) и уходит друзьям
+  {
+    let t = null;
+    const push = () => window.duo?.friendsNick?.($('nick').value.trim()).catch(() => {});
+    $('nick').addEventListener('input', () => {
+      const v = $('nick').value.trim();
+      store.set('nick', v);
+      if (!S.inCall) S.nick = v || S.nick;
+      clearTimeout(t);
+      t = setTimeout(push, 800);
+    });
+    setTimeout(push, 1500); // сеть друзей поднимается чуть позже окна
+  }
 
   // Лобби
   $('btnInvite').onclick = startInvite;
@@ -3394,7 +3483,7 @@ function bind() {
   $('btnSaveSettings').onclick = saveSettings;
   $('btnOpenLogs').onclick = () => window.duo?.openLogs();
   // «Программа»: применяем сразу
-  const appMap = { appTray: 'tray', appCloseToTray: 'closeToTray', appMinToTray: 'minToTray', appAutostart: 'autostart', appStartHidden: 'startHidden', appBossKey: 'bossKey', appNotify: 'notify' };
+  const appMap = { appTray: 'tray', appCloseToTray: 'closeToTray', appMinToTray: 'minToTray', appAutostart: 'autostart', appStartHidden: 'startHidden', appBossKey: 'bossKey', appNotify: 'notify', appOwnNotify: 'ownNotify' };
   for (const [el, key] of Object.entries(appMap)) {
     $(el).onchange = async () => { await window.duo.appSettingsSet({ [key]: $(el).checked }); syncAppChecks(); };
   }
@@ -3632,6 +3721,50 @@ function renderFriends() {
     if (upBtn) name.appendChild(upBtn);
     list.appendChild(row);
   }
+  renderFriendsDrawer();
+}
+
+/* ---------- Друзья во время звонка: кнопка 👥 в шапке (с числом непрочитанных) и список → переписка ---------- */
+function renderFriendsDrawer() {
+  const total = friendsList.reduce((n, f) => n + (convs.get(f.id)?.unread || 0), 0);
+  for (const id of ['btnFriendsCall', 'gFriends']) {
+    const b = $(id)?.querySelector('.badge');
+    if (b) { b.classList.toggle('hidden', !total); b.textContent = total > 99 ? '99+' : String(total); }
+  }
+  const box = $('frDrawerList');
+  if (!box || $('friendsDrawer').classList.contains('hidden')) return;
+  box.replaceChildren();
+  if (!friendsList.length) { const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'Друзей пока нет'; box.appendChild(p); return; }
+  const sorted = [...friendsList].sort((a, b) => ((convs.get(b.id)?.unread || 0) - (convs.get(a.id)?.unread || 0)) || (b.online - a.online) || a.nick.localeCompare(b.nick));
+  for (const f of sorted) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'fr-row' + (f.online ? ' online' : '');
+    const av = document.createElement('div');
+    av.className = 'favatar';
+    const avi = document.createElement('span');
+    avi.textContent = initial(f.nick);
+    const dot = document.createElement('i');
+    dot.className = 'fdot';
+    av.append(avi, dot);
+    friendAvatar(f.id).then((a) => paintAvatar(av, a?.url));
+    const nm = document.createElement('span');
+    nm.className = 'fr-name';
+    nm.textContent = f.nick;
+    const st = document.createElement('small');
+    st.textContent = f.online ? 'в сети' : 'не в сети';
+    nm.appendChild(st);
+    row.append(av, nm);
+    const unread = convs.get(f.id)?.unread || 0;
+    if (unread) { const b = document.createElement('b'); b.className = 'badge'; b.textContent = unread > 99 ? '99+' : String(unread); row.appendChild(b); }
+    row.onclick = () => { $('friendsDrawer').classList.add('hidden'); openDm(f.id); };
+    box.appendChild(row);
+  }
+}
+function toggleFriendsDrawer() {
+  const d = $('friendsDrawer');
+  d.classList.toggle('hidden');
+  renderFriendsDrawer();
 }
 
 /* ---------- Код дружбы: добавить друга одним коротким кодом (net-friends.js) ----------
@@ -3727,7 +3860,7 @@ function fcNextReq() {
   $('fcReqModal').classList.remove('hidden');
   sound('msg');
   window.duo.focusWindow();
-  window.duo.notify({ title: `${FC.cur.nick} хочет в друзья`, body: 'Открой alloconnect, чтобы принять', kind: 'msg' });
+  notifyUser({ title: `${FC.cur.nick} хочет в друзья`, body: 'Открой alloconnect, чтобы принять', kind: 'msg' });
 }
 
 async function fcAnswer(ok) {
@@ -3944,7 +4077,7 @@ function onFriendMsg({ id, msg }) {
       showCallModal('in', nick);
       startRing();
       window.duo.focusWindow();
-      window.duo.notify({ title: `${nick} звонит`, body: 'Входящий звонок в alloconnect', kind: 'call' });
+      notifyUser({ title: `${nick} звонит`, body: 'Входящий звонок в alloconnect', kind: 'call', peer: id });
       S.friendCall.timer = setTimeout(() => {
         if (S.friendCall?.id === id && S.friendCall.dir === 'in' && !S.friendCall.accepted) {
           window.duo.friendsSend(id, { t: 'decline' });
@@ -4505,6 +4638,8 @@ async function openDm(id) {
   mountConv(conv, $('dmMessages'));
   paintAvatar($('dmAvatar'), (await friendAvatar(id))?.url);
   $('dmAvatar').querySelector('span').textContent = initial(f.nick);
+  $('dmCall').disabled = S.inCall || G.active; // уже в звонке
+  $('dmCall').title = S.inCall || G.active ? 'Ты уже в звонке' : '';
   await loadHistory(conv);
   scrollEnd(conv, true);
   renderFriends();
@@ -4560,7 +4695,7 @@ function dmNotice(conv, text) {
   if (!visible) { conv.unread++; renderFriends(); toast(`💬 ${conv.nick}: ${String(text).slice(0, 60)}`); }
   if (!visible || !document.hasFocus()) {
     sound('msg');
-    window.duo?.notify({ title: conv.nick, body: String(text).slice(0, 200), kind: 'msg' });
+    notifyUser({ title: conv.nick, body: String(text).slice(0, 200), kind: 'msg', peer: conv.id });
     if (!document.hasFocus()) window.duo?.attention();
   }
 }
@@ -4661,10 +4796,10 @@ async function onLinkAnswer(id, msg) {
   try { await l.pc.setRemoteDescription({ type: 'answer', sdp: String(msg.sdp || '') }); } catch (e) { L('link', { applyFailed: e.message }); dropLink(id, l, 'ошибка'); }
 }
 
-async function dmSendFiles(list) {
+async function dmSendFiles(list, extra) {
   const conv = dmOpen;
   if (!conv || !list.length) return;
-  if (S.connected && S.callConv?.id === conv.id) { queueFiles(list); return; }
+  if (S.connected && S.callConv?.id === conv.id) { queueFiles(list, 'chat', extra); return; }
   const f = friendsList.find((x) => x.id === conv.id);
   if (!f?.online) { toast(`${conv.nick} не в сети — файл можно отправить, когда он в сети`); return; }
   toast('Соединяюсь с ' + conv.nick + '…');
@@ -4672,7 +4807,7 @@ async function dmSendFiles(list) {
     try {
       const l = await getLink(conv.id);
       await withTimeout(l.open, 25000, 'не удалось соединиться напрямую');
-      l.chan.queue(list);
+      l.chan.queue(list, 'chat', extra);
       return;
     } catch (e) {
       if (attempt === 1 || !links.get(conv.id)) { toast('Файл не отправлен: ' + e.message); return; }
@@ -5024,7 +5159,23 @@ function cleanPlacement(pl) {
   const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const x = n(pl.x), y = n(pl.y), w = n(pl.w);
   if (x == null || y == null || w == null) return null;
-  return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), w: Math.max(0.03, Math.min(0.95, w)) };
+  const r = n(pl.r);
+  return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), w: Math.max(0.03, Math.min(0.95, w)), ...(r ? { r: Math.max(-180, Math.min(180, Math.round(r))) } : {}) };
+}
+
+// нейросеть для «убрать фон»: первый раз — спросить и скачать (движок + модель) из GitHub проекта, дальше — без интернета
+const AI_NAMES = { person: 'человек', object: 'предмет' };
+async function aiReady(kind, btn) {
+  const st = await window.duo.aiStatus();
+  if (!st[kind] || !st.runtime) {
+    const mb = Math.round(((st.runtime ? 0 : st.sizes.runtime) + st.sizes[kind]) / 1048576);
+    if (!confirm(`Для «${AI_NAMES[kind]}» нужна нейросеть — один раз скачать ${mb} МБ с GitHub проекта alloconnect? Дальше работает без интернета.`)) return false;
+  }
+  aiReady.btn = btn;
+  if (!aiReady.bound) { aiReady.bound = true; window.duo.onAiProgress?.((d) => { if (aiReady.btn) aiReady.btn.textContent = `⬇ ${Math.floor((100 * d.got) / Math.max(1, d.total))}%`; }); }
+  const r = await window.duo.aiPrepare(kind);
+  if (!r.ok) { toast('Нейросеть не готова: ' + r.error); return false; }
+  return true;
 }
 
 function screenImageOk(file) {
@@ -5081,8 +5232,10 @@ function openPlacer(file, at, vinfo) {
     ? `<span class="placer-sep"></span><label class="placer-snd" title="Будет ли у друга звук"><input type="checkbox" class="placer-sound"> 🔊</label><input type="range" class="placer-vol" min="0" max="100" step="5" title="Громкость у друга"><b class="placer-volval small"></b><span class="placer-dur small muted">${Math.round(vinfo.dur)} с</span>`
     : '';
   el.innerHTML = `<div class="placer-box">${media}<i class="placer-handle" title="Тяни — размер"></i></div>` +
-    `<div class="placer-bar"><span class="placer-hint">Двигай мышью · размер — уголок или колёсико</span><span>Размер</span><input type="range" class="placer-size" min="5" max="90" step="1">${vidCtl}<button class="btn small primary placer-send" title="Enter">Отправить</button><button class="btn small placer-cancel" title="Отмена (Esc)">✕</button></div>`;
-  placer = { file, url, x: at ? at[0] : 0.5, y: at ? at[1] : 0.35, w: vinfo ? 0.35 : 0.3, aspect: vinfo ? vinfo.aspect : 1, el,
+    `<div class="placer-bar"><span class="placer-hint">Двигай мышью · размер — уголок или колёсико</span><span>Размер</span><input type="range" class="placer-size" min="5" max="90" step="1">` +
+    `<span class="placer-sep"></span><button type="button" class="btn small placer-rl" title="Повернуть влево на 90°">⟲</button><input type="range" class="placer-rot" min="-180" max="180" step="5" value="0" title="Поворот"><button type="button" class="btn small placer-rr" title="Повернуть вправо на 90°">⟳</button><b class="placer-rotval small">0°</b>` +
+    (vinfo ? '' : `<span class="placer-sep"></span><span class="tdrop placer-bgwrap"><button type="button" class="btn small placer-bg" title="Убрать фон — станет прозрачным. Ещё раз — вернуть">✂ Фон</button><span class="tmenu hidden placer-bgmenu"><button type="button" class="btn small" data-bg="flat">Однотонный фон</button><button type="button" class="btn small" data-bg="person">Человек (нейросеть)</button><button type="button" class="btn small" data-bg="object">Предмет (нейросеть)</button></span></span>`) + `${vidCtl}<button class="btn small primary placer-send" title="Enter">Отправить</button><button class="btn small placer-cancel" title="Отмена (Esc)">✕</button></div>`;
+  placer = { file, url, x: at ? at[0] : 0.5, y: at ? at[1] : 0.35, w: vinfo ? 0.35 : 0.3, r: 0, aspect: vinfo ? vinfo.aspect : 1, el,
     vid: vinfo ? { dur: vinfo.dur, snd: o.svidSound !== false, vol: Math.max(0, Math.min(100, Number(o.svidVol ?? 70))) } : null };
   if (vinfo) {
     const v = el.querySelector('video');
@@ -5134,7 +5287,10 @@ function layoutPlacer() {
   box.style.top = (r.y - wr.top + placer.y * r.h - hpx / 2) + 'px';
   box.style.width = wpx + 'px';
   box.style.height = hpx + 'px';
+  box.style.rotate = placer.r ? placer.r + 'deg' : '';
   placer.el.querySelector('.placer-size').value = String(Math.round(placer.w * 100));
+  placer.el.querySelector('.placer-rot').value = String(placer.r);
+  placer.el.querySelector('.placer-rotval').textContent = placer.r + '°';
 }
 
 function bindPlacer(el) {
@@ -5170,6 +5326,59 @@ function bindPlacer(el) {
     layoutPlacer();
   }, { passive: false });
   el.querySelector('.placer-size').addEventListener('input', (e) => { placer.w = Number(e.target.value) / 100; layoutPlacer(); });
+  // поворот: ⟲/⟳ — на 90°, ползунок — точно (угол уходит другу в pl.r)
+  const rot = (deg) => { let r = ((Math.round(deg) + 180) % 360 + 360) % 360 - 180; if (r === -180) r = 180; placer.r = r; layoutPlacer(); };
+  el.querySelector('.placer-rot').addEventListener('input', (e) => rot(Number(e.target.value)));
+  el.querySelector('.placer-rl').onclick = () => rot(placer.r - 90);
+  // убрать фон: однотонный фон по краям — прозрачный (картинки и гифки); второе нажатие — вернуть исходник
+  const bgBtn = el.querySelector('.placer-bg');
+  const bgMenu = el.querySelector('.placer-bgmenu');
+  if (bgBtn) bgBtn.onclick = (e) => {
+    e.stopPropagation();
+    const p = placer;
+    if (!p || p.bgBusy) return;
+    if (p.orig) { // вернуть
+      URL.revokeObjectURL(p.url);
+      Object.assign(p, { file: p.orig.file, url: URL.createObjectURL(p.orig.file), orig: null });
+      el.querySelector('img').src = p.url;
+      bgBtn.classList.remove('on');
+      return;
+    }
+    bgMenu.classList.toggle('hidden');
+  };
+  if (bgMenu) bgMenu.onclick = (e) => { const b = e.target.closest('[data-bg]'); if (!b) return; e.stopPropagation(); bgMenu.classList.add('hidden'); placerBg(b.dataset.bg); };
+  // flat — однотонный фон (мгновенно); person/object — нейросеть (скачивается один раз из GitHub проекта)
+  const placerBg = async (mode) => {
+    const p = placer;
+    if (!p || p.bgBusy) return;
+    p.bgBusy = true;
+    bgBtn.textContent = '✂ …';
+    try {
+      const kind = window.sniffImage?.(new Uint8Array(await p.file.slice(0, 256 * 1024).arrayBuffer()));
+      const type = kind?.mime || p.file.type;
+      let r;
+      if (mode === 'flat') {
+        r = await window.removeBg?.(p.file, type);
+        if (r && r.blob.size > 7.5 * 1024 * 1024) r = await window.removeBg?.(p.file, type, 40, 360); // у друга лимит 8 МБ
+      } else {
+        if (!(await aiReady(mode, bgBtn))) return;
+        bgBtn.textContent = '✂ нейросеть…';
+        r = await window.removeBgAi(p.file, type, mode, (i, n) => { bgBtn.textContent = `✂ ${i}/${n}`; });
+        if (r && r.blob.size > 7.5 * 1024 * 1024) r = await window.removeBgAi(p.file, type, mode, (i, n) => { bgBtn.textContent = `✂ ${i}/${n}`; }, 320);
+      }
+      if (placer !== p) return;
+      if (!r || r.share < 0.02) { toast(mode === 'flat' ? 'Однотонного фона по краям не нашлось — попробуй «Человек» или «Предмет»' : 'Нейросеть не нашла, что вырезать'); return; }
+      const name = (p.file.name || 'картинка').replace(/\.[^.]+$/, '') + (r.blob.type === 'image/gif' ? '.gif' : '.png');
+      p.orig = { file: p.file };
+      p.file = new File([r.blob], name, { type: r.blob.type });
+      URL.revokeObjectURL(p.url);
+      p.url = URL.createObjectURL(p.file);
+      el.querySelector('img').src = p.url;
+      bgBtn.classList.add('on');
+      L('screenimg', { bgRemoved: Math.round(r.share * 100), mode });
+    } catch (e) { toast('Не получилось убрать фон: ' + (e.message || e)); } finally { p.bgBusy = false; bgBtn.textContent = '✂ Фон'; }
+  };
+  el.querySelector('.placer-rr').onclick = () => rot(placer.r + 90);
   if (placer.vid) {
     el.querySelector('.placer-sound').addEventListener('change', (e) => { placer.vid.snd = e.target.checked; applyPreviewVol(); });
     el.querySelector('.placer-vol').addEventListener('input', (e) => { placer.vid.vol = Number(e.target.value); applyPreviewVol(); });
@@ -5195,13 +5404,13 @@ function placeEcho(box, pl, aspect) {
   let wpx = pl.w * r.w;
   let hpx = wpx * aspect;
   if (hpx > 0.9 * r.h) { hpx = 0.9 * r.h; wpx = hpx / aspect; }
-  Object.assign(box.style, { left: (r.x - wr.left + pl.x * r.w - wpx / 2) + 'px', top: (r.y - wr.top + pl.y * r.h - hpx / 2) + 'px', width: wpx + 'px', height: hpx + 'px' });
+  Object.assign(box.style, { left: (r.x - wr.left + pl.x * r.w - wpx / 2) + 'px', top: (r.y - wr.top + pl.y * r.h - hpx / 2) + 'px', width: wpx + 'px', height: hpx + 'px', rotate: pl.r ? pl.r + 'deg' : '' });
 }
 
 function commitPlacement() {
   if (!placer) return;
   const p = placer;
-  const pl = { x: n4(p.x), y: n4(p.y), w: n4(p.w) };
+  const pl = { x: n4(p.x), y: n4(p.y), w: n4(p.w), ...(p.r ? { r: p.r } : {}) };
   const pv = p.el.querySelector('video');
   if (pv) { pv.pause(); pv.removeAttribute('src'); pv.load(); }
   placer.el.remove();
@@ -5592,6 +5801,12 @@ function bindLiveTools() {
   $('toolEmoji').onclick = (e) => { e.stopPropagation(); toggleToolMenu('emojiMenu'); };
   $('toolPad').onclick = () => $('btnSoundpad').click();
   $('btnCam').onclick = () => camToggle();
+  window.duo?.onNtfOpen?.((d) => {
+    if (d?.kind === 'msg' && d.peer && friendsList.some((f) => f.id === d.peer) && !(S.inCall && S.peerIdent?.id === d.peer)) openDm(d.peer);
+  });
+  for (const id of ['btnFriendsCall', 'gFriends']) $(id).onclick = (e) => { e.stopPropagation(); toggleFriendsDrawer(); };
+  $('frDrawerClose').onclick = () => $('friendsDrawer').classList.add('hidden');
+  document.addEventListener('mousedown', (e) => { const d = $('friendsDrawer'); if (!d.classList.contains('hidden') && !d.contains(e.target) && !e.target.closest?.('.fr-btn')) d.classList.add('hidden'); });
   $('btnScreenMin').onclick = () => winSetMin('screen', true);
   $('btnWinReset').onclick = () => { winReset(); toast('Окна расставлены как было'); };
   // в полноэкранном режиме видно только содержимое полноэкранного элемента — саундпад и подсказки переносим туда
@@ -5601,9 +5816,12 @@ function bindLiveTools() {
     const cam = $('camWrap');
     if (cam && !WIN.pops.cam) {
       const fs = document.fullscreenElement === $('remoteScreenWrap');
+      // место камеры относительно демонстрации — до перехода (потом размеры уже другие)
+      if (fs && !cam.classList.contains('in-fs')) camFsPlace(cam, camRelToScreen(cam));
       cam.classList.toggle('in-fs', fs);
       const home = fs ? $('remoteScreenWrap') : document.querySelector('#call .view');
       if (cam.parentElement !== home) home.appendChild(cam);
+      if (!fs) { for (const k of ['left', 'top', 'width', 'height', 'right', 'bottom']) cam.style[k] = ''; winLayoutChanged(); }
     }
   });
   document.addEventListener('mousedown', (e) => { if (!e.target.closest?.('.tdrop')) closeToolMenus(); });
@@ -5642,7 +5860,7 @@ function onCtlReq(d) {
   $('ctlModal').classList.remove('hidden');
   sound('stream');
   window.duo.focusWindow();
-  window.duo.notify({ title: `${ctlNick('s')} просит управление`, body: 'Открой alloconnect, чтобы разрешить или отказать', kind: 'call' });
+  notifyUser({ title: `${ctlNick('s')} просит управление`, body: 'Открой alloconnect, чтобы разрешить или отказать', kind: 'call' });
   clearTimeout(CS.reqTimer);
   CS.reqTimer = setTimeout(() => { if (!$('ctlModal').classList.contains('hidden')) ctlDeny(); }, 30000);
   L('control', { request: true });

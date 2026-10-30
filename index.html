@@ -95,6 +95,7 @@
     </div>
     <button id="btnAddFriend" class="btn small add-friend hidden">➕ В друзья</button>
     <div id="status" class="status waiting"><i></i><span>Ждём друга…</span></div>
+    <button id="btnFriendsCall" class="icon-btn fr-btn" title="Друзья и сообщения">👥<b class="badge hidden"></b></button>
     <button id="btnSettings" class="icon-btn" title="Настройки">⚙</button>
   </header>
 
@@ -204,6 +205,7 @@
     <div class="room"><b>Групповой звонок</b> <span class="muted small">тест</span></div>
     <button id="gInviteMore" class="btn small add-friend">➕ Позвать</button>
     <div id="gStatus" class="status waiting"><i></i><span>Ждём участников…</span></div>
+    <button id="gFriends" class="icon-btn fr-btn" title="Друзья и сообщения">👥<b class="badge hidden"></b></button>
     <button id="gSettings" class="icon-btn" title="Настройки">⚙</button>
   </header>
   <main class="stage">
@@ -400,6 +402,23 @@
 </div>
 
 <!-- ЧАТ С ДРУГОМ БЕЗ ЗВОНКА -->
+<!-- Стикеры (1.21) -->
+<div id="stickerPicker" class="stk-picker hidden">
+  <div id="stkTabs" class="stk-tabs"></div>
+  <div id="stkGrid" class="stk-grid"></div>
+  <div class="stk-foot">
+    <button type="button" id="stkAddFiles" class="btn small">➕ Добавить стикеры</button>
+    <button type="button" id="stkAddFolder" class="btn small" title="Каждая подпапка с картинками станет отдельным набором">📁 Папку</button>
+    <small class="muted">правый клик — убрать</small>
+  </div>
+</div>
+
+<!-- Друзья во время звонка (1.21): список и переписка, не выходя из звонка -->
+<div id="friendsDrawer" class="fr-drawer hidden">
+  <div class="fr-drawer-head"><b>Друзья</b><button type="button" class="icon-btn" id="frDrawerClose" title="Закрыть">✕</button></div>
+  <div id="frDrawerList" class="fr-drawer-list"></div>
+</div>
+
 <div id="dm" class="modal hidden">
   <div class="modal-card dm-card">
     <div class="dm-head">
@@ -489,6 +508,15 @@
       </div>
     </details>
 
+    <details class="scat" data-cat="stickers">
+      <summary>🙂 Стикеры</summary>
+      <div class="scat-body">
+    <p class="muted small">Свои картинки и гифки для чата. Можно выбрать файлы или целую папку — каждая подпапка с картинками станет отдельным набором.</p>
+    <div class="row-btns"><button type="button" id="stkSetAddFiles" class="btn small">➕ Добавить стикеры</button> <button type="button" id="stkSetAddFolder" class="btn small">📁 Добавить папку</button></div>
+    <div id="stkSettingsList" class="stk-settings"></div>
+      </div>
+    </details>
+
     <details class="scat" data-cat="cam">
       <summary>📷 Камера и окна</summary>
       <div class="scat-body">
@@ -556,7 +584,8 @@
       <label class="check"><input type="checkbox" id="appAutostart" /> <span>Запускать вместе с Windows</span></label>
       <label class="check"><input type="checkbox" id="appStartHidden" /> <span>При автозапуске — сразу в трей, без окна</span></label>
       <label class="check"><input type="checkbox" id="appBossKey" /> <span>Мгновенно скрыть/показать: <kbd>Ctrl+Shift+H</kbd></span></label>
-      <label class="check"><input type="checkbox" id="appNotify" /> <span>Уведомления Windows о звонках и сообщениях, когда окно скрыто</span></label>
+      <label class="check"><input type="checkbox" id="appNotify" /> <span>Уведомления о звонках и сообщениях, когда окно скрыто</span></label>
+      <label class="check"><input type="checkbox" id="appOwnNotify" /> <span>Свои уведомления в стиле темы <small class="muted">(аватарка, картинки и гифки сразу видны; выкл — уведомления Windows)</small></span></label>
       <label class="check"><input type="checkbox" id="optActivity" /> <span>Показывать друзьям, во что играю <small class="muted">(только полноэкранная игра; браузер и плееры не показываются)</small></span></label>
     </div>
     <div class="ringbox">
@@ -643,5 +672,6 @@
 <script src="renderer.js"></script>
 <script src="camera.js"></script>
 <script src="windows.js"></script>
+<script src="stickers.js"></script>
 </body>
 </html>

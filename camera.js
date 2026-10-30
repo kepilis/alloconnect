@@ -65,12 +65,26 @@ async function camAttach() {
   if (!tr) return;
   try {
     await tr.sender.replaceTrack(CAM.on ? CAM.stream?.getVideoTracks()[0] || null : null);
+    await camTune();
+  } catch (e) { L('cam', { attachFailed: e.message }); }
+}
+
+// качество камеры: пока я показываю экран — до 360p и 500 кбит/с (стрим важнее), иначе до 720p и 1,2 Мбит/с
+async function camTune() {
+  const tr = S.tx?.cam;
+  const t = tr?.sender.track;
+  if (!tr || !t) return;
+  const sharing = !!S.localScreen;
+  const h = t.getSettings().height || 720;
+  try {
     const p = tr.sender.getParameters();
     p.encodings = p.encodings?.length ? p.encodings : [{}];
-    p.encodings[0].maxBitrate = 1_200_000;
+    p.encodings[0].maxBitrate = sharing ? 500_000 : 1_200_000;
+    p.encodings[0].scaleResolutionDownBy = Math.max(1, h / (sharing ? 360 : 720));
+    p.encodings[0].maxFramerate = sharing ? 24 : 30;
     p.degradationPreference = 'maintain-framerate';
-    await tr.sender.setParameters(p).catch(() => {});
-  } catch (e) { L('cam', { attachFailed: e.message }); }
+    await tr.sender.setParameters(p);
+  } catch { /* */ }
 }
 
 // трансивер камеры: у звонившего — добавить и предложить; у гостя — попросить звонившего
@@ -161,6 +175,7 @@ function camRender() {
   const show = CAM.on || CAM.peerOn;
   wrap.classList.toggle('hidden', !show);
   wrap.classList.toggle('solo-self', CAM.on && !CAM.peerOn);
+  wrap.classList.toggle('self-on', CAM.on);
   const self = $('camSelf');
   if (CAM.on && self.srcObject !== CAM.stream) self.srcObject = CAM.stream;
   if (!CAM.on) self.srcObject = null;

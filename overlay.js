@@ -95,7 +95,7 @@ function showImage(bytes, mime, nick, pl) {
       const x = Math.max(w / 2, Math.min(W - w / 2, pl.x * W));
       const y = Math.max(h / 2, Math.min(H - h / 2, pl.y * H));
       Object.assign(im.style, { width: w + 'px', height: h + 'px', maxWidth: 'none', maxHeight: 'none' });
-      Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', visibility: 'visible' });
+      Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', visibility: 'visible', rotate: pl.r ? pl.r + 'deg' : '' });
     };
   }
   document.body.appendChild(box);
@@ -137,7 +137,7 @@ function showVideo(bytes, mime, nick, pl, vol, sink) {
     if (h > 0.9 * H) { h = 0.9 * H; w = h / aspect; }
     const x = Math.max(w / 2, Math.min(W - w / 2, p.x * W));
     const y = Math.max(h / 2, Math.min(H - h / 2, p.y * H));
-    Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', width: w + 'px', height: h + 'px', visibility: 'visible' });
+    Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', width: w + 'px', height: h + 'px', visibility: 'visible', rotate: p.r ? p.r + 'deg' : '' });
   };
   v.ontimeupdate = () => { if (v.currentTime > 60.5) kill(); };
   v.onended = kill;
@@ -155,7 +155,8 @@ function cleanPl(pl) {
   if (!pl || typeof pl !== 'object') return null;
   const ok = (v) => typeof v === 'number' && Number.isFinite(v);
   if (!ok(pl.x) || !ok(pl.y) || !ok(pl.w)) return null;
-  return { x: clamp(pl.x), y: clamp(pl.y), w: Math.max(0.03, Math.min(0.95, pl.w)) };
+  const r = ok(pl.r) ? Math.max(-180, Math.min(180, Math.round(pl.r))) : 0;
+  return { x: clamp(pl.x), y: clamp(pl.y), w: Math.max(0.03, Math.min(0.95, pl.w)), r };
 }
 
 const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
