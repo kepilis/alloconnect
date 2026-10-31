@@ -254,7 +254,6 @@ function minifySdp(sdp) {
     /^a=extmap:\d+ http:\/\/www\.webrtc\.org\/experiments\/rtp-hdrext\/(playout-delay|video-content-type|video-timing|color-space)/,
     /^a=extmap:\d+ urn:ietf:params:rtp-hdrext:toffset/,
     /^a=extmap:\d+ urn:ietf:params:rtp-hdrext:sdes:(rtp-stream-id|repaired-rtp-stream-id)/,
-    /^a=candidate:.* tcp /,              // TCP-кандидаты почти никогда не помогают в P2P
     /^a=candidate:.* typ host .*(fe80|::1)/i,
   ];
   return sdp.split(/\r?\n/).filter((l) => l && !drop.some((re) => re.test(l))).join('\r\n') + '\r\n';
@@ -689,18 +688,18 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0 } = {}) {
     const onErr = (e) => {
       if (/^stuns?:/.test(e.url || '')) errs.add(e.url);
       // все серверы списка ответили ошибкой — дальше ждать нечего
-      if (!srflx && canFallback && allStunFailed()) finish('all-failed', true);
+      if (!srflx && !relay && !relayOnly && !publicHost && canFallback && allStunFailed()) finish('all-failed', true);
     };
     const onState = () => {
       if (pc.iceGatheringState !== 'complete') return;
       // собрали всё, а внешнего адреса нет. Если на сетевой карте белый адрес — srflx просто совпал
       // с ним, всё в порядке. Иначе серверы не ответили (ошибки могут прийти позже «complete») — запасной список
-      finish('complete', !srflx && canFallback && stunCount > 0 && !publicHost);
+      finish('complete', !srflx && !relay && !relayOnly && canFallback && stunCount > 0 && !publicHost);
     };
     pc.addEventListener('icecandidate', onCand);
     pc.addEventListener('icecandidateerror', onErr);
     pc.addEventListener('icegatheringstatechange', onState);
-    const tFall = canFallback && stunCount && !relayOnly ? setTimeout(() => { if (!srflx) finish('timeout', true); }, STUN_FALLBACK_MS) : null;
+    const tFall = canFallback && stunCount && !relayOnly ? setTimeout(() => { if (!srflx && !relay && !publicHost) finish('timeout', true); }, STUN_FALLBACK_MS) : null;
     const tMax = setTimeout(() => finish('max-timeout'), GATHER_TIMEOUT);
   });
 }

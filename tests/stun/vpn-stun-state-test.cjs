@@ -1,0 +1,24 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const desktop = process.env.ALLOCONNECT_DESKTOP || (fs.existsSync(path.resolve(__dirname, '../../net-friends.js')) ? path.resolve(__dirname, '../..') : 'C:/Users/user/Desktop/claude/alloconnect-src');
+const {FriendsNet} = require(path.join(desktop, 'net-friends.js'));
+(async () => {
+  const f = new FriendsNet({dir:__dirname});
+  f.sock = {}; f.port = 10001;
+  f.stunPlan = [{name:'test',urls:['stun:example.invalid:3478']}];
+  let pings=0, punches=0;
+  f.pingAll=()=>pings++; f.punch=()=>punches++;
+  f.stun={ip:'192.0.2.1',port:10001}; f.natType='cone';
+  f.stunList=async()=>({results:[],first:null});
+  assert.equal(await f.runStun(),null);
+  assert.equal(f.stun,null);assert.equal(f.natType,'unknown');
+  assert.equal(f.localAddrs().some(a=>a.kind==='stun'),false);
+  assert.equal(pings,1); assert.equal(punches,1);
+  await f.runStun();assert.equal(pings,1);
+  f.stunList=async()=>({results:[{ip:'192.0.2.2',port:10001},{ip:'192.0.2.2',port:10001}],first:null});
+  await f.runStun();assert.equal(f.stun.ip,'192.0.2.2');assert.equal(f.natType,'cone');
+  f.setStunConfig({noStun:true});
+  assert.equal(f.stun,null);assert.equal(f.natType,'unknown');assert.equal(f.stunUsed,null);
+  console.log('PASS: failed probe clears stale address, repeated failure stays quiet, recovery publishes new address, disabled STUN resets state');
+})().catch(e=>{console.error(e);process.exitCode=1;});

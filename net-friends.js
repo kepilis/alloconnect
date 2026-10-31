@@ -661,7 +661,7 @@ class FriendsNet extends EventEmitter {
   // настройки STUN из окна: выключен / сразу альтернативные / свои
   setStunConfig(cfg = {}) {
     this.stunEnabled = !cfg.noStun;
-    if (cfg.noStun) this.stunUsed = null;
+    if (cfg.noStun) { this.stunUsed = null; this.stun = null; this.natType = 'unknown'; }
     const custom = Array.isArray(cfg.stunCustom) ? cfg.stunCustom.filter((u) => STUN_LISTS.hostPort(u)) : [];
     if (custom.length) this.stunPlan = [{ name: 'custom', urls: custom }];
     else if (cfg.stunAlt) this.stunPlan = [{ name: 'alt', urls: STUN_LISTS.alt }];
@@ -697,6 +697,10 @@ class FriendsNet extends EventEmitter {
     }
     const prev = this.stun;
     if (!results.length) {
+      // Старый mapped address больше не подтверждён: не раздаём его друзьям.
+      this.stun = null;
+      this.natType = 'unknown';
+      if (prev) { this.punch(); this.pingAll(); }
       this.stunUsed = { list: plan[plan.length - 1].name, first: null };
       this.log('net-check', { stunFromFriendsPort: 'no-answer' });
       return null;
