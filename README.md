@@ -1,6 +1,6 @@
 # alloconnect для Android — обновления
 
-Текущая версия: **0.12.0** — [alloconnect_android-0.12.0.apk](alloconnect_android-0.12.0.apk?raw=1)
+Текущая версия: **0.13.1** — [alloconnect_android-0.13.1.apk](alloconnect_android-0.13.1.apk?raw=1)
 
 Отсюда приложение берёт обновления само (⚙ → «Обновления»): `update-android.json` — описание версии,
 подписанное ключом автора (Ed25519); приложение проверяет подпись, размер и SHA-256 файла и что APK подписан
