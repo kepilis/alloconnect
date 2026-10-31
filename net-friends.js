@@ -100,6 +100,7 @@ class FriendsNet extends EventEmitter {
     this.pending = new Map();   // rid -> {resolve, reject, timer}
     this.parts = new Map();     // mid -> {n, got: [], ts}
     this.upnp = null;           // {ip, port}
+    this.stunAddrs = [];        // все внешние отображения UDP-порта (split-tunnel VPN)
     this.stun = null;           // {ip, port} — внешний адрес нашего UDP-порта
     this.natType = 'unknown';   // cone | symmetric | unknown
     this.stunWaiters = new Map();
@@ -271,8 +272,10 @@ class FriendsNet extends EventEmitter {
       }
     }
     if (this.upnp) out.push({ kind: 'upnp', ip: this.upnp.ip, port: this.upnp.port });
-    if (this.stun && !out.some((a) => a.ip === this.stun.ip && a.port === this.stun.port)) {
-      out.push({ kind: 'stun', ip: this.stun.ip, port: this.stun.port });
+    for (const mapped of this.stunAddrs.length ? this.stunAddrs : (this.stun ? [this.stun] : [])) {
+      if (!out.some((a) => a.ip === mapped.ip && a.port === mapped.port)) {
+        out.push({ kind: 'stun', ip: mapped.ip, port: mapped.port });
+      }
     }
     return out;
   }
@@ -661,7 +664,7 @@ class FriendsNet extends EventEmitter {
   // настройки STUN из окна: выключен / сразу альтернативные / свои
   setStunConfig(cfg = {}) {
     this.stunEnabled = !cfg.noStun;
-    if (cfg.noStun) { this.stunUsed = null; this.stun = null; this.natType = 'unknown'; }
+    if (cfg.noStun) { this.stunUsed = null; this.stun = null; this.stunAddrs = []; this.natType = 'unknown'; }
     const custom = Array.isArray(cfg.stunCustom) ? cfg.stunCustom.filter((u) => STUN_LISTS.hostPort(u)) : [];
     if (custom.length) this.stunPlan = [{ name: 'custom', urls: custom }];
     else if (cfg.stunAlt) this.stunPlan = [{ name: 'alt', urls: STUN_LISTS.alt }];
@@ -699,17 +702,22 @@ class FriendsNet extends EventEmitter {
     if (!results.length) {
       // Старый mapped address больше не подтверждён: не раздаём его друзьям.
       this.stun = null;
+      this.stunAddrs = [];
       this.natType = 'unknown';
       if (prev) { this.punch(); this.pingAll(); }
       this.stunUsed = { list: plan[plan.length - 1].name, first: null };
       this.log('net-check', { stunFromFriendsPort: 'no-answer' });
       return null;
     }
-    this.stun = results[0];
-    // разные внешние порты для разных серверов → «строгий» (симметричный) NAT, пробивка почти не сработает
-    this.natType = results.length < 2 ? 'unknown' : (results.every((r) => r.port === results[0].port && r.ip === results[0].ip) ? 'cone' : 'symmetric');
-    this.log('net-check', { stunFromFriendsPort: 'ok', list: this.stunUsed.list, natType: this.natType, portPreserved: this.stun.port === this.port, servers: results.length });
-    if (!prev || prev.ip !== this.stun.ip || prev.port !== this.stun.port) { this.punch(); this.pingAll(); }
+    const key = (a) => `${a.ip}:${a.port}`;
+    const beforeMappings = new Set((this.stunAddrs.length ? this.stunAddrs : (prev ? [prev] : [])).map(key));
+    this.stunAddrs = [...new Map(results.map((a) => [key(a), { ip: a.ip, port: a.port }])).values()];
+    this.stun = this.stunAddrs[0];
+    const egresses = new Set(results.map((a) => a.ip)).size;
+    // Разные IP могут быть разными маршрутами VPN, а не симметричным NAT.
+    this.natType = results.length < 2 || egresses > 1 ? 'unknown' : (this.stunAddrs.length === 1 ? 'cone' : 'symmetric');
+    this.log('net-check', { stunFromFriendsPort: 'ok', list: this.stunUsed.list, natType: this.natType, portPreserved: this.stun.port === this.port, servers: results.length, mappings: this.stunAddrs.length, egresses });
+    if (beforeMappings.size !== this.stunAddrs.length || this.stunAddrs.some((a) => !beforeMappings.has(key(a)))) { this.punch(); this.pingAll(); }
     return this.stun;
   }
 

@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const root=process.env.ALLOCONNECT_DESKTOP||'C:/Users/user/Desktop/claude/alloconnect-src';
+const {FriendsNet,encodeFriendCode,decodeFriendCode}=require(path.join(root,'net-friends.js'));
+(async()=>{
+ const f=new FriendsNet({dir:__dirname}); f.sock={};f.port=12345;
+ f.stunPlan=[{name:'test',urls:['stun:example.invalid:3478']}];
+ let pings=0;f.pingAll=()=>pings++;f.punch=()=>{};
+ let answers=[{ip:'192.0.2.1',port:12345},{ip:'192.0.2.1',port:12345},{ip:'198.51.100.1',port:12345}];
+ f.stunList=async()=>({results:answers,first:null});
+ await f.runStun();
+ const advertised=()=>f.localAddrs().filter(a=>a.kind==='stun');
+ assert.equal(advertised().length,2);assert.equal(f.natType,'unknown');assert.equal(pings,1);
+ const code=encodeFriendCode({id:Buffer.alloc(32,1).toString('base64url'),tok:'01'.repeat(12),nick:'test',addrs:advertised()});
+ assert.equal(decodeFriendCode(code).addrs.length,2);
+ answers=[...answers].reverse();await f.runStun();assert.equal(pings,1,'result arrival order must not cause re-punch');
+ answers=[{ip:'192.0.2.1',port:12345},{ip:'198.51.100.2',port:12345}];
+ await f.runStun();assert.equal(pings,2,'secondary route change must notify friends');
+ assert(advertised().some(a=>a.ip==='198.51.100.2'));assert(!advertised().some(a=>a.ip==='198.51.100.1'));
+ answers=[{ip:'192.0.2.1',port:12345},{ip:'192.0.2.1',port:23456}];
+ await f.runStun();assert.equal(f.natType,'symmetric');assert.equal(advertised().length,2);
+ answers=[{ip:'192.0.2.1',port:12345},{ip:'192.0.2.1',port:12345}];
+ await f.runStun();assert.equal(f.natType,'cone');assert.equal(advertised().length,1);
+ answers=[];await f.runStun();assert.equal(advertised().length,0);assert.equal(f.stunAddrs.length,0);
+ answers=[{ip:'192.0.2.1',port:12345},{ip:'198.51.100.1',port:12345}];await f.runStun();
+ f.setStunConfig({noStun:true});assert.equal(f.stunAddrs.length,0);assert.equal(advertised().length,0);
+ console.log('PASS: split routes advertised, duplicates removed, friend-code compatibility, stable order, secondary route refresh, NAT distinction, stale/disabled mappings cleared');
+})().catch(e=>{console.error(e);process.exitCode=1;});
