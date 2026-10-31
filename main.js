@@ -609,7 +609,7 @@ let friends = null;
 const upnp = new Upnp((t, d) => log(t, d));
 const net = {
   port: 0, upnp: 'checking', upnpError: null, externalKind: null, ifacePublic: false,
-  tailscale: false, stun: null, inboundConfirmed: [], outboundConfirmed: [], verdict: 'checking',
+  tailscale: false, stun: null, inboundConfirmed: [], outboundConfirmed: [], udpSizes: [], udpSizesChecked: false, verdict: 'checking',
   stunMapped: null, natType: 'unknown', portPreserved: null,
 };
 let netConfigResolve;
@@ -671,6 +671,9 @@ async function startFriends() {
     friends.setStunConfig(cfg);
     friendsStarted = true;
     if (cfg.noStun) { net.stunMapped = false; publishNet(); } else friends.startStun();
+  });
+  friends.on('probe-size', (result) => {
+    if (result.fullEcho && !net.udpSizes.includes(result.requested)) { net.udpSizes.push(result.requested); net.udpSizes.sort((a, b) => a - b); publishNet(); }
   });
   friends.on('probe-ok', (_id, kind) => { if (!net.outboundConfirmed.includes(kind)) { net.outboundConfirmed.push(kind); publishNet(); } });
   sendWin('friends-update', friends.list());
@@ -741,7 +744,7 @@ ipcMain.handle('net-config', (_e, cfg) => {
     if (cfg?.noStun) { friends.stun = null; net.stunMapped = false; net.friendsStun = null; publishNet(); } else friends.startStun();
   }
 });
-ipcMain.handle('net-recheck', async () => { net.inboundConfirmed = []; net.outboundConfirmed = []; await runUpnp(); if (friends?.stunEnabled) await friends.runStun().then(() => { net.stunMapped = !!friends.stun; net.friendsStun = friends.stunUsed; net.natType = friends.natType; net.portPreserved = friends.stun ? friends.stun.port === friends.port : null; net.ifacePublic = friends.localAddrs().some((a) => a.kind === 'public'); }); friends?.punch(); for (const f of friends?.list() || []) if (f.online) friends.probe(f.id); return net; });
+ipcMain.handle('net-recheck', async () => { net.inboundConfirmed = []; net.outboundConfirmed = []; net.udpSizes = []; net.udpSizesChecked = true; await runUpnp(); if (friends?.stunEnabled) await friends.runStun().then(() => { net.stunMapped = !!friends.stun; net.friendsStun = friends.stunUsed; net.natType = friends.natType; net.portPreserved = friends.stun ? friends.stun.port === friends.port : null; net.ifacePublic = friends.localAddrs().some((a) => a.kind === 'public'); }); friends?.punch(); for (const f of friends?.list() || []) friends.probe(f.id); return net; });
 ipcMain.handle('net-stun', (_e, ip) => {
   if (!ip) { net.stun = 'unavailable'; } else { stunIp = ip; net.stun = null; compareStun(); if (!net.stun) net.stun = 'got'; }
   publishNet();

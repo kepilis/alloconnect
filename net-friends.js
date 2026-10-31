@@ -100,6 +100,7 @@ class FriendsNet extends EventEmitter {
     this.pending = new Map();   // rid -> {resolve, reject, timer}
     this.parts = new Map();     // mid -> {n, got: [], ts}
     this.upnp = null;           // {ip, port}
+    this.stunGeneration = 0;
     this.stunAddrs = [];        // все внешние отображения UDP-порта (split-tunnel VPN)
     this.stun = null;           // {ip, port} — внешний адрес нашего UDP-порта
     this.natType = 'unknown';   // cone | symmetric | unknown
@@ -217,6 +218,14 @@ class FriendsNet extends EventEmitter {
     // временный порт не запоминаем: в следующий раз снова пробуем свой постоянный
     if (!saved) this.writeJson('net.json', { ...cfg, port: this.port });
     else if (this.port !== saved) this.log('friends', { tempPort: true });
+    this.networkFingerprint = this.interfaceFingerprint();
+    this.networkTimer = setInterval(() => {
+      const next = this.interfaceFingerprint();
+      if (next && next !== this.networkFingerprint) {
+        this.networkFingerprint = next;
+        this.networkChanged().catch(() => this.log('friends-error', 'network refresh failed'));
+      }
+    }, 2000);
     this.timer = setInterval(() => this.pingAll(), PING_EVERY);
     this.punchTimer = setInterval(() => { if (Date.now() < this.punchUntil) this.pingAll(); }, PUNCH_EVERY);
     this.punch();
@@ -246,6 +255,8 @@ class FriendsNet extends EventEmitter {
   }
 
   stop() {
+    this.stunGeneration++;
+    clearInterval(this.networkTimer);
     clearInterval(this.timer);
     clearInterval(this.statusTimer);
     clearInterval(this.punchTimer);
@@ -457,14 +468,37 @@ class FriendsNet extends EventEmitter {
     });
   }
 
-  /* крупное сообщение (записка звонка ~1.5 КБ) — частями, чтобы не упираться в MTU */
+  // 64 байта — ALC1, ключ отправителя, nonce и тег GCM. Учитываем rid/ts,
+  // UTF-8 и JSON escaping до шифрования, а не число символов исходной строки.
+  reliablePacketSize(obj) {
+    return 64 + Buffer.byteLength(JSON.stringify({ ...obj, rid: '0'.repeat(12), ts: 999999999999999 }), 'utf8');
+  }
+
   async sendBig(id, obj) {
-    const text = JSON.stringify(obj);
-    if (text.length <= 900) return this.sendReliable(id, obj);
-    const mid = crypto.randomBytes(5).toString('hex');
-    const parts = [];
-    for (let i = 0; i < text.length; i += 900) parts.push(text.slice(i, i + 900));
-    await Promise.all(parts.map((d, i) => this.sendReliable(id, { t: 'part', mid, i, n: parts.length, d })));
+    const maxBytes = 1000;
+    if (this.reliablePacketSize(obj) <= maxBytes) return this.sendReliable(id, obj);
+    const text = JSON.stringify(obj), chars = Array.from(text);
+    const mid = crypto.randomBytes(5).toString('hex'), parts = [];
+    for (let offset = 0; offset < chars.length;) {
+      let lo = 1, hi = Math.min(900, chars.length - offset), best = 0;
+      while (lo <= hi) {
+        const n = (lo + hi) >>> 1;
+        const part = { t: 'part', mid, i: 199, n: 200, d: chars.slice(offset, offset + n).join('') };
+        if (this.reliablePacketSize(part) <= maxBytes) { best = n; lo = n + 1; } else hi = n - 1;
+      }
+      if (!best || parts.length >= 200) throw new Error('сообщение слишком длинное');
+      parts.push(chars.slice(offset, offset + best).join('')); offset += best;
+    }
+    const diagnostic = ['call', 'answer', 'rtc-restart', 'rtc-restart-ans'].includes(obj.t);
+    const t0 = Date.now();
+    if (diagnostic) this.log('friends-signal', { type: obj.t, bytes: Buffer.byteLength(text), parts: parts.length, datagramMax: maxBytes });
+    try {
+      await Promise.all(parts.map((d, i) => this.sendReliable(id, { t: 'part', mid, i, n: parts.length, d })));
+      if (diagnostic) this.log('friends-signal', { type: obj.t, delivered: true, ms: Date.now() - t0 });
+    } catch (e) {
+      if (diagnostic) this.log('friends-signal', { type: obj.t, delivered: false, ms: Date.now() - t0 });
+      throw e;
+    }
   }
 
   /* ---------- пульс ---------- */
@@ -607,10 +641,20 @@ class FriendsNet extends EventEmitter {
   }
 
   /* проверка «может ли друг достучаться»: шлём на каждый его адрес отдельно */
+  sizedProbe(kind, bytes, echo = false) {
+    const msg = { t: echo ? 'probe-ok' : 'probe', kind, sz: bytes, echo, pad: '' };
+    const overhead = 64 + Buffer.byteLength(JSON.stringify({ ...msg, ts: Date.now() }));
+    msg.pad = 'x'.repeat(Math.max(0, bytes - overhead));
+    return msg;
+  }
   probe(id) {
     const f = this.friends.get(id);
     if (!f) return;
-    for (const a of f.addrs) this.sendTo(id, { t: 'probe', kind: a.kind }, a);
+    for (const a of this.targets(f)) {
+      this.sendTo(id, { t: 'probe', kind: a.kind }, a);
+      for (const bytes of [256, 768, 1000, 1200]) this.sendTo(id, this.sizedProbe(a.kind, bytes), a);
+    }
+    this.log('net-check', { udpSizeProbeStarted: true, sizes: [256, 768, 1000, 1200], friend: id.slice(0, 8) });
   }
 
   punch() { this.punchUntil = Date.now() + PUNCH_FOR; }
@@ -663,6 +707,7 @@ class FriendsNet extends EventEmitter {
 
   // настройки STUN из окна: выключен / сразу альтернативные / свои
   setStunConfig(cfg = {}) {
+    this.stunGeneration++;
     this.stunEnabled = !cfg.noStun;
     if (cfg.noStun) { this.stunUsed = null; this.stun = null; this.stunAddrs = []; this.natType = 'unknown'; }
     const custom = Array.isArray(cfg.stunCustom) ? cfg.stunCustom.filter((u) => STUN_LISTS.hostPort(u)) : [];
@@ -686,6 +731,7 @@ class FriendsNet extends EventEmitter {
   }
 
   async runStun() {
+    const generation = ++this.stunGeneration;
     if (!this.stunEnabled || !this.sock) return null;
     // ALOCALLS_STUN_TEST=host:port,host:port — только для автотестов
     const plan = process.env.ALOCALLS_STUN_TEST
@@ -694,6 +740,7 @@ class FriendsNet extends EventEmitter {
     let results = [];
     for (let i = 0; i < plan.length; i++) {
       const { results: got, first } = await this.stunList(plan[i].urls);
+      if (generation !== this.stunGeneration || !this.stunEnabled || !this.sock) return null;
       this.log('net-check', { stunFromFriendsPort: plan[i].name, answered: got.length, of: plan[i].urls.length, firstReply: first?.host || null, ms: first?.ms ?? null });
       if (got.length) { results = got; this.stunUsed = { list: plan[i].name, first: first?.host || null }; break; }
       if (i < plan.length - 1) this.log('net-check', { stunFromFriendsPort: 'switching', to: plan[i + 1].name });
@@ -721,11 +768,28 @@ class FriendsNet extends EventEmitter {
     return this.stun;
   }
 
+  interfaceFingerprint() {
+    try {
+      return JSON.stringify(Object.entries(os.networkInterfaces()).flatMap(([name, list]) =>
+        (list || []).filter((a) => !a.internal && (a.family === 'IPv4' || a.family === 4)).map((a) => name + '|' + a.address)).sort());
+    } catch { return null; }
+  }
+  async networkChanged() {
+    this.stunGeneration++;
+    this.stun = null; this.stunAddrs = []; this.stunUsed = null; this.natType = 'unknown';
+    this.punch(); this.pingAll();
+    this.log('net-check', { networkChanged: true });
+    this.reportStun();
+    if (this.stunEnabled) { await this.runStun(); this.reportStun(); }
+  }
+  reportStun() {
+    this.emit('stun', { stun: !!this.stun, natType: this.natType, portPreserved: this.stun ? this.stun.port === this.port : null, used: this.stunUsed });
+  }
   startStun() {
-    const report = () => this.emit('stun', { stun: !!this.stun, natType: this.natType, portPreserved: this.stun ? this.stun.port === this.port : null, used: this.stunUsed });
+    const report = () => this.reportStun();
     this.runStun().then(report);
     clearInterval(this.stunTimer);
-    this.stunTimer = setInterval(() => this.runStun().then(report), 5 * 60 * 1000);
+    this.stunTimer = setInterval(() => this.runStun().then(report), 60 * 1000);
   }
 
   onPacket(buf, rinfo) {
@@ -765,9 +829,17 @@ class FriendsNet extends EventEmitter {
       case 'probe':
         this.log('net-check', { inboundFromFriend: id.slice(0, 8), viaMyAddr: msg.kind, srcKind: ipKind(src.ip) });
         this.emit('probe-in', id, msg.kind);
-        reply({ t: 'probe-ok', kind: msg.kind });
+        if ([256, 768, 1000, 1200].includes(msg.sz)) {
+            this.log('net-check', { udpSizeIn: { requested: msg.sz, received: buf.length, friend: id.slice(0, 8) } });
+            reply(this.sizedProbe(String(msg.kind || '').slice(0, 12), msg.sz, true));
+          } else reply({ t: 'probe-ok', kind: msg.kind });
         return;
       case 'probe-ok':
+        if ([256, 768, 1000, 1200].includes(msg.sz)) {
+          const result = { requested: msg.sz, received: buf.length, fullEcho: msg.echo === true && buf.length === msg.sz, friend: id.slice(0, 8) };
+          this.log('net-check', { udpEcho: result });
+          this.emit('probe-size', result);
+        }
         this.log('net-check', { friendReachableVia: msg.kind, friend: id.slice(0, 8) });
         this.emit('probe-ok', id, msg.kind);
         return;

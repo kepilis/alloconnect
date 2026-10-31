@@ -11,7 +11,7 @@ const projects = [
   ['Android', path.join(android, 'www/core.js')],
 ];
 const cases = [
-  {name:'direct-srflx', events:['srflx'], why:'srflx'},
+  {name:'direct-srflx', events:['srflx','complete'], why:'complete'},
   {name:'no-stun-lan', count:0, events:['complete'], why:'complete'},
   {name:'stun-timeout', events:['fallback'], why:'timeout', fallback:true},
   {name:'stun-errors', events:['errors'], why:'all-failed', fallback:true},
@@ -19,15 +19,18 @@ const cases = [
   {name:'public-host', events:['host','complete'], why:'complete'},
   {name:'public-host-stun-timeout', events:['host','fallback','complete'], why:'complete'},
   {name:'public-host-stun-errors', events:['host','errors','complete'], why:'complete'},
-  {name:'turn-and-stun', turn:true, events:['srflx','relay'], why:'relay'},
-  {name:'turn-before-stun', turn:true, events:['relay','srflx'], why:'srflx'},
+  {name:'turn-and-stun', turn:true, events:['srflx','relay','complete'], why:'complete'},
+  {name:'turn-before-stun', turn:true, events:['relay','srflx','complete'], why:'complete'},
   {name:'turn-no-stun-timeout', turn:true, events:['relay','fallback','complete'], why:'complete'},
   {name:'turn-no-stun-errors', turn:true, events:['relay','errors','complete'], why:'complete'},
   {name:'turn-no-stun-complete', turn:true, events:['relay','complete'], why:'complete'},
   {name:'relay-only', turn:true, only:true, events:['relay'], why:'relay'},
   {name:'relay-only-no-answer', turn:true, only:true, events:['errors','complete'], why:'complete'},
-  {name:'turn-with-stun-disabled', turn:true, count:0, events:['relay'], why:'relay'},
+  {name:'turn-with-stun-disabled', turn:true, count:0, events:['relay','complete'], why:'complete'},
   {name:'everything-blocked', turn:true, canFallback:false, events:['max'], why:'max-timeout'},
+  {name:'multi-interface', events:['srflx','host','srflx','complete'], why:'complete'},
+  {name:'fast-probe', first:true, events:['srflx'], why:'srflx'},
+  {name:'fast-probe-with-turn', first:true, turn:true, events:['srflx','relay'], why:'relay'},
   {name:'slow-relay', turn:true, events:['srflx','max'], why:'max-timeout'},
 ];
 (async () => {
@@ -43,11 +46,11 @@ const cases = [
         setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimeout:()=>{}});
       vm.runInContext(body,ctx);
       const pc = {addEventListener:(k,v)=>listeners.set(k,v),removeEventListener:k=>listeners.delete(k)};
-      const p = ctx.gatherCandidates(pc,{canFallback:c.canFallback!==false,stunCount:c.count??3});
+      const p = ctx.gatherCandidates(pc,{canFallback:c.canFallback!==false,stunCount:c.count??3,firstUsable:!!c.first});
       for (const event of c.events) {
         if (event==='complete') {pc.iceGatheringState='complete';listeners.get('icegatheringstatechange')?.();}
         else if (event==='errors') for(let i=0;i<3;i++) listeners.get('icecandidateerror')?.({url:`stun:fake${i}`});
-        else if (event==='fallback'||event==='max') timers.find(t=>t.ms===(event==='max'?5000:2500))?.fn();
+        else if (event==='fallback'||event==='max') timers.find(t=>t.ms===(event==='max'?(c.turn?15000:5000):2500))?.fn();
         else listeners.get('icecandidate')?.({candidate:{type:event,address:event==='host'?'public-test':undefined}});
       }
       const r = await p;

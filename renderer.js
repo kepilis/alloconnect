@@ -652,9 +652,9 @@ function bitrateHints(sdp) {
   return out.join('\r\n');
 }
 
-/* Сбор адресов для кода. Не ждём таймаута: как только пришёл внешний адрес (srflx) — готово.
+/* Сбор адресов для кода. Для SDP ждём завершения/ограниченного таймаута: первый srflx может принадлежать лишь одному маршруту VPN.
    С TURN ждём ещё и адрес TURN. Подписываться нужно ДО setLocalDescription. */
-function gatherCandidates(pc, { canFallback = false, stunCount = 0 } = {}) {
+function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable = false } = {}) {
   const t0 = Date.now();
   const o = settings();
   const wantRelay = !!o.turnUrl;
@@ -679,10 +679,10 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0 } = {}) {
       if (c.type === 'srflx' && !srflx) {
         srflx = c.url || e.url || 'stun';
         srflxIp = c.address || null;
-        if (!wantRelay || relay) finish('srflx');
+        if (firstUsable && (!wantRelay || relay)) finish('srflx');
       } else if (c.type === 'relay') {
         relay = true;
-        if (relayOnly || srflx || !stunCount) finish('relay');
+        if (relayOnly || (firstUsable && (srflx || !stunCount))) finish('relay');
       }
     };
     const onErr = (e) => {
@@ -700,7 +700,7 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0 } = {}) {
     pc.addEventListener('icecandidateerror', onErr);
     pc.addEventListener('icegatheringstatechange', onState);
     const tFall = canFallback && stunCount && !relayOnly ? setTimeout(() => { if (!srflx && !relay && !publicHost) finish('timeout', true); }, STUN_FALLBACK_MS) : null;
-    const tMax = setTimeout(() => finish('max-timeout'), GATHER_TIMEOUT);
+    const tMax = setTimeout(() => finish('max-timeout'), wantRelay ? Math.max(GATHER_TIMEOUT, 15000) : GATHER_TIMEOUT);
   });
 }
 
@@ -725,7 +725,7 @@ async function probeStunPlan(label, plan) {
   if (plan.length < 2) return plan[0];
   const pc = new RTCPeerConnection(rtcConfig(plan[0].urls));
   pc.createDataChannel('probe');
-  const g = gatherCandidates(pc, { canFallback: true, stunCount: plan[0].urls.length });
+  const g = gatherCandidates(pc, { canFallback: true, stunCount: plan[0].urls.length, firstUsable: true });
   try { await pc.setLocalDescription(await pc.createOffer()); } catch { /* */ }
   const r = await g;
   try { pc.close(); } catch { /* */ }
@@ -776,20 +776,25 @@ function countCandidates(sdp) {
 /* ---------- Ты приглашаешь ---------- */
 async function startInvite() {
   if (S.busy) return;
+  const setup = {}; S.callSetup = setup;
   S.busy = true;
   if (!S.friendCall) {
     showStep('stepHost');
     try { lastClip = (await window.duo.paste()) || ''; } catch { /* */ } // старый код в буфере не трогаем
   }
+  if (S.callSetup !== setup) return;
   $('offerOut').value = '';
   $('answerIn').value = '';
   $('btnCopyOffer').disabled = true;
   $('btnApplyAnswer').disabled = true;
   setInfo('hostInfo', 'Готовлю приглашение…');
   try {
-    if (!(await prepare())) { showStep('stepHome'); if (S.friendCall) endFriendCall('Нет доступа к микрофону'); return; }
+    const ready = await prepare(setup);
+    if (S.callSetup !== setup) return;
+    if (!ready) { showStep('stepHome'); if (S.friendCall) endFriendCall('Нет доступа к микрофону'); return; }
     S.role = 'host';
     const res = await gatherWithFallback('invite', (cfg) => {
+      if (S.callSetup !== setup) throw new Error('call setup cancelled');
       const p = newPeerConnection(cfg);
       S.tx = {
         mic: p.addTransceiver(micSendTrack() || 'audio', { direction: 'sendrecv' }),
@@ -801,12 +806,14 @@ async function startInvite() {
     }, async (p) => {
       const offer = await p.createOffer();
       await p.setLocalDescription({ type: 'offer', sdp: opusStereo(offer.sdp) });
-    }, (p) => S.pc === p);
+    }, (p) => S.pc === p && S.callSetup === setup);
     const pc = res?.pc;
-    if (!pc || S.pc !== pc) return;
+    if (!pc || S.pc !== pc || S.callSetup !== setup) return;
     S.stunUsed = res.list;
     const sdp = pc.localDescription.sdp;
-    $('offerOut').value = await packCode('I', sdp, S.nick);
+    const code = await packCode('I', sdp, S.nick);
+    if (S.callSetup !== setup || S.pc !== pc) return;
+    $('offerOut').value = code;
     $('btnCopyOffer').disabled = false;
     $('btnApplyAnswer').disabled = false;
     ownCodes.add($('offerOut').value);
@@ -821,11 +828,13 @@ async function startInvite() {
       ? 'Приглашение уже скопировано — вставь его другу в мессенджер. Когда он пришлёт ответ, просто скопируй его и вернись сюда.'
       : 'Внешний адрес не определился (STUN недоступен) — сработает только через Tailscale или локальную сеть.') + stunNote(res.list));
   } catch (e) {
+    if (S.callSetup !== setup) return;
     console.error(e);
     lobbyError(e);
     showStep('stepHome');
     if (S.friendCall) endFriendCall('Не удалось начать звонок');
   } finally {
+    if (S.callSetup !== setup) return;
     S.busy = false;
     if (S.answerWhenFree) { const c = S.answerWhenFree; S.answerWhenFree = null; makeAnswer(c); }
   }
@@ -833,11 +842,13 @@ async function startInvite() {
 
 async function applyAnswer(text) {
   if (!S.pc || S.role !== 'host') return;
+  const pc = S.pc;
   $('lobbyError').textContent = '';
   let code;
   try {
     code = await unpackCode(text || $('answerIn').value);
   } catch (e) { $('lobbyError').textContent = e.message; return; }
+  if (S.pc !== pc) return;
   if (code.kind !== 'A') {
     $('lobbyError').textContent = 'Это приглашение, а нужен ответ друга (начинается с ALOA.)';
     return;
@@ -848,7 +859,8 @@ async function applyAnswer(text) {
   }
   try {
     S.friendNick = code.nick || 'Друг';
-    await S.pc.setRemoteDescription({ type: 'answer', sdp: code.sdp });
+    await pc.setRemoteDescription({ type: 'answer', sdp: code.sdp });
+    if (S.pc !== pc) return;
     L('invite', { answerApplied: true, friendCandidates: countCandidates(code.sdp) });
     $('btnApplyAnswer').disabled = true;
     setInfo('hostInfo', 'Соединяемся…');
@@ -862,11 +874,13 @@ async function applyAnswer(text) {
 /* ---------- Тебя пригласили ---------- */
 async function makeAnswer(text) {
   if (S.busy) return;
+  const setup = {}; S.callSetup = setup;
   $('lobbyError').textContent = '';
   let code;
   try {
     code = await unpackCode(text || $('offerIn').value);
-  } catch (e) { $('lobbyError').textContent = e.message; return; }
+  } catch (e) { if (S.callSetup !== setup) return; $('lobbyError').textContent = e.message; return; }
+  if (S.callSetup !== setup) return;
   if (code.kind !== 'I') {
     $('lobbyError').textContent = 'Это ответ, а нужно приглашение (начинается с ALOI.)';
     return;
@@ -875,11 +889,12 @@ async function makeAnswer(text) {
   $('btnMakeAnswer').disabled = true;
   setInfo('guestInfo', 'Готовлю ответ…');
   try {
-    if (!(await prepare())) return;
+    const ready = await prepare(setup);
+    if (S.callSetup !== setup || !ready) return;
     closePc();
     S.role = 'guest';
     S.friendNick = code.nick || 'Друг';
-    const res = await gatherWithFallback('answer', (cfg) => newPeerConnection(cfg), async (p) => {
+    const res = await gatherWithFallback('answer', (cfg) => { if (S.callSetup !== setup) throw new Error('call setup cancelled'); return newPeerConnection(cfg); }, async (p) => {
       await p.setRemoteDescription({ type: 'offer', sdp: code.sdp });
       const trs = p.getTransceivers()
         .filter((t) => t.mid != null)
@@ -891,16 +906,18 @@ async function makeAnswer(text) {
       preferCodecs();
       const answer = await p.createAnswer();
       await p.setLocalDescription({ type: 'answer', sdp: opusStereo(answer.sdp) });
-    }, (p) => S.pc === p, { answer: true });
+    }, (p) => S.pc === p && S.callSetup === setup, { answer: true });
     const pc = res?.pc;
-    if (!pc || S.pc !== pc) return;
+    if (!pc || S.pc !== pc || S.callSetup !== setup) return;
     S.stunUsed = res.list;
-    $('answerOut').value = await packCode('A', pc.localDescription.sdp, S.nick);
+    const ans = await packCode('A', pc.localDescription.sdp, S.nick);
+    if (S.callSetup !== setup || S.pc !== pc) return;
+    $('answerOut').value = ans;
     L('invite', { role: 'guest', codeLen: $('answerOut').value.length, ownCandidates: countCandidates(pc.localDescription.sdp), friendCandidates: countCandidates(code.sdp), stun: res.list, gatherMs: res.r.ms });
     ownCodes.add($('answerOut').value);
     if (S.friendCall) {
       const fc = S.friendCall;
-      const r = await window.duo.friendsSend(fc.id, { t: 'answer', code: $('answerOut').value });
+      const r = await window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'answer', code: $('answerOut').value }));
       if (!r.ok) { endFriendCall(`Не удалось ответить ${fc.nick}: ${r.error}`); return; }
     } else {
       $('guestAnswerBlock').classList.remove('hidden');
@@ -909,12 +926,13 @@ async function makeAnswer(text) {
     }
     armConnectTimer(GUEST_CONNECT_TIMEOUT);
   } catch (e) {
+    if (S.callSetup !== setup) return;
     console.error(e);
     lobbyError(e);
     $('btnMakeAnswer').disabled = false;
     if (S.friendCall) endFriendCall('Не удалось принять звонок');
   } finally {
-    S.busy = false;
+    if (S.callSetup === setup) S.busy = false;
   }
 }
 
@@ -927,6 +945,7 @@ function armConnectTimer(ms) {
 }
 
 function connectFailed(text) {
+  S.callSetup = null; S.answerWhenFree = null; S.busy = false;
   L('pc', { connectFailed: text, role: S.role });
   if (S.friendCall) { hideCallModal(); S.friendCall = null; }
   clearTimeout(S.connectTimer);
@@ -1232,11 +1251,11 @@ function callAgain() {
   callFriend(w.id, true);
 }
 // он вернулся (звонок с пометкой rejoin, а я жду именно его): выходим из пустого звонка и сразу отвечаем
-function acceptRejoin(id, nick, code) {
+function acceptRejoin(id, nick, code, attempt) {
   L('friend-call', { rejoin: 'accepted' });
   S.waiting = null;
   leaveCall();
-  S.friendCall = { id, nick, dir: 'in', code, accepted: true };
+  S.friendCall = { id, nick, dir: 'in', code, accepted: true, cid: attempt?.cid, requireCid: validCallAttempt(attempt?.cid) };
   showCallModal('in', nick);
   $('callTitle').textContent = `${nick} возвращается`;
   $('callSub').textContent = 'Соединяемся…';
@@ -1767,14 +1786,20 @@ function setFriendBadges(muted, deaf) {
 /* =========================================================
    UI: лобби, экраны, статус, чат
    ========================================================= */
-async function prepare() {
+async function prepare(setup) {
+  const active = () => !setup || S.callSetup === setup;
+  if (!active()) return false;
   S.nick = $('nick').value.trim() || 'Без имени';
   store.set('nick', S.nick);
   $('lobbyError').textContent = '';
   audio();
   if (!S.mic) {
-    try { S.mic = await acquireMic(); } catch (e) { lobbyError(e); return false; }
+    let fresh;
+    try { fresh = await acquireMic(); } catch (e) { if (active()) lobbyError(e); return false; }
+    if (!active()) { fresh.getTracks().forEach((t) => t.stop()); return false; }
+    S.mic = fresh;
     try { await attachMicChain(S.mic); } catch (e) { L('ns', { chainFailed: e.message }); }
+    if (!active()) { if (S.mic === fresh) releaseMic(); return false; }
     const t = S.mic.getAudioTracks()[0];
     L('mic', { label: t?.label, settings: t?.getSettings() });
   }
@@ -1792,6 +1817,7 @@ function showStep(id) {
 }
 
 function backToHome() {
+  S.callSetup = null; S.answerWhenFree = null; S.busy = false;
   clearTimeout(S.connectTimer);
   closePc();
   releaseMic();
@@ -3903,6 +3929,7 @@ function hideCallModal() {
   $('callModal').classList.add('hidden');
   stopRing();
   if (S.friendCall?.timer) clearTimeout(S.friendCall.timer);
+  if (S.friendCall?.setupTimer) clearTimeout(S.friendCall.setupTimer);
 }
 /* ---------- Гудки у звонящего и мелодия у принимающего ---------- */
 let ringAudio = null;   // <audio> со своим файлом
@@ -4002,6 +4029,7 @@ async function refreshRingName() {
 
 function endFriendCall(text) {
   const fc = S.friendCall;
+  if (!S.connected) { S.callSetup = null; S.answerWhenFree = null; S.busy = false; }
   hideCallModal();
   S.friendCall = null;
   if (!S.connected) {
@@ -4019,7 +4047,13 @@ async function callFriend(id, rejoin = false) {
   if (!f) return;
   S.nick = $('nick').value.trim() || 'Без имени';
   if (S.rejoin?.id === id) { S.rejoin = null; showRejoin(); }
-  S.friendCall = { id, nick: f.nick, dir: 'out', rejoin };
+  S.friendCall = { id, nick: f.nick, dir: 'out', rejoin, cid: makeCallAttemptId() };
+  const attempt = S.friendCall;
+  attempt.setupTimer = setTimeout(() => {
+    if (S.friendCall !== attempt || S.connected) return;
+    window.duo.friendsSend(attempt.id, callEnvelope(attempt, { t: 'cancel' }));
+    endFriendCall('Не удалось установить звонок — попробуйте снова');
+  }, 65000);
   L('friend-call', { out: true, friendOnline: f.online, addrKinds: f.addrKinds });
   showCallModal('out', f.nick);
   startInvite();
@@ -4029,16 +4063,49 @@ async function sendFriendInvite(code) {
   const fc = S.friendCall;
   if (!fc || fc.dir !== 'out') return; // встречный звонок уже принят — своё приглашение не шлём
   $('callSub').textContent = 'Отправляю вызов…';
-  const r = await window.duo.friendsSend(fc.id, { t: 'call', code, nick: S.nick, ...(fc.rejoin ? { rejoin: 1 } : {}) });
+  const r = await window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'call', code, nick: S.nick, ...(fc.rejoin ? { rejoin: 1 } : {}) }));
   if (S.friendCall !== fc) return;
   if (!r.ok) { endFriendCall(`${fc.nick} не отвечает — у него закрыт alloconnect или до него не достучаться`); return; }
   $('callSub').textContent = 'Вызов доставлен — ждём ответа';
   startRing('out');
   fc.timer = setTimeout(() => {
     if (S.friendCall !== fc) return;
-    window.duo.friendsSend(fc.id, { t: 'cancel' });
+    window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'cancel' }));
     endFriendCall(`${fc.nick} не ответил`);
   }, 40000);
+}
+
+// Идентификатор относится к одной попытке, а не ко всем звонкам этого друга.
+const cancelledCallAttempts = new Map();
+function makeCallAttemptId() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+}
+function validCallAttempt(cid) { return typeof cid === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(cid); }
+function callEnvelope(fc, msg) { return validCallAttempt(fc?.cid) ? { ...msg, cid: fc.cid } : msg; }
+function callControlMatches(fc, msg) {
+  if (!fc) return false;
+  if (msg.cid == null) return !fc.requireCid; // совместимость со старыми клиентами
+  if (!validCallAttempt(msg.cid) || msg.cid !== fc.cid) return false;
+  fc.requireCid = true;
+  return true;
+}
+function rememberCallCancel(id, msg) {
+  const now = Date.now();
+  for (const [key, until] of cancelledCallAttempts) if (until <= now) cancelledCallAttempts.delete(key);
+  if (!validCallAttempt(msg.cid)) return;
+  cancelledCallAttempts.set(id + '|' + msg.cid, now + 180000);
+  while (cancelledCallAttempts.size > 256) cancelledCallAttempts.delete(cancelledCallAttempts.keys().next().value);
+}
+function callWasCancelled(id, msg) {
+  if (msg.cid == null) return false;
+  if (!validCallAttempt(msg.cid)) return true;
+  const key = id + '|' + msg.cid, until = cancelledCallAttempts.get(key);
+  if (until && until > Date.now()) return true;
+  cancelledCallAttempts.delete(key);
+  return false;
 }
 
 function onFriendMsg({ id, msg }) {
@@ -4048,6 +4115,7 @@ function onFriendMsg({ id, msg }) {
   L('friend-msg', { t: msg.t, from: id.slice(0, 8) });
   switch (msg.t) {
     case 'call':
+      if (callWasCancelled(id, msg)) return;
       // встречный звонок: оба нажали «Позвонить» одновременно → звонит тот, у кого ID больше
       if (fc && fc.dir === 'out' && fc.id === id && !S.connected) {
         L('friend-call', { glare: true, iWin: myIdent?.id > id });
@@ -4055,7 +4123,7 @@ function onFriendMsg({ id, msg }) {
         if (!/^ALOI\./.test(String(msg.code || ''))) return;
         clearTimeout(fc.timer);
         stopRing();
-        S.friendCall = { id, nick, dir: 'in', code: msg.code, accepted: true };
+        S.friendCall = { id, nick, dir: 'in', cid: msg.cid, requireCid: validCallAttempt(msg.cid), code: msg.code, accepted: true };
         showCallModal('in', nick);
         $('callSub').textContent = 'Соединяемся…';
         $('btnCallAccept').classList.add('hidden');
@@ -4064,28 +4132,29 @@ function onFriendMsg({ id, msg }) {
         else makeAnswer(msg.code);
         return;
       }
-      if (fc?.dir === 'in' && fc.id === id && fc.accepted) return; // повтор того же вызова
+      if (fc?.dir === 'in' && fc.id === id && fc.accepted && (!msg.cid || fc.cid === msg.cid)) return; // повтор того же вызова
       // он возвращается в звонок, где я жду именно его («Вернуться» или просто «Позвонить» — неважно)
       if (f && S.waiting?.id === id && S.inCall && !S.connected && !S.busy && !fc && /^ALOI\./.test(String(msg.code || ''))) {
-        acceptRejoin(id, nick, msg.code);
+        acceptRejoin(id, nick, msg.code, msg);
         return;
       }
-      if (S.inCall || S.busy || S.pc || fc || G.active || G.invite) { window.duo.friendsSend(id, { t: 'busy' }); return; }
+      if (S.inCall || S.busy || S.pc || fc || G.active || G.invite) { window.duo.friendsSend(id, callEnvelope(msg, { t: 'busy' })); return; }
       if (!/^ALOI\./.test(String(msg.code || ''))) return;
-      S.friendCall = { id, nick, dir: 'in', code: msg.code };
+      S.friendCall = { id, nick, dir: 'in', cid: msg.cid, requireCid: validCallAttempt(msg.cid), code: msg.code };
       showCallModal('in', nick);
       startRing();
       window.duo.focusWindow();
       notifyUser({ title: `${nick} звонит`, body: 'Входящий звонок в alloconnect', kind: 'call', peer: id });
-      S.friendCall.timer = setTimeout(() => {
-        if (S.friendCall?.id === id && S.friendCall.dir === 'in' && !S.friendCall.accepted) {
-          window.duo.friendsSend(id, { t: 'decline' });
+      const incoming = S.friendCall;
+      incoming.timer = setTimeout(() => {
+        if (S.friendCall === incoming && !incoming.accepted) {
+          window.duo.friendsSend(id, callEnvelope(incoming, { t: 'decline' }));
           endFriendCall(`Пропущенный звонок от ${nick}`);
         }
       }, 40000);
       return;
     case 'answer':
-      if (fc?.dir !== 'out' || fc.id !== id) return;
+      if (fc?.dir !== 'out' || fc.id !== id || !callControlMatches(fc, msg)) return;
       clearTimeout(fc.timer);
       stopRing();
       $('callSub').textContent = 'Соединяемся…';
@@ -4093,13 +4162,14 @@ function onFriendMsg({ id, msg }) {
       armConnectTimer(HOST_CONNECT_TIMEOUT);
       return;
     case 'decline':
-      if (fc?.id === id && fc.dir === 'out') endFriendCall(`${nick} отклонил звонок`);
+      if (fc?.id === id && fc.dir === 'out' && callControlMatches(fc, msg)) endFriendCall(`${nick} отклонил звонок`);
       return;
     case 'busy':
-      if (fc?.id === id && fc.dir === 'out') endFriendCall(`${nick} сейчас занят`);
+      if (fc?.id === id && fc.dir === 'out' && callControlMatches(fc, msg)) endFriendCall(`${nick} сейчас занят`);
       return;
     case 'cancel':
-      if (fc?.id === id && fc.dir === 'in') endFriendCall(fc.accepted ? `${nick} отменил звонок` : `Пропущенный звонок от ${nick}`);
+      rememberCallCancel(id, msg);
+      if (fc?.id === id && fc.dir === 'in' && callControlMatches(fc, msg)) endFriendCall(fc.accepted ? `${nick} отменил звонок` : `Пропущенный звонок от ${nick}`);
       return;
     case 'call-wait': // я вышел, а он остался и ждёт
       if (!f || S.inCall || S.friendCall || G.active) return;
@@ -4150,13 +4220,13 @@ function acceptCall() {
 function declineCall() {
   const fc = S.friendCall;
   if (!fc) return;
-  window.duo.friendsSend(fc.id, { t: 'decline' });
+  window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'decline' }));
   endFriendCall();
 }
 function cancelCall() {
   const fc = S.friendCall;
   if (!fc) return;
-  window.duo.friendsSend(fc.id, { t: 'cancel' });
+  window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'cancel' }));
   endFriendCall();
 }
 
@@ -4276,6 +4346,7 @@ function renderNet(n) {
     ['STUN-серверы', stunRowText(n)],
     ['Внешний адрес порта alloconnect', n.stunMapped == null ? 'проверяю…' : (n.stunMapped ? 'определён' : 'не определён')],
     ['Тип NAT', { cone: 'обычный — пробивка работает', symmetric: 'строгий — пробивка вряд ли сработает', unknown: 'неизвестно' }[n.natType] || '—'],
+    ['UDP туда и обратно', n.udpSizes?.length ? n.udpSizes.join(', ') + ' байт — подтверждены по доступным путям' : (n.udpSizesChecked ? 'ответов с полным размером пока нет' : 'нажми «Проверить заново»')],
     ['Tailscale', n.tailscale ? 'есть' : 'нет'],
     ['Порт alloconnect (UDP)', String(n.upnpPort || n.port || '—')],
     ['Друг достучался до тебя', n.inboundConfirmed.length ? 'да, через ' + n.inboundConfirmed.join(', ') : 'ещё не проверено'],
