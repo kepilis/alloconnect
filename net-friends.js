@@ -443,6 +443,17 @@ class FriendsNet extends EventEmitter {
     this.sock.send(pkt, addr.port, addr.ip, (e) => { if (e && e.code !== 'ENETUNREACH' && e.code !== 'EHOSTUNREACH') this.log('friends-error', `send ${addr.kind}: ${e.code || e.message}`); });
   }
 
+  // При полном VPN адрес отправителя (например LAN) может быть недоступен для
+  // обратного маршрута. Пробуем также опубликованные адреса этого же друга.
+  sendReply(id, obj, src) {
+    this.sendTo(id, obj, { ...src, kind: 'reply' });
+    const f = this.friends.get(id);
+    if (!f) return;
+    for (const a of this.targets(f)) {
+      if (a.ip !== src.ip || a.port !== src.port) this.sendTo(id, obj, a);
+    }
+  }
+
   sendAll(id, obj) {
     const f = this.friends.get(id);
     if (!f) return 0;
@@ -822,7 +833,7 @@ class FriendsNet extends EventEmitter {
     }
     if (!prevOnline) { this.log('friends', { presence: id.slice(0, 8), online: true, via: f.via }); this.emitList(); }
 
-    const reply = (o) => this.sendTo(id, o, { ...src, kind: 'reply' });
+    const reply = (o) => this.sendReply(id, o, src);
     switch (msg.t) {
       case 'ping': reply({ t: 'pong', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); return;
       case 'pong': return;

@@ -652,7 +652,7 @@ function bitrateHints(sdp) {
   return out.join('\r\n');
 }
 
-/* Сбор адресов для кода. Для SDP ждём завершения/ограниченного таймаута: первый srflx может принадлежать лишь одному маршруту VPN.
+/* Сбор адресов для кода. Для SDP оставляем короткое окно другим маршрутам после первого пригодного адреса.
    С TURN ждём ещё и адрес TURN. Подписываться нужно ДО setLocalDescription. */
 function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable = false } = {}) {
   const t0 = Date.now();
@@ -661,6 +661,7 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable 
   const relayOnly = !!(o.relay && o.turnUrl);
   let srflx = null, srflxIp = null, relay = false, done = false, publicHost = false;
   const errs = new Set();
+  let tReady = null;
   return new Promise((resolve) => {
     const finish = (why, fallback = false) => {
       if (done) return;
@@ -668,7 +669,7 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable 
       pc.removeEventListener('icecandidate', onCand);
       pc.removeEventListener('icecandidateerror', onErr);
       pc.removeEventListener('icegatheringstatechange', onState);
-      clearTimeout(tFall); clearTimeout(tMax);
+      clearTimeout(tFall); clearTimeout(tMax); clearTimeout(tReady);
       resolve({ srflx: !!srflx, first: srflx, srflxIp, relay, why, fallback, ms: Date.now() - t0 });
     };
     const allStunFailed = () => stunCount > 0 && errs.size >= stunCount;
@@ -683,6 +684,12 @@ function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable 
       } else if (c.type === 'relay') {
         relay = true;
         if (relayOnly || (firstUsable && (srflx || !stunCount))) finish('relay');
+      }
+      // Сохраняем быстрый рабочий путь: после первого пригодного адреса даём
+      // короткое окно остальным интерфейсам, без ожидания молчащих STUN.
+      if (!firstUsable && !relayOnly && (wantRelay ? relay : (srflx || publicHost))) {
+        clearTimeout(tReady);
+        tReady = setTimeout(() => finish('ready'), 150);
       }
     };
     const onErr = (e) => {

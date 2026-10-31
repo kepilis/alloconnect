@@ -11,6 +11,10 @@ const projects = [
   ['Android', path.join(android, 'www/core.js')],
 ];
 const cases = [
+  {name:'srflx-quiet-window',events:['srflx','quiet'],why:'ready'},
+  {name:'host-quiet-window',events:['host','quiet'],why:'ready'},
+  {name:'turn-quiet-window',turn:true,events:['srflx','relay','quiet'],why:'ready'},
+  {name:'multi-interface-quiet-window',events:['srflx','host','srflx','quiet'],why:'ready'},
   {name:'direct-srflx', events:['srflx','complete'], why:'complete'},
   {name:'no-stun-lan', count:0, events:['complete'], why:'complete'},
   {name:'stun-timeout', events:['fallback'], why:'timeout', fallback:true},
@@ -43,12 +47,13 @@ const cases = [
       const timers = [], listeners = new Map();
       const ctx = vm.createContext({settings:()=>({turnUrl:c.turn?'turns:example.invalid:443':'',relay:!!c.only}),
         isPublicIp:ip=>ip==='public-test', STUN_FALLBACK_MS:2500,GATHER_TIMEOUT:5000,
-        setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimeout:()=>{}});
+        setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimeout:t=>{if(t)t.cancelled=true;}});
       vm.runInContext(body,ctx);
       const pc = {addEventListener:(k,v)=>listeners.set(k,v),removeEventListener:k=>listeners.delete(k)};
       const p = ctx.gatherCandidates(pc,{canFallback:c.canFallback!==false,stunCount:c.count??3,firstUsable:!!c.first});
       for (const event of c.events) {
         if (event==='complete') {pc.iceGatheringState='complete';listeners.get('icegatheringstatechange')?.();}
+        else if (event==='quiet') {const ready=timers.filter(t=>t.ms===150&&!t.cancelled);assert.equal(ready.length,1);ready[0].fn();}
         else if (event==='errors') for(let i=0;i<3;i++) listeners.get('icecandidateerror')?.({url:`stun:fake${i}`});
         else if (event==='fallback'||event==='max') timers.find(t=>t.ms===(event==='max'?(c.turn?15000:5000):2500))?.fn();
         else listeners.get('icecandidate')?.({candidate:{type:event,address:event==='host'?'public-test':undefined}});

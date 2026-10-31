@@ -1756,8 +1756,13 @@ async function ghCheck() {
   // 1) ветка updates в репозитории: update.json + файлы рядом; 2) запасной путь — раздел релизов
   let u, fileUrl, page = `https://github.com/${GH_REPO}`;
   try {
-    u = JSON.parse((await ghGet(`${GH_RAW}/${GH_REPO}/updates/update.json?t=${Date.now()}`, false)).toString('utf-8'));
-    fileUrl = (n) => `${GH_RAW}/${GH_REPO}/updates/${n}?t=${Date.now()}`;
+    let ref = 'updates';
+    try {
+      const head = await ghGet(`${GH_API}/repos/${GH_REPO}/commits/updates`, true);
+      if (/^[0-9a-f]{40}$/i.test(head?.sha || '')) ref = head.sha;
+    } catch { log('update', { gh: 'snapshot-fallback' }); }
+    u = JSON.parse((await ghGet(`${GH_RAW}/${GH_REPO}/${ref}/update.json?t=${Date.now()}`, false)).toString('utf-8'));
+    fileUrl = (n) => `${GH_RAW}/${GH_REPO}/${ref}/${n}?t=${Date.now()}`;
   } catch (e) {
     if (!/пока нет/.test(e.message)) throw e;
     const rel = await ghGet(`${GH_API}/repos/${GH_REPO}/releases/latest`, true);
@@ -1784,9 +1789,16 @@ async function ghCheck() {
   for (const f of c.man.files) {
     const url = fileUrl(f.n);
     if (!url) { staged = null; return { ok: false, error: 'нет файла ' + f.n, page }; }
-    const buf = await ghGet(url, false);
-    const hash = crypto2.createHash('sha256').update(buf).digest('hex');
-    if (buf.length !== f.size || hash !== f.sha256) { staged = null; log('update', { gh: 'badFile', n: f.n }); return { ok: false, error: 'файл повреждён', page }; }
+    let buf, good = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        buf = await ghGet(url + (url.includes('?') ? '&' : '?') + 'attempt=' + attempt, false);
+        good = buf.length === f.size && crypto2.createHash('sha256').update(buf).digest('hex') === f.sha256;
+        if (good) break;
+      } catch (e) { if (attempt === 2) throw e; }
+      log('update', { gh: 'retry', n: f.n, attempt: attempt + 1 });
+    }
+    if (!good) { staged = null; log('update', { gh: 'badFile', n: f.n }); return { ok: false, error: 'файл повреждён', page }; }
     ofs.writeFileSync(path.join(dir, f.n), buf);
     staged.got.add(f.n);
   }
