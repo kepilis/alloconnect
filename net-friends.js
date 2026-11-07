@@ -90,6 +90,8 @@ class FriendsNet extends EventEmitter {
   constructor({ dir, log, version }) {
     super();
     this.appVersion = version || '';
+    this.relayClient = null;
+    this.relayUrl = '';
     this.activity = null; // { game } — во что сейчас играю (только для друзей)
     this.dir = dir;
     this.log = log || (() => {});
@@ -114,6 +116,7 @@ class FriendsNet extends EventEmitter {
     this.sock = null;
     this.port = 0;
     this.nick = '';
+    this.presence='online';
     this.invites = [];          // мои коды дружбы: { tok, exp }
     this.outgoing = new Map();  // id -> { tok, nick, addrs, until } — я вставил его код, жду ответа
     this.incoming = new Map();  // id -> { nick, addrs, src, tok } — вставили мой код, жду моего решения
@@ -255,6 +258,7 @@ class FriendsNet extends EventEmitter {
   }
 
   stop() {
+    this.configureRelay('');
     this.stunGeneration++;
     clearInterval(this.networkTimer);
     clearInterval(this.timer);
@@ -328,6 +332,21 @@ class FriendsNet extends EventEmitter {
     return { friendStunMatchesCall: stunAddr ? stunAddr.ip === ip : null };
   }
 
+  // Called only for a cryptographically verified peer on the current WebRTC channel.
+  noteCallContact(id, addrs) {
+    const f = this.friends.get(id);
+    if (!f) return false;
+    const clean = this.cleanAddrs(addrs);
+    if (clean.length && JSON.stringify(clean) !== JSON.stringify(f.addrs)) {
+      f.addrs = clean; this.saveFriends(); this.punch(); this.ping(id);
+    }
+    const changed = !f.online;
+    f.lastSeen = Date.now(); f.online = !['invisible','offline'].includes(f.presence);
+    // Never invent an observed UDP endpoint or claim a UDP probe succeeded.
+    if (changed) { f.via = 'call'; this.emitList(); }
+    return true;
+  }
+
   removeFriend(id) {
     this.friends.delete(id);
     this.keys.delete(id);
@@ -350,10 +369,17 @@ class FriendsNet extends EventEmitter {
   }
   list() {
     return [...this.friends.values()].map((f) => ({
-      id: f.id, nick: f.nick, online: f.online, lastSeen: f.lastSeen,
+      id: f.id, nick: f.nick, online: this.presence!=='offline'&&f.online, lastSeen: f.lastSeen,
+      presence:f.online?(f.presence||'online'):'offline',reachable:this.presence!=='offline'&&f.presence!=='offline'&&Date.now()-f.lastSeen<ONLINE_WINDOW,
       via: f.via || null, addrKinds: f.addrs.map((a) => a.kind),
       ver: f.ver || null, act: f.online ? (f.act || null) : null,
     }));
+  }
+  setPresence(mode) {
+    if(!['online','away','invisible','offline','dnd'].includes(mode))return;
+    if(mode===this.presence)return;this.presence=mode;
+    this.announcingPresence=true;try{this.pingAll()}finally{this.announcingPresence=false}
+    this.emitList();
   }
   setActivity(a) {
     this.activity = a && typeof a.game === 'string' ? { game: a.game.slice(0, 48) } : null;
@@ -363,7 +389,7 @@ class FriendsNet extends EventEmitter {
   refreshOnline() {
     let changed = false;
     for (const f of this.friends.values()) {
-      const on = Date.now() - f.lastSeen < ONLINE_WINDOW;
+      const on = Date.now() - f.lastSeen < ONLINE_WINDOW && !['offline','invisible'].includes(f.presence);
       if (on !== f.online) { f.online = on; changed = true; this.log('friends', { presence: f.id.slice(0, 8), online: on }); }
     }
     if (changed) this.emitList();
@@ -391,7 +417,7 @@ class FriendsNet extends EventEmitter {
     const nonce = crypto.randomBytes(12);
     const c = crypto.createCipheriv('aes-256-gcm', key, nonce);
     c.setAAD(this.idBuf);
-    const body = Buffer.concat([c.update(Buffer.from(JSON.stringify({ ...obj, ts: Date.now() }))), c.final()]);
+    const body = Buffer.concat([c.update(Buffer.from(JSON.stringify({ ...obj, presence:this.presence||'online', ts: Date.now() }))), c.final()]);
     return Buffer.concat([MAGIC, this.idBuf, nonce, body, c.getAuthTag()]);
   }
 
@@ -436,7 +462,7 @@ class FriendsNet extends EventEmitter {
   }
 
   sendTo(id, obj, addr) {
-    if (!this.sock) return;
+    if (!this.sock || (this.presence==='offline'&&!this.announcingPresence)) return;
     let pkt;
     try { pkt = this.seal(id, obj); } catch { return; }
     this.cnt.sent++;
@@ -446,6 +472,7 @@ class FriendsNet extends EventEmitter {
   // При полном VPN адрес отправителя (например LAN) может быть недоступен для
   // обратного маршрута. Пробуем также опубликованные адреса этого же друга.
   sendReply(id, obj, src) {
+    if (src.relay) { this.sendRelay(id, obj); return; }
     this.sendTo(id, obj, { ...src, kind: 'reply' });
     const f = this.friends.get(id);
     if (!f) return;
@@ -454,12 +481,42 @@ class FriendsNet extends EventEmitter {
     }
   }
 
+  // Opt-in transport. Existing ALC1 encryption and end-to-end ACKs are reused.
+  configureRelay(url, options = {}) {
+    url = typeof url === 'string' ? url.trim() : '';
+    if (url === this.relayUrl) return;
+    const old = this.relayClient;
+    this.relayClient = null; this.relayUrl = '';
+    if (old) { old.removeAllListeners(); old.stop().catch(() => {}); }
+    if (!url || !this.priv) return;
+    try {
+      const { RelayClient } = require('./relay-client.cjs');
+      const client = new RelayClient({ ...options, url, privateKey: this.priv });
+      this.relayClient = client; this.relayUrl = url;
+      client.on('packet', packet => { if (this.relayClient === client) this.onPacket(packet, { relay: true }); });
+      client.on('state', state => {
+        if (this.relayClient !== client) return;
+        this.log('friends-relay', { state }); this.emit('relay', { state });
+        if (state === 'ready') this.pingAll();
+      });
+      client.start();
+    } catch { this.log('friends-relay', { state: 'invalid-config' }); }
+  }
+  sendRelay(id, obj) {
+    if(this.presence==='offline'&&!this.announcingPresence)return false;
+    const client = this.relayClient;
+    if (!client || client.state !== 'ready' || !this.friends.has(id)) return false;
+    let packet; try { packet = this.seal(id, obj); } catch { return false; }
+    client.send(id, packet).catch(() => {});
+    return true;
+  }
   sendAll(id, obj) {
+    if(this.presence==='offline'&&!this.announcingPresence)return 0;
     const f = this.friends.get(id);
     if (!f) return 0;
     const t = this.targets(f);
     for (const a of t) this.sendTo(id, obj, a);
-    return t.length;
+    return t.length + (this.sendRelay(id, obj) ? 1 : 0);
   }
 
   /* надёжная доставка: повторяем, пока не придёт подтверждение */
@@ -482,7 +539,7 @@ class FriendsNet extends EventEmitter {
   // 64 байта — ALC1, ключ отправителя, nonce и тег GCM. Учитываем rid/ts,
   // UTF-8 и JSON escaping до шифрования, а не число символов исходной строки.
   reliablePacketSize(obj) {
-    return 64 + Buffer.byteLength(JSON.stringify({ ...obj, rid: '0'.repeat(12), ts: 999999999999999 }), 'utf8');
+    return 64 + Buffer.byteLength(JSON.stringify({ ...obj, presence:this.presence||'online', rid: '0'.repeat(12), ts: 999999999999999 }), 'utf8');
   }
 
   async sendBig(id, obj) {
@@ -654,7 +711,7 @@ class FriendsNet extends EventEmitter {
   /* проверка «может ли друг достучаться»: шлём на каждый его адрес отдельно */
   sizedProbe(kind, bytes, echo = false) {
     const msg = { t: echo ? 'probe-ok' : 'probe', kind, sz: bytes, echo, pad: '' };
-    const overhead = 64 + Buffer.byteLength(JSON.stringify({ ...msg, ts: Date.now() }));
+    const overhead = 64 + Buffer.byteLength(JSON.stringify({ ...msg, presence:this.presence||'online', ts: Date.now() }));
     msg.pad = 'x'.repeat(Math.max(0, bytes - overhead));
     return msg;
   }
@@ -696,22 +753,25 @@ class FriendsNet extends EventEmitter {
     const key = buf.subarray(8, 20).toString('hex');
     const done = this.stunWaiters.get(key);
     if (!done) return true;
-    this.stunWaiters.delete(key);
+    if (buf.readUInt16BE(2) + 20 > buf.length) return true;
     let off = 20;
     let addr = null;
     while (off + 4 <= buf.length) {
       const type = buf.readUInt16BE(off);
       const len = buf.readUInt16BE(off + 2);
+      if (off + 4 + len > buf.length) return true;
       const v = buf.subarray(off + 4, off + 4 + len);
-      if ((type === 0x0020 || type === 0x8020) && v[1] === 1) {
+      if ((type === 0x0020 || type === 0x8020) && len >= 8 && v[1] === 1) {
         const port = v.readUInt16BE(2) ^ (STUN_MAGIC >>> 16);
         const ipn = v.readUInt32BE(4) ^ STUN_MAGIC;
         addr = { ip: [ipn >>> 24, (ipn >>> 16) & 255, (ipn >>> 8) & 255, ipn & 255].join('.'), port };
         break;
       }
-      if (type === 0x0001 && v[1] === 1 && !addr) addr = { ip: [...v.subarray(4, 8)].join('.'), port: v.readUInt16BE(2) };
+      if (type === 0x0001 && len >= 8 && v[1] === 1 && !addr) addr = { ip: [...v.subarray(4, 8)].join('.'), port: v.readUInt16BE(2) };
       off += 4 + len + ((4 - (len % 4)) % 4);
     }
+    if (!addr) return true;
+    this.stunWaiters.delete(key);
     done(addr);
     return true;
   }
@@ -786,6 +846,7 @@ class FriendsNet extends EventEmitter {
     } catch { return null; }
   }
   async networkChanged() {
+    this.relayClient?.reconnect();
     this.stunGeneration++;
     this.stun = null; this.stunAddrs = []; this.stunUsed = null; this.natType = 'unknown';
     this.punch(); this.pingAll();
@@ -808,15 +869,21 @@ class FriendsNet extends EventEmitter {
     const r = this.open(buf);
     if (!r) return;
     const { id, msg } = r;
+    if(this.presence==='offline')return;
     const f = this.friends.get(id);
-    const src = { ip: rinfo.address, port: rinfo.port, ts: Date.now() };
+    const viaRelay = rinfo.relay === true;
+    if (viaRelay && !f) return; // This transport serves existing friends only.
+    const src = viaRelay ? { relay: true } : { ip: rinfo.address, port: rinfo.port, ts: Date.now() };
     if (!f) { this.onStranger(id, msg, src); return; }
     const prevOnline = f.online;
     f.lastSeen = Date.now();
-    f.online = true;
-    const obsChanged = !f.observed || f.observed.ip !== src.ip || f.observed.port !== src.port;
-    f.observed = src;
-    f.via = ipKind(src.ip);
+    const prevPresence=f.presence;
+    f.presence=['online','away','invisible','offline','dnd'].includes(msg.presence)?msg.presence:'online';
+    f.online = !['offline','invisible'].includes(f.presence);
+    if(prevPresence!==f.presence)this.emitList();
+    const obsChanged = !viaRelay && (!f.observed || f.observed.ip !== src.ip || f.observed.port !== src.port);
+    if (!viaRelay) f.observed = src;
+    f.via = viaRelay ? 'relay' : ipKind(src.ip);
     if (Array.isArray(msg.addrs)) {
       const clean = this.cleanAddrs(msg.addrs);
       if (JSON.stringify(clean) !== JSON.stringify(f.addrs)) { f.addrs = clean; this.saveFriends(); this.punch(); }
@@ -831,13 +898,14 @@ class FriendsNet extends EventEmitter {
       const nk = typeof msg.nick === 'string' ? msg.nick.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24) : '';
       if (nk && nk !== f.nick && !f.renamed) { f.nick = nk; this.saveFriends(); this.emitList(); this.log('friends', { nickChanged: id.slice(0, 8) }); }
     }
-    if (!prevOnline) { this.log('friends', { presence: id.slice(0, 8), online: true, via: f.via }); this.emitList(); }
+    if (prevOnline!==f.online) { this.log('friends', { presence: id.slice(0, 8), online: f.online, via: f.via }); this.emitList(); }
 
     const reply = (o) => this.sendReply(id, o, src);
     switch (msg.t) {
       case 'ping': reply({ t: 'pong', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); return;
       case 'pong': return;
       case 'probe':
+        if (viaRelay) return; // HTTPS delivery is not evidence of UDP reachability/MTU.
         this.log('net-check', { inboundFromFriend: id.slice(0, 8), viaMyAddr: msg.kind, srcKind: ipKind(src.ip) });
         this.emit('probe-in', id, msg.kind);
         if ([256, 768, 1000, 1200].includes(msg.sz)) {
@@ -846,6 +914,7 @@ class FriendsNet extends EventEmitter {
           } else reply({ t: 'probe-ok', kind: msg.kind });
         return;
       case 'probe-ok':
+        if (viaRelay) return;
         if ([256, 768, 1000, 1200].includes(msg.sz)) {
           const result = { requested: msg.sz, received: buf.length, fullEcho: msg.echo === true && buf.length === msg.sz, friend: id.slice(0, 8) };
           this.log('net-check', { udpEcho: result });
@@ -872,7 +941,14 @@ class FriendsNet extends EventEmitter {
           this.seenRids.set(msg.rid, Date.now());
         }
         if (msg.t === 'part') {
+          if (!Number.isInteger(msg.n) || msg.n < 1 || msg.n > 1024 ||
+              !Number.isInteger(msg.i) || msg.i < 0 || msg.i >= msg.n ||
+              typeof msg.mid !== 'string' || !msg.mid.length || msg.mid.length > 64 ||
+              typeof msg.d !== 'string' || msg.d.length > 1800) return;
+          for (const [k, v] of this.parts) if (Date.now() - v.ts > 60000) this.parts.delete(k);
           const key = id + msg.mid;
+          if (!this.parts.has(key) && this.parts.size >= 128) return;
+          if (this.parts.has(key) && this.parts.get(key).n !== msg.n) return;
           const e = this.parts.get(key) || { n: msg.n, got: new Array(msg.n), ts: Date.now() };
           if (msg.i >= 0 && msg.i < e.n) e.got[msg.i] = String(msg.d);
           this.parts.set(key, e);

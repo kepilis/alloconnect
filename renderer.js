@@ -43,7 +43,7 @@ const store = {
 };
 const DEFAULTS = {
   mic: '', out: '', noise: true, echo: true, agc: true, sounds: true,
-  noStun: false, stunAlt: false, stunCustom: '', turnUrl: '', turnUser: '', turnPass: '', relay: false, quality: '1080p60', minKbps: 2500, rnn: true,
+  noStun: false, stunAlt: false, stunCustom: '', relayUrl: '', turnUrl: '', turnUser: '', turnPass: '', relay: false, quality: '1080p60', minKbps: 2500, rnn: true,
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
   ovlDraw: true, ovlReact: false, ctlAllow: true,
@@ -53,6 +53,7 @@ const DEFAULTS = {
   svidInSound: true, svidInVol: 80,  // видео от друга поверх моего экрана: как слышу
 };
 const settings = () => ({ ...DEFAULTS, ...store.get('settings', {}) });
+window.duo.uiScale(settings().uiScale||1);
 
 /* ---------- Темы оформления (стили — themes.css) ---------- */
 const THEMES = [
@@ -66,6 +67,8 @@ const THEMES = [
   { id: 'blueprint', name: 'Чертёж', sw: ['#0d3b6f', '#ffffff', '#ffd34d', '#a9c4e8'] },
   { id: 'retro98', name: 'Ретро-ОС', sw: ['#008080', '#c0c0c0', '#000080', '#ffffff'] },
   { id: 'notebook', name: 'Тетрадь', sw: ['#fdfcf6', '#b9cbea', '#1e3a8a', '#d6336c'] },
+  { id: 'nord', name: 'Север', sw: ['#16242d','#20343f','#83c9ba','#e5f0f0'] },
+  { id: 'linen', name: 'Лён', sw: ['#e9e4db','#faf7f1','#365e58','#272e2b'] },
   { id: 'newspaper', name: 'Газета', sw: ['#efebe1', '#161616', '#f7f4ec', '#b3261e'] },
 ];
 // рамка вокруг стрима друга (у каждой темы своя) — можно выключить
@@ -205,6 +208,7 @@ function buildThemeGrid() {
   }
 }
 applyTheme(settings().theme || '');
+document.documentElement.classList.toggle('no-ui-animations',settings().animations===false);
 applyStreamFrame();
 bindSettingsCats();
 bindChatSplit();
@@ -332,7 +336,7 @@ function makeMeter(stream, onLevel) {
 }
 
 function sound(kind) {
-  if (!settings().sounds) return;
+  if (!settings().sounds||(kind==='msg'&&store.get('presence','online')==='dnd')) return;
   const c = audio();
   const seq = {
     join: [523, 784], leave: [784, 523], gone: [784, 622, 466, 392], msg: [988],
@@ -497,14 +501,15 @@ const STUN_NAME = { primary: 'основные', alt: 'альтернативн�
 const stunHost = (url) => String(url || '').replace(/^stuns?:/, '').replace(/\?.*$/, '');
 let lastStun = null; // { list, first, ok, at } — для диагностики в настройках
 
+let reserveIceServers = [];
 function rtcConfig(urls = stunPlan()[0].urls) {
   const o = settings();
-  const iceServers = [];
+  const iceServers = [...reserveIceServers];
   if (urls.length) iceServers.push({ urls });
   if (o.turnUrl) iceServers.push({ urls: o.turnUrl, username: o.turnUser, credential: o.turnPass });
   return {
     iceServers,
-    iceTransportPolicy: o.relay && o.turnUrl ? 'relay' : 'all',
+    iceTransportPolicy: o.relay && (o.turnUrl || reserveIceServers.length) ? 'relay' : 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
   };
@@ -657,8 +662,9 @@ function bitrateHints(sdp) {
 function gatherCandidates(pc, { canFallback = false, stunCount = 0, firstUsable = false } = {}) {
   const t0 = Date.now();
   const o = settings();
-  const wantRelay = !!o.turnUrl;
-  const relayOnly = !!(o.relay && o.turnUrl);
+  const reserveTurn = typeof reserveIceServers !== 'undefined' && reserveIceServers.length > 0;
+  const wantRelay = !!o.turnUrl || reserveTurn;
+  const relayOnly = !!(o.relay && (o.turnUrl || reserveTurn));
   let srflx = null, srflxIp = null, relay = false, done = false, publicHost = false;
   const errs = new Set();
   let tReady = null;
@@ -749,6 +755,10 @@ async function probeStunPlan(label, plan) {
 // и начинает шифрованное рукопожатие. Поэтому сначала пробой выясняем рабочий список, потом одно соединение.
 // make(cfg) → pc; prep(pc) — дойти до setLocalDescription; alive(pc) — попытка ещё актуальна
 async function gatherWithFallback(label, make, prep, alive, { answer = false } = {}) {
+  reserveIceServers = [];
+  if (settings().relayUrl) {
+    try { const supplied = await window.duo.relayIce?.(); if (Array.isArray(supplied)) reserveIceServers = supplied; } catch { /* Direct paths remain available. */ }
+  }
   let plan = stunPlan();
   if (answer && plan.length > 1) plan = [await probeStunPlan(label, plan)];
   for (let i = 0; i < plan.length; i++) {
@@ -1017,6 +1027,9 @@ function onData(d) {
   if (!d || typeof d !== 'object') return;
   if (camOnData(d)) return; // вебкамера (camera.js)
   switch (d.t) {
+    case 'friend-contact':
+      receiveFriendContact(d);
+      break;
     case 'hello':
       S.friendNick = String(d.nick || S.friendNick || 'Друг').slice(0, 24);
       setFriendPresent(true);
@@ -1074,7 +1087,7 @@ function onData(d) {
       friendGone(`${S.friendNick} завершил звонок`);
       break;
     case 'perm':
-      S.friendPerm = { draw: d.draw !== false, react: !!d.react, ctl: d.ctl !== false, vid: d.vid === 1, ops: d.ops === 1 };
+      S.friendPerm = { draw: d.draw !== false, react: !!d.react, ctl: d.ctl !== false, vid: d.vid === 1, mediaLong: d.mediaLong === 1, ops: d.ops === 1 };
       if (!S.friendPerm.draw && tools.mode) tools.mode = null;
       updateToolbar();
       break;
@@ -1090,7 +1103,13 @@ function onData(d) {
       onOverlayData(d);
       break;
     case 'svid-play':
-      startVideoEcho();
+      if(d.fid==null||d.fid===svidOut?.fid)startVideoEcho();
+      break;
+    case 'svid-stop':
+      if(Number.isInteger(d.fid)&&d.fid===svidOut?.fid)stopScreenVideo();
+      break;
+    case 'svid-cancel':
+      if(Number.isInteger(d.fid)&&S.localScreen)window.duo.ovlMsg({t:'vid-stop',fid:d.fid});
       break;
     case 'sp-stop': // друг нажал «убрать всё с экрана» — глушим свой саундпад
       spStopAll();
@@ -1133,14 +1152,24 @@ async function tuneSender(sender, { video, audio: audioBr, mode, codec }) {
     p.encodings[0].maxBitrate = audioBr;
     p.encodings[0].networkPriority = 'high';
   }
-  try {
-    await sender.setParameters(p);
-  } catch (e1) {
-    if (codec) L('codec', { setFailed: e1.message });
-    delete p.encodings[0].codec;
-    delete p.degradationPreference;
-    p.encodings.forEach((e) => delete e.networkPriority);
-    try { await sender.setParameters(p); } catch (e2) { console.warn('setParameters', e2); }
+  // Retry optional parameters separately: an unsupported codec must not
+  // silently remove the frame-rate preference used for game capture.
+  const removed=[];
+  for(let attempt=0;attempt<4;attempt++){
+    try{
+      await sender.setParameters(p);
+      if(video)L('stream-sender',{targetFps:video.fps,mode:mode||'game',degradation:p.degradationPreference||'default',removed});
+      return;
+    }catch(e){
+      if(p.encodings.some(x=>x.codec)){
+        p.encodings.forEach(x=>delete x.codec);removed.push('codec');
+      }else if(p.encodings.some(x=>x.networkPriority)){
+        p.encodings.forEach(x=>delete x.networkPriority);removed.push('networkPriority');
+      }else if(p.degradationPreference){
+        delete p.degradationPreference;removed.push('degradationPreference');
+      }else{console.warn('setParameters',e);return}
+      L('stream-sender-retry',{removed:removed[removed.length-1],error:String(e.message||e).slice(0,180)});
+    }
   }
 }
 
@@ -1702,6 +1731,7 @@ function flashToolbar() {
 }
 
 function hideRemoteScreen() {
+  stopScreenVideo(true);
   S.friendShareName = '';
   refreshClip();
   cancelPlacement();
@@ -1859,7 +1889,10 @@ function enterCall() {
 }
 
 function leaveCall() {
+  if(S.inCall||S.connected)sound('leave');
   L('call', { leave: true });
+  closeClipPreview();
+  pauseMediaIn($('messages'));
   camReset();
   winResetCall();
   S.peerCam = false;
@@ -1921,7 +1954,7 @@ function setStatus(kind, text) {
 }
 
 // уведомление: своё окно в стиле темы (или Windows — по настройке); peer — чья аватарка, media — картинка/гифка
-function notifyUser(o) { window.duo?.notify({ ...o, theme: settings().theme || '' }).catch?.(() => {}); }
+function notifyUser(o) { if(o.kind==='msg'&&store.get('presence','online')==='dnd')return; window.duo?.notify({ ...o, theme: settings().theme || '' }).catch?.(() => {}); }
 const initial = (s) => (s || '?').trim().charAt(0).toUpperCase() || '?';
 
 
@@ -1984,7 +2017,25 @@ const boxSizes = new ResizeObserver((list) => {
     if (s && s.stick !== false) toEnd(s);
   }
 });
+// Only recorded/chat media is passed here; live call tracks keep playing.
+function pauseMediaIn(root, release = false) {
+  if (!root) return;
+  const media = root.matches?.('video,audio') ? [root] : root.querySelectorAll('video,audio');
+  for (const el of media) {
+    el.pause();
+    if (release) { el.srcObject = null; el.removeAttribute('src'); el.load(); }
+  }
+}
+
+function clearConvMedia(conv) {
+  pauseMediaIn(conv.box, true);
+  for (const url of conv.blobs.splice(0)) URL.revokeObjectURL(url);
+  conv.box.replaceChildren();
+  conv.msgs.clear();
+}
+
 function mountConv(conv, host) {
+  pauseMediaIn(host);
   host.replaceChildren(conv.box);
   if (!host.stickInit) {
     host.stickInit = true;
@@ -2065,7 +2116,7 @@ function renderHistEntry(conv, e, into) {
   } else if (e.type === 'text') {
     const m = chatMsg(conv, who, String(e.text || ''), mine, e.ts, into, opt);
     if (e.st === 'fail') markUndelivered(m);
-    else if (mine && !conv.group) setTickEl(m, e.st === 'read' ? 'read' : 'sent');
+    else if (mine && !conv.group) setTickEl(m, e.st==='queued'?'queued':e.st === 'read' ? 'read' : 'sent');
   } else if (e.type === 'file' && e.file) {
     const meta = { ...e.file, kind: e.file.kind || fileKind(e.file.mime || '') };
     const ui = fileBubble(conv, who, meta, mine, { ts: e.ts, into, ...opt });
@@ -2114,9 +2165,10 @@ function setTickEl(m, st) {
   let t = meta.querySelector('.tick');
   if (!t) { t = document.createElement('span'); t.className = 'tick'; meta.appendChild(t); }
   if (t.classList.contains('read')) return; // прочитанное назад не откатываем
-  t.textContent = st === 'read' ? ' ✓✓' : ' ✓';
+  t.dataset.state=st;
+  t.textContent = st==='queued'?' ◷':st === 'read' ? ' ✓✓' : ' ✓';
   t.classList.toggle('read', st === 'read');
-  t.title = st === 'read' ? 'Прочитано' : 'Доставлено';
+  t.title = st==='queued'?'В очереди — отправится, когда друг будет доступен':st === 'read' ? 'Прочитано' : 'Доставлено';
 }
 function onReadMids(conv, mids) {
   if (!conv || !Array.isArray(mids)) return;
@@ -2210,6 +2262,7 @@ function markEdited(el) {
 }
 
 function renderDeleted(el, e) {
+  pauseMediaIn(el, true);
   e.deleted = true;
   e.react = {};
   el.classList.add('deleted');
@@ -2253,7 +2306,9 @@ async function sendMsgOp(conv, raw) {
   if (!op || !conv) return false;
   if (!canOps(conv)) { toast(`У ${conv.nick} старая версия alloconnect — это заработает, когда он обновится`); return false; }
   let ok = false;
-  if (G.active && G.conv === conv) { grpSendAll({ t: 'chat-op', ...op }); ok = true; }
+  const queued=conv.msgs?.get(op.ref)?.el.querySelector('.tick')?.dataset.state==='queued';
+  if(queued&&conv.id){const r=await window.duo.friendsSend(conv.id,{t:'dm-op',...op}).catch(()=>({ok:false}));ok=!!r.ok;if(!ok){toast(r.error||'Не удалось изменить сообщение в очереди');return false}}
+  else if (G.active && G.conv === conv) { grpSendAll({ t: 'chat-op', ...op }); ok = true; }
   else if (S.inCall && S.callConv === conv && S.dc?.readyState === 'open') { send({ t: 'chat-op', ...op }); ok = true; }
   else if (conv.id) { const r = await window.duo.friendsSend(conv.id, { t: 'dm-op', ...op }).catch(() => ({ ok: false })); ok = !!r.ok; }
   if (!ok) { toast(`Не доставлено — ${conv.nick} не в сети`); return false; }
@@ -2533,10 +2588,12 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
     el: m,
     progress(done) {
       prog.querySelector('i').style.width = Math.min(100, (100 * done) / Math.max(1, meta.size)) + '%';
-      stat.firstChild.textContent = `${fmtSize(done)} / ${fmtSize(meta.size)}`;
+      stat.firstChild.textContent = `${Math.min(100,Math.floor(100*done/Math.max(1,meta.size)))}% · ${fmtSize(done)} / ${fmtSize(meta.size)}`;
     },
     loading() { prog.remove(); stat.firstChild.textContent = 'загрузка…'; },
     done(url) {
+      if (m.classList.contains('deleted')) return;
+      pauseMediaIn(view, true);
       prog.remove();
       stat.firstChild.textContent = fmtSize(meta.size);
       if (meta.kind === 'image') {
@@ -2634,6 +2691,7 @@ class FileChan {
     this.fdc = fdc;
     this.getConv = getConvFn;
     this.handlers = handlers;
+    this.downloadId=Math.random().toString(36).slice(2,10);
     this.incoming = new Map();
     this.outgoing = [];
     this.sending = null;
@@ -2642,6 +2700,12 @@ class FileChan {
     fdc.bufferedAmountLowThreshold = 1 << 20;
     fdc.addEventListener('message', (e) => this.onMsg(e.data));
     fdc.addEventListener('close', () => this.fail('связь прервалась'));
+  }
+
+  downloadEvent(entry,stage,message) {
+    const meta=entry.meta;
+    const title=meta.p==='avatar'?'Аватарка':meta.p==='update'?'Обновление от друга: '+meta.name:'Получение: '+meta.name;
+    window.downloadProgress?.({id:'file-'+this.downloadId+'-'+meta.fid,title,stage,got:entry.got,total:meta.size,message,background:meta.p==='avatar'||meta.st===1});
   }
 
   busy() { return !!this.sending || this.outgoing.length > 0 || this.incoming.size > 0; }
@@ -2723,11 +2787,16 @@ class FileChan {
         const from = this.handlers.from?.() || {}; // в группе — кто прислал
         const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, from.nick || conv.nick, meta, false, { mid: fmid(meta.fid), who: from.who }) : NOUI;
         ui.progress(0);
-        this.incoming.set(meta.fid, { meta, parts: [], got: 0, ui, last: 0 });
+        if(this.incoming.has(meta.fid)){const old=this.incoming.get(meta.fid);old.ui.fail('передача заменена');this.downloadEvent(old,'error','Передача заменена новой');this.incoming.delete(meta.fid)}
+        const entry={meta,parts:[],got:0,ui,last:0};
+        this.incoming.set(meta.fid,entry);
+        this.downloadEvent(entry,'download');
       } else if (m.t === 'file-end') {
         const e = this.incoming.get(m.fid >>> 0);
         if (!e) return;
         this.incoming.delete(m.fid >>> 0);
+        if(e.got!==e.meta.size){e.ui.fail('файл получен не полностью');this.downloadEvent(e,'error','Файл получен не полностью');return}
+        this.downloadEvent(e,'ready','Файл получен');
         // SVG/HTML не показываем как картинку (безопасность) — только «Сохранить»
         const safeMime = /svg|html|xml/i.test(e.meta.mime) ? 'application/octet-stream' : e.meta.mime;
         if (safeMime !== e.meta.mime) e.meta.kind = 'file';
@@ -2755,14 +2824,14 @@ class FileChan {
     const fid = new DataView(data).getUint32(0);
     const e = this.incoming.get(fid);
     if (!e) return;
+    if(data.byteLength-4>e.meta.size-e.got){this.incoming.delete(fid);e.ui.fail('ошибка размера');this.downloadEvent(e,'error','Размер файла не совпал');return}
     e.parts.push(data.slice(4));
     e.got += data.byteLength - 4;
-    if (e.got > e.meta.size + CHUNK) { this.incoming.delete(fid); e.ui.fail('ошибка размера'); return; }
-    if (Date.now() - e.last > 150) { e.ui.progress(e.got); e.last = Date.now(); }
+    if (Date.now() - e.last > 150) { e.ui.progress(e.got);this.downloadEvent(e,'download'); e.last = Date.now(); }
   }
 
   fail(why) {
-    for (const [, e] of this.incoming) e.ui.fail(why);
+    for (const [, e] of this.incoming) {e.ui.fail(why);this.downloadEvent(e,'error',why)}
     this.incoming.clear();
     for (const j of this.outgoing.splice(0)) j.ui.fail(why);
   }
@@ -2788,10 +2857,14 @@ function filesFromEvent(dt) {
 // <img src> из text/html важнее text/uri-list — там часто ссылка на страницу (пин), а не на картинку.
 function droppedMediaUrl(dt) {
   const ok = (u) => /^(https?:|data:(image|video)\/)/i.test(u || '');
+  const textUrl = (dt.getData('text/uri-list') || dt.getData('text/plain') || '').split(/\r?\n/).find(l => l && !l.startsWith('#'))?.trim();
+  if (isYoutubeUrl(textUrl)) return textUrl;
   try {
     const html = dt.getData('text/html');
     if (html) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
+      const yt = [...doc.querySelectorAll('a[href]')].map(a => a.getAttribute('href')).find(isYoutubeUrl);
+      if (yt) return yt;
       // видео: прямая ссылка — её; видео через blob: (Pinterest и др.) — ссылку на страницу, там main найдёт сам файл
       const v = doc.querySelector('video[src], video source[src]');
       const vsrc = v?.getAttribute('src');
@@ -2810,7 +2883,17 @@ function droppedMediaUrl(dt) {
 }
 
 const MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv', 'video/ogg': 'ogv' };
+function isYoutubeUrl(url) { try { const u = new URL(url); return u.protocol === 'https:' && /^(www\.|m\.|music\.)?(youtube\.com|youtu\.be)$/.test(u.hostname); } catch { return false; } }
 async function fileFromUrl(url) {
+  if (isYoutubeUrl(url)) {
+    toast('YouTube: выбираю формат и загружаю…');
+    const r = await window.duo.youtubeMedia(url).catch(() => ({ error: 'Не удалось загрузить YouTube' }));
+    if (r.error) { toast(r.error); return null; }
+    if (r.cancelled) return null;
+    const f = new File([r.bytes], r.name, { type: r.mime });
+    f.largeApproved = r.largeApproved;
+    return f;
+  }
   let bytes, mime, name = '';
   if (/^data:/i.test(url)) {
     const m = /^data:([\w/+.-]+)(;base64)?,(.*)$/is.exec(url);
@@ -2868,12 +2951,18 @@ async function spLoadList() {
 
 const prettyKey = (k) => (k || '').replace('CommandOrControl', 'Ctrl').replace(/num(\d)/i, 'Num$1').replace(/\+/g, '+');
 
+const spSelected=new Set();
 function spRender() {
   const g = $('spGrid');
   g.innerHTML = '';
   $('spEmpty').classList.toggle('hidden', spList.length > 0);
   $('spStopKey').textContent = spStopKey ? prettyKey(spStopKey) : '';
-  for (const s of spList) {
+  const category=$('spCategory').value,cats=[...new Set(spList.map(s=>s.category).filter(Boolean))].sort();
+  $('spCategory').replaceChildren(new Option('Все категории',''),...cats.map(c=>new Option(c,c)));$('spCategory').value=cats.includes(category)?category:'';
+  const query=$('spSearch').value.trim().toLocaleLowerCase();
+  for(const id of spSelected)if(!spList.some(s=>s.id===id))spSelected.delete(id);
+  $('spDeleteSelected').textContent='Удалить выбранные ('+spSelected.size+')';$('spDeleteSelected').disabled=!spSelected.size;
+  for (const s of spList.filter(s=>(!category||s.category===category)&&(!query||s.name.toLocaleLowerCase().includes(query)))) {
     const t = document.createElement('div');
     t.className = 'sp-tile' + (spPlaying.has(s.id) ? ' playing' : '');
     t.dataset.id = s.id;
@@ -2888,7 +2977,8 @@ function spRender() {
     more.textContent = '⋯';
     more.title = 'Настроить';
     more.onclick = (e) => { e.stopPropagation(); spOpenEdit(s.id); };
-    t.append(n, k, more);
+    const pick=document.createElement('input');pick.type='checkbox';pick.className='sp-pick';pick.checked=spSelected.has(s.id);pick.setAttribute('aria-label','Выбрать '+s.name);pick.onclick=e=>e.stopPropagation();pick.onchange=()=>{if(pick.checked)spSelected.add(s.id);else spSelected.delete(s.id);spRender()};
+    t.append(pick,n, k, more);
     t.onclick = () => (spPlaying.has(s.id) ? spStop(s.id) : spPlay(s.id));
     t.oncontextmenu = (e) => { e.preventDefault(); spOpenEdit(s.id); };
     g.appendChild(t);
@@ -3014,6 +3104,7 @@ function spOpenEdit(id) {
   spCapture = null;
   $('spEdit').classList.remove('hidden');
   $('spEditName').value = s.name;
+  $('spEditCategory').value=s.category||'';
   $('spEditVol').value = String(s.vol ?? 100);
   $('spEditKey').classList.remove('capture');
   $('spEditKey').textContent = '⌨ ' + (s.hotkey ? prettyKey(s.hotkey) : 'Клавиша: —');
@@ -3023,7 +3114,7 @@ function spOpenEdit(id) {
 async function spSaveEdit() {
   const id = spEditId;
   if (!id) return;
-  await window.duo.soundsUpdate(id, { name: $('spEditName').value.trim() || 'звук', vol: Number($('spEditVol').value) });
+  await window.duo.soundsUpdate(id, { category:$('spEditCategory').value, name: $('spEditName').value.trim() || 'звук', vol: Number($('spEditVol').value) });
   spBuffers.delete(id);
   $('spEdit').classList.add('hidden');
   spEditId = null;
@@ -3051,6 +3142,15 @@ function accelFromEvent(e) {
 }
 
 function spBind() {
+  $('spMoveSelected').onclick=async()=>{const ids=[...spSelected];if(!ids.length){toast('Сначала отметь звуки галочками');return}const category=$('spMoveCategory').value.trim();for(const id of ids)await window.duo.soundsUpdate(id,{category});spSelected.clear();await spLoadList();toast('Перемещено звуков: '+ids.length)};
+  $('spSearch').oninput=spRender;$('spCategory').onchange=spRender;
+  $('spFolder').onclick=()=>window.duo.soundsFolder();
+  $('spDeleteSelected').onclick=async()=>{const ids=[...spSelected];if(!ids.length||!confirm('Удалить звуки: '+ids.length+'?'))return;for(const id of ids){spStop(id);await window.duo.soundsRemove(id);spBuffers.delete(id);spSelected.delete(id)}await spLoadList()};
+  $('btnSoundpadLobby').onclick=()=>$('btnSoundpad').click();
+  $('uiScale').onchange=()=>{const scale=Number($('uiScale').value);store.set('settings',{...settings(),uiScale:scale});window.duo.uiScale(scale)};
+  $('btnChatFolder').onclick=()=>window.duo.histFolder();
+  $('optSaveChatFiles').onchange=()=>window.duo.appSettingsSet({saveChatFiles:$('optSaveChatFiles').checked});
+  $('btnSaveReplay').onclick=saveClip;
   $('btnSoundpad').onclick = () => {
     const p = $('soundpad');
     p.classList.toggle('hidden');
@@ -3149,10 +3249,19 @@ async function pasteField(id) {
 let settingsMicStream = null;
 let stopSettingsMeter = null;
 
+function paintYoutubeAuth(state) {
+  $('youtubeAuthEnabled').checked = state.enabled;
+  $('youtubeAuthBrowser').value = state.browser;
+  $('youtubeAuthStatus').textContent = state.error || (state.enabled ? 'Использование входа разрешено.' : 'Выключено: загрузка без авторизации.') + (state.detected ? ' Браузер по умолчанию: ' + state.detected : '');
+}
 async function openSettings() {
+  window.duo.youtubeAuthGet().then(paintYoutubeAuth).catch(() => { $('youtubeAuthStatus').textContent = 'Не удалось прочитать настройку YouTube'; });
   buildThemeGrid();
   applyTheme(settings().theme || '');
   const o = settings();
+  $('uiScale').value=String(o.uiScale||1);
+  $('optAnimations').checked = o.animations !== false;
+  $('optDownloadsAuto').checked = o.downloadsAuto !== false;
   $('optNoise').checked = o.noise;
   $('optRnn').checked = o.rnn !== false;
   $('optEcho').checked = o.echo;
@@ -3166,6 +3275,7 @@ async function openSettings() {
   $('stunCustom').value = o.stunCustom || '';
   window.duo?.appSettingsGet().then((a) => {
     $('appTray').checked = a.tray; $('appCloseToTray').checked = a.closeToTray; $('appMinToTray').checked = a.minToTray; $('appMinTaskbar').checked = !a.minToTray;
+    $('optSaveChatFiles').checked = a.saveChatFiles !== false;
     $('appAutostart').checked = a.autostart; $('appStartHidden').checked = a.startHidden; $('appBossKey').checked = a.bossKey; $('appNotify').checked = a.notify; $('appOwnNotify').checked = a.ownNotify !== false;
     syncAppChecks();
   });
@@ -3199,6 +3309,10 @@ async function openSettings() {
   $('avatarInitial').textContent = initial($('nick').value);
   paintAvatar($('avatarPreview'), myAvatar?.url);
   window.duo?.getFlags().then((f) => { $('optAv1').checked = !!f?.av1hw; $('optAv1').dataset.was = f?.av1hw ? '1' : ''; });
+  $('relayUrl').value = o.relayUrl || '';
+  $('relayDeviceId').value = myIdent?.id || '';
+  const relayNet = await window.duo.netGet();
+  $('relayStatus').textContent = !o.relayUrl ? 'Резерв выключен' : relayNet.relayState === 'ready' ? 'Резерв доступен' : 'Нет подтверждённого подключения к резерву';
   $('turnUrl').value = o.turnUrl;
   $('turnUser').value = o.turnUser;
   $('turnPass').value = o.turnPass;
@@ -3270,12 +3384,15 @@ async function saveSettings() {
     echo: $('optEcho').checked,
     agc: $('optAgc').checked,
     sounds: $('optSounds').checked,
+    animations: $('optAnimations').checked,
+    downloadsAuto: $('optDownloadsAuto').checked,
     ringVol: Number($('ringVol').value),
     ringMute: $('optRingMute').checked,
     noStun: $('optNoStun').checked,
     stunAlt: $('optStunAlt').checked,
     stunCustom: STUN_LISTS.parse($('stunCustom').value).map((u) => u.replace(/^stun:/, '')).join('\n'),
     minKbps: Number($('minKbps').value) || 2500,
+    relayUrl: $('relayUrl').value.trim(),
     turnUrl: $('turnUrl').value.trim(),
     turnUser: $('turnUser').value.trim(),
     turnPass: $('turnPass').value,
@@ -3302,6 +3419,7 @@ async function saveSettings() {
     activity: $('optActivity').checked,
   };
   store.set('settings', after);
+  document.documentElement.classList.toggle('no-ui-animations',after.animations===false);
   applyStreamFrame();
   if (after.winFree !== before.winFree) winSetMode();
   if (after.hideSelf !== before.hideSelf && (S.shareCtx?.srcId || '').startsWith('screen:')) capHide(true);
@@ -3324,7 +3442,7 @@ async function saveSettings() {
   if (after.out !== before.out) applyOutputDevice();
   if (after.rnn !== before.rnn) { if (after.rnn) await ensureRnnoise(); routeChain(); }
   if (['mic', 'noise', 'echo', 'agc'].some((k) => after[k] !== before[k]) && S.mic) await restartMic();
-  if (['noStun', 'stunAlt', 'stunCustom'].some((k) => after[k] !== before[k])) {
+  if (['noStun', 'stunAlt', 'stunCustom', 'relayUrl'].some((k) => after[k] !== before[k])) {
     L('settings', { stun: stunPlan().map((p) => p.name).join('>'), customCount: STUN_LISTS.parse(after.stunCustom).length });
     if ($('stunCustom').value.trim() && !after.stunCustom) toast('Свои STUN-серверы не распознаны — пиши адрес вида stun.example.com:3478');
     window.duo.netConfig(netCfg());
@@ -3355,6 +3473,47 @@ function bind() {
   }
 
   // Лобби
+  let codeEntrySeq = 0;
+  let codeEntry = null;
+  $('codeEntry').oninput = async () => {
+    const seq = ++codeEntrySeq;
+    const raw = $('codeEntry').value.replace(/\s+/g, '');
+    const preview = $('codeEntryPreview');
+    $('codeEntryGo').disabled = true;
+    codeEntry = null;
+    if (!raw) { preview.textContent = 'Приложение определит тип кода перед действием.'; return; }
+    if (raw.length > 100000) { preview.textContent = 'Код слишком длинный'; return; }
+    const match = /(ALOF\.[A-Za-z0-9_-]{60,400}|ALO[IA]\.[A-Za-z0-9_-]{200,})/.exec(raw);
+    if (!match) { preview.textContent = 'Код не распознан. Скопируй его целиком.'; return; }
+    const value = match[0];
+    try {
+      if (value.startsWith('ALOF.')) {
+        const info = await window.duo.fcParse(value);
+        if (seq !== codeEntrySeq) return;
+        if (!info?.ok) { preview.textContent = 'Код дружбы повреждён или устарел'; return; }
+        if (info.own) { preview.textContent = 'Это твой код дружбы. Отправь его другу.'; return; }
+        if (info.already) { preview.textContent = `${friendNickOf(info.id)} уже в друзьях`; return; }
+        codeEntry = { kind: 'friend', value };
+        preview.textContent = `${info.reply ? 'Ответный код' : 'Код дружбы'} от ${info.nick || 'друга'}. Отправим запрос после подтверждения.`;
+      } else {
+        const info = await unpackCode(value);
+        if (seq !== codeEntrySeq) return;
+        if (info.kind === 'A') { preview.textContent = 'Это ответ на твоё приглашение. Вернись на экран созданного приглашения.'; return; }
+        if (ownCodes.has(value)) { preview.textContent = 'Это твоё приглашение. Отправь его другу.'; return; }
+        codeEntry = { kind: 'invite', value };
+        preview.textContent = `Приглашение на звонок от ${info.nick || 'друга'}. Создадим ответ после подтверждения.`;
+      }
+      $('codeEntryGo').disabled = false;
+    } catch {
+      if (seq === codeEntrySeq) preview.textContent = 'Код повреждён или скопирован не полностью';
+    }
+  };
+  $('codeEntryGo').onclick = () => {
+    if (!codeEntry || $('codeEntryGo').disabled) return;
+    const { kind, value } = codeEntry;
+    if (kind === 'friend') fcOpen(value);
+    else { showStep('stepGuest'); $('offerIn').value = value; }
+  };
   $('btnInvite').onclick = startInvite;
   fcBind();
   $('btnHaveInvite').onclick = () => { $('offerIn').value = ''; showStep('stepGuest'); };
@@ -3362,8 +3521,8 @@ function bind() {
   $('btnCopyAnswer').onclick = (e) => copyField('answerOut', e.currentTarget);
   $('btnPasteAnswer').onclick = () => pasteField('answerIn');
   $('btnPasteOffer').onclick = () => pasteField('offerIn');
-  $('btnApplyAnswer').onclick = applyAnswer;
-  $('btnMakeAnswer').onclick = makeAnswer;
+  $('btnApplyAnswer').onclick = () => applyAnswer();
+  $('btnMakeAnswer').onclick = () => makeAnswer();
   document.querySelectorAll('.back').forEach((b) => { b.onclick = backToHome; });
   $('offerOut').onclick = (e) => e.target.select();
   $('answerOut').onclick = (e) => e.target.select();
@@ -3395,6 +3554,13 @@ function bind() {
 
   $('screenVol').oninput = (e) => { $('remoteScreen').volume = Number(e.target.value) / 100; };
   // одна кнопка полного экрана — в обе стороны (кнопка на панели сверху убрана)
+  document.addEventListener('keydown',e=>{
+    if(e.code!=='KeyF'||e.repeat||e.ctrlKey||e.altKey||e.metaKey||e.shiftKey||e.defaultPrevented||e.isComposing)return;
+    if(e.target?.closest?.('input,textarea,select,[contenteditable="true"]')||CV.state==='on'||document.querySelector('.modal:not(.hidden)'))return;
+    if(G.active){const tile=(document.fullscreenElement?.classList.contains('sharing')?document.fullscreenElement:null)||G.tiles.get(G.focus)||[...G.tiles.values()].find(t=>t.classList.contains('sharing'));if(tile){e.preventDefault();grpToggleFs(tile)}return}
+    if($('remoteScreenWrap').classList.contains('hidden'))return;
+    e.preventDefault();$('btnFull').click();
+  });
   $('btnFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $('remoteScreenWrap').requestFullscreen()).catch(() => {});
   document.addEventListener('fullscreenchange', () => { $('btnFull').textContent = document.fullscreenElement === $('remoteScreenWrap') ? '⛶ Свернуть' : '⛶ На весь экран'; });
   // как в видеоплеере: в полноэкранном режиме прячем плашку и курсор через 2.5 с без движения
@@ -3432,7 +3598,7 @@ function bind() {
   document.addEventListener('dragenter', (e) => { e.preventDefault(); if ((inAnyCall() || !$('dm').classList.contains('hidden')) && dragHasMedia(e.dataTransfer)) { dragDepth++; $('dropOverlay').classList.remove('hidden'); } });
   document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropOverlay').classList.add('hidden'); });
   const overStreamForImage = (e) => S.inCall && S.friendPerm?.react && !$('remoteScreenWrap').classList.contains('hidden') &&
-    !!e.target.closest?.('#remoteScreenWrap') && ([...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type))) ||
+    !!e.target.closest?.('#remoteScreenWrap') && ([...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file' && (IMG_TYPES.test(it.type) || VID_TYPES.test(it.type) || /^audio\//.test(it.type))) ||
       (!innerDrag && [...(e.dataTransfer?.types || [])].includes('text/uri-list') && ![...(e.dataTransfer?.types || [])].includes('Files')));
   document.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -3471,7 +3637,7 @@ function bind() {
     }
     if (!files.length) return;
     if (toStream) {
-      const img = files.find((f) => IMG_TYPES.test(f.type) || VID_TYPES.test(f.type));
+      const img = files.find((f) => IMG_TYPES.test(f.type) || VID_TYPES.test(f.type) || /^audio\//.test(f.type));
       if (img) { startPlacement(img, pt); return; }
     }
     if (toPad) { spAddFiles(files); return; }
@@ -3486,7 +3652,13 @@ function bind() {
     e.preventDefault();
     const text = $('chatInput').value.trim();
     if (!text) return;
-    if (!S.connected) { toast('Друг не в звонке'); return; }
+    if (!S.connected) {
+      const conv=S.callConv;if(!conv?.id){toast('Чтобы отправлять сообщения без звонка, добавь друга');return}
+      if(composeSubmitEdit(composers.call,conv,text))return;
+      const ts=Date.now(),mid=newMid(),re=composeTakeReply(composers.call),m=chatMsg(conv,S.nick,text,true,ts,null,{mid,re});
+      record(conv,{mid,ts,who:'me',nick:S.nick,type:'text',text,re:re||undefined,st:'queued'});$('chatInput').value='';setTickEl(m,'queued');
+      window.duo.friendsSend(conv.id,{t:'dm',mid,text,ts,nick:S.nick,re:reOut(re)}).then(r=>{if(!r.ok){markUndelivered(m);recordStatus(conv,mid,'fail')}}).catch(()=>{markUndelivered(m);recordStatus(conv,mid,'fail')});return;
+    }
     if (composeSubmitEdit(composers.call, S.callConv, text)) return;
     const ts = Date.now();
     const mid = newMid();
@@ -3510,6 +3682,14 @@ function bind() {
   $('btnStartShare').onclick = beginShare;
 
   // Настройки
+  const setYoutubeAuth = async () => {
+    const enabled=$('youtubeAuthEnabled'), browser=$('youtubeAuthBrowser'); enabled.disabled=browser.disabled=true;
+    try { paintYoutubeAuth(await window.duo.youtubeAuthSet({enabled:enabled.checked,browser:browser.value})); }
+    catch { toast('Не удалось сохранить настройку YouTube'); }
+    finally { enabled.disabled=browser.disabled=false; }
+  };
+  $('youtubeAuthEnabled').onchange=setYoutubeAuth;
+  $('youtubeAuthBrowser').onchange=setYoutubeAuth;
   $('btnSettings').onclick = openSettings;
   $('btnSettingsLobby').onclick = openSettings;
   $('btnSaveSettings').onclick = saveSettings;
@@ -3550,7 +3730,7 @@ function bind() {
   $('btnCallCancel').onclick = cancelCall;
   $('btnAddFriend').onclick = addPeerFriend;
   $('btnNetRecheck').onclick = async () => { $('netVerdict').textContent = 'Проверяю…'; renderNet(await window.duo.netRecheck()); stunCheck(); };
-  $('btnOpenLogsLobby').onclick = () => window.duo?.openLogs();
+  $('settings').addEventListener('click',e=>{if(e.target===$('settings'))closeSettings()});
 
   document.querySelectorAll('[data-close]').forEach((b) => {
     b.onclick = () => {
@@ -3560,6 +3740,7 @@ function bind() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (!$('clipModal').classList.contains('hidden')) { closeClipPreview(); return; }
     if (!$('settings').classList.contains('hidden')) closeSettings();
     $('picker').classList.add('hidden');
     if (!$('dm').classList.contains('hidden') && $('lightbox').classList.contains('hidden')) closeDm();
@@ -3573,7 +3754,7 @@ function bind() {
     const c = dmOpen;
     if (!c || !confirm(`Удалить всю переписку с ${c.nick}? Только у тебя.`)) return;
     await window.duo.histClear(c.id);
-    c.box.replaceChildren();
+    clearConvMedia(c);
     c.loaded = true;
     c.histStart = 0;
     toast('История очищена');
@@ -3593,7 +3774,7 @@ function bind() {
   $('btnHistClearAll').onclick = async () => {
     if (!confirm('Удалить историю всех чатов на этом компьютере?')) return;
     await window.duo.histClear(null);
-    for (const c of convs.values()) { c.box.replaceChildren(); c.loaded = true; c.histStart = 0; }
+    for (const c of convs.values()) { clearConvMedia(c); c.loaded = true; c.histStart = 0; }
     toast('История чатов очищена');
   };
 
@@ -3601,7 +3782,7 @@ function bind() {
   $('btnCtlAllow').onclick = ctlGrant;
   $('btnCtlDeny').onclick = ctlDeny;
   $('btnCtlRevoke').onclick = () => ctlEnd(`ты забрал управление`);
-  $('clipClose').onclick = () => { $('clipModal').classList.add('hidden'); $('clipVideo').pause(); };
+  $('clipClose').onclick = closeClipPreview;
   $('updApply').onclick = doUpdateApply;
   $('updClose').onclick = () => finishUpdPull('');
   $('pttKey').onclick = startPttCapture;
@@ -3609,9 +3790,14 @@ function bind() {
   $('btnGhCheck').onclick = () => ghCheckNow(true);
   document.addEventListener('keydown', (e) => { if (pttCapture) { e.preventDefault(); const vk = codeToVk(e); if (vk) finishPttCapture(vk); } }, true);
   document.addEventListener('mousedown', (e) => { if (pttCapture && e.button >= 1) { e.preventDefault(); finishPttCapture(e.button === 1 ? 4 : e.button === 3 ? 5 : e.button === 4 ? 6 : 0); } }, true);
-  $('clipModal').addEventListener('mousedown', (e) => { if (e.target.id === 'clipModal') { $('clipModal').classList.add('hidden'); $('clipVideo').pause(); } });
+  $('clipModal').addEventListener('mousedown', (e) => { if (e.target.id === 'clipModal') closeClipPreview(); });
   bindLiveTools();
   window.duo?.onInputEvt(onInputEvt);
+  window.duo?.onOverlayVideoState?.(state=>{
+    if(!Number.isInteger(state.fid))return;
+    send({t:state.playing?'svid-play':'svid-stop',fid:state.fid});
+    L('screenvid',{playback:state.playing?'started':'stopped',reason:state.reason||''});
+  });
   $('spEditShare').onclick = () => { if (spEditId) spShare(spEditId); };
 
   window.duo?.onHotkey((what) => {
@@ -3661,12 +3847,17 @@ const friendById = (id) => friendsList.find((f) => f.id === id);
 const inAnyCall = () => S.inCall || G.active;
 
 async function initFriends() {
+  const presenceHints={online:'Автоматически: «Нет на месте» через 5 минут бездействия.',away:'Ты отсутствуешь, но можешь пользоваться чатом.',invisible:'Вы будете показываться как «Не в сети», но по-прежнему сможете пользоваться чатом. Старые версии приложения могут показывать другой статус.',offline:'Выйти из системы друзей и чатов. Новые сообщения сохранятся на этом ПК до входа.',dnd:'Отключает уведомления в чатах.'};
+  const paintPresence=d=>{$('presenceMode').value=d.mode;$('presenceHint').title=presenceHints[d.mode];store.set('presence',d.mode);$('presenceMode').options[0].textContent=d.effective==='away'&&d.mode==='online'?'Нет на месте (автоматически)':'В сети'};
+  window.duo.presenceGet().then(paintPresence);window.duo.onPresence(paintPresence);
+  $('presenceMode').onchange=async()=>{const mode=$('presenceMode').value;if(await window.duo.presenceSet(mode)){paintPresence({mode,effective:mode});if(mode==='offline'){if(G.active)grpLeave();if(S.inCall)leaveCall();closeDm()}}};
   window.duo.netConfig(netCfg());
   for (let i = 0; i < 20 && !myIdent; i++) {
     myIdent = await window.duo.friendsInfo().catch(() => null);
     if (!myIdent) await new Promise((r) => setTimeout(r, 500));
   }
   if (myIdent) { friendsList = myIdent.list || []; renderFriends(); }
+  window.duo.onOutboxDelivered(({id,mid})=>{const c=getConv(id);const item=c.msgs?.get(mid);if(item&&!item.read){setTickEl(item.el,'sent');item.e.st='sent'}});
   window.duo.onFriends((l) => { friendsList = l; renderFriends(); });
   window.duo.onFriendMsg(onFriendMsg);
   window.duo.onFriendCode(fcOnEvent);
@@ -3678,7 +3869,7 @@ async function initFriends() {
 
 function netCfg() {
   const o = settings();
-  return { noStun: !!o.noStun, stunAlt: !!o.stunAlt, stunCustom: STUN_LISTS.parse(o.stunCustom) };
+  return { noStun: !!o.noStun, stunAlt: !!o.stunAlt, stunCustom: STUN_LISTS.parse(o.stunCustom), relayUrl: o.relayUrl || '' };
 }
 
 // значок в трее: в звонке ли (на двоих или в группе), с кем, микрофон; шлём только когда что-то поменялось
@@ -3723,7 +3914,7 @@ function renderFriends() {
     name.textContent = f.nick;
     const st = document.createElement('small');
     const act = f.online && f.act && f.act.game ? ` · 🎮 ${f.act.game}` : '';
-    st.textContent = (f.online ? 'в сети' : (f.lastSeen ? 'не в сети' : 'ещё не был в сети')) + act;
+    st.textContent = (f.online ? ({away:'нет на месте',dnd:'не беспокоить'}[f.presence]||'в сети') : (f.lastSeen ? 'не в сети' : 'ещё не был в сети')) + act;
     name.appendChild(st);
     const call = document.createElement('button');
     call.className = 'btn primary fcall';
@@ -3757,6 +3948,12 @@ function renderFriends() {
 }
 
 /* ---------- Друзья во время звонка: кнопка 👥 в шапке (с числом непрочитанных) и список → переписка ---------- */
+let groupCodeInvite=null;
+async function inviteDrawerFriend(id){
+  if(!G.active){if(S.inCall){toast('Заверши звонок на двоих перед созданием группы');return}if(!await grpStart())return}
+  if(G.members.size>=GRP_MAX){toast('В группе уже максимум участников');return}
+  grpInvite([id]);$('friendsDrawer').classList.add('hidden');
+}
 function renderFriendsDrawer() {
   const total = friendsList.reduce((n, f) => n + (convs.get(f.id)?.unread || 0), 0);
   for (const id of ['btnFriendsCall', 'gFriends']) {
@@ -3766,6 +3963,8 @@ function renderFriendsDrawer() {
   const box = $('frDrawerList');
   if (!box || $('friendsDrawer').classList.contains('hidden')) return;
   box.replaceChildren();
+  const invites=$('frGroupInvites');invites.replaceChildren();
+  for(const f of friendsList.filter(f=>!G.active||!G.members.has(f.id))){const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent=f.nick+(f.online?'':' — не в сети');b.disabled=!f.online;b.onclick=()=>inviteDrawerFriend(f.id);invites.appendChild(b)}
   if (!friendsList.length) { const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'Друзей пока нет'; box.appendChild(p); return; }
   const sorted = [...friendsList].sort((a, b) => ((convs.get(b.id)?.unread || 0) - (convs.get(a.id)?.unread || 0)) || (b.online - a.online) || a.nick.localeCompare(b.nick));
   for (const f of sorted) {
@@ -3794,8 +3993,10 @@ function renderFriendsDrawer() {
   }
 }
 function toggleFriendsDrawer() {
+  closeDm();
   const d = $('friendsDrawer');
   d.classList.toggle('hidden');
+  $('frReturnCall').classList.toggle('hidden', !inAnyCall());
   renderFriendsDrawer();
 }
 
@@ -3873,6 +4074,7 @@ function fcOnEvent(e) {
     $('fcReplyBlock').classList.add('hidden');
     fcStatus(`Запрос дошёл — ждём, пока ${e.nick} примет`);
   } else if (e.st === 'added') {
+    if(groupCodeInvite?.id===e.id){if(G.active&&groupCodeInvite.gid===G.gid&&G.members.size<GRP_MAX)grpInvite([e.id]);groupCodeInvite=null}
     if (mine) { FC.wait = null; clearTimeout(FC.replyTimer); $('fcReplyBlock').classList.add('hidden'); fcStatus(`${e.nick} — в друзьях ✓`, 'ok'); }
     toast(`${e.nick} теперь в друзьях — звони прямо из списка`);
     sound('join');
@@ -4296,8 +4498,31 @@ function sendCallPath() {
   window.duo.friendsCallPath({ id: S.peerIdent.id, ...S.callPath });
 }
 
+// Periodic contacts are scoped to this exact verified data channel, not a saved online flag.
+let friendContactTimer = null;
+function startFriendContact() {
+  clearTimeout(friendContactTimer);
+  const dc = S.dc, peer = S.peerIdent;
+  const alive = () => S.connected && S.dc === dc && S.peerIdent === peer && dc?.readyState === 'open';
+  const pulse = async () => {
+    if (!alive() || !isFriend(peer?.id)) return;
+    const info = await window.duo.friendsInfo().catch(() => null);
+    if (!alive()) return;
+    if (info?.id) send({ t: 'friend-contact', id: info.id, addrs: info.addrs || [] });
+    friendContactTimer = setTimeout(pulse, 5000);
+  };
+  pulse();
+}
+function receiveFriendContact(d) {
+  if (!S.connected || S.dc?.readyState !== 'open' || !S.peerIdent || d.id !== S.peerIdent.id || !isFriend(d.id)) return;
+  window.duo.friendsContact?.({ id: d.id, addrs: Array.isArray(d.addrs) ? d.addrs.slice(0, 8) : [] });
+}
 function acceptPeerIdent(d) {
   S.peerIdent = { id: d.id, addrs: d.addrs };
+  if (isFriend(d.id)) {
+    window.duo.friendsContact?.({ id: d.id, addrs: d.addrs });
+    startFriendContact();
+  }
   adoptCallConv(d.id);
   onPeerAvatarHash(d.id, d.av, () => send({ t: 'av-want' })).then(refreshAvatars);
   L('friends', { peerIdent: true, verified: true, peerAddrKinds: S.peerIdent.addrs.map((a) => a.kind), alreadyFriend: isFriend(d.id) });
@@ -4704,6 +4929,7 @@ function announceAvatar(hash) {
 let dmOpen = null;
 
 async function openDm(id) {
+  $('dmReturnCall').classList.toggle('hidden', !inAnyCall());
   const f = friendsList.find((x) => x.id === id);
   if (!f) return;
   const conv = getConv(id, f.nick);
@@ -4715,6 +4941,7 @@ async function openDm(id) {
   mountConv(conv, $('dmMessages'));
   paintAvatar($('dmAvatar'), (await friendAvatar(id))?.url);
   $('dmAvatar').querySelector('span').textContent = initial(f.nick);
+  $('dmFriends').classList.toggle('hidden',!inAnyCall());
   $('dmCall').disabled = S.inCall || G.active; // уже в звонке
   $('dmCall').title = S.inCall || G.active ? 'Ты уже в звонке' : '';
   await loadHistory(conv);
@@ -4726,11 +4953,12 @@ async function openDm(id) {
 function updateDmHead() {
   if (!dmOpen) return;
   const f = friendsList.find((x) => x.id === dmOpen.id);
-  $('dmSub').textContent = f?.online ? 'в сети' : 'не в сети — сообщения дойдут, только когда он в сети';
+  $('dmSub').textContent = f?.online ? 'в сети' : 'не в сети — сообщения сохраняются и отправятся при подключении';
   $('dmSub').classList.toggle('online', !!f?.online);
 }
 
 function closeDm() {
+  pauseMediaIn($('dmMessages'));
   dmOpen = null;
   $('dm').classList.add('hidden');
 }
@@ -4750,12 +4978,14 @@ async function dmSendText() {
   record(conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
   const r = await window.duo.friendsSend(conv.id, { t: 'dm', mid, text, ts, nick: S.nick, re: reOut(re) });
   m.classList.remove('sending');
-  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); } else setTickEl(m, 'sent');
+  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); } else {setTickEl(m,r.queued?'queued':'sent');recordStatus(conv,mid,r.queued?'queued':'sent')}
 }
 
 async function onDmText(id, nick, msg) {
   const conv = getConv(id, nick);
   await loadHistory(conv);
+  if(cleanMid(msg.mid)&&conv.msgs?.has(cleanMid(msg.mid)))return;
+  if(cleanMid(msg.mid)&&conv.msgs?.has(cleanMid(msg.mid)))return;
   const text = String(msg.text || '').slice(0, 2000);
   const ts = Number(msg.ts) || Date.now();
   const mid = cleanMid(msg.mid) || newMid();
@@ -4768,6 +4998,7 @@ async function onDmText(id, nick, msg) {
 
 // новое сообщение не на виду → счётчик, звук, уведомление
 function dmNotice(conv, text) {
+  if(store.get('presence','online')==='dnd'){conv.unread++;renderFriends();return}
   const visible = (dmOpen === conv && !$('dm').classList.contains('hidden')) || (S.inCall && S.callConv === conv);
   if (!visible) { conv.unread++; renderFriends(); toast(`💬 ${conv.nick}: ${String(text).slice(0, 60)}`); }
   if (!visible || !document.hasFocus()) {
@@ -5072,7 +5303,7 @@ function myPerm() {
   const o = settings();
   return { draw: o.ovlDraw !== false, react: !!o.ovlReact, ctl: o.ctlAllow !== false };
 }
-function sendPerm() { send({ t: 'perm', ...myPerm(), vid: 1, ops: 1 }); }
+function sendPerm() { send({ t: 'perm', ...myPerm(), vid: 1, mediaLong: 1, ops: 1 }); }
 
 // где на экране настоящая картинка видео (без чёрных полос)
 function videoRect(v = $('remoteScreen')) {
@@ -5225,8 +5456,8 @@ function sendReaction(e) {
 /* ---------- Картинка или видео на экран друга: место и размер прямо поверх стрима ---------- */
 const IMG_TYPES = /^image\/(png|jpeg|gif|webp)$/;
 const VID_TYPES = /^video\/(mp4|webm|quicktime|x-matroska|ogg)$/;
-const SVID_MAX = 100 * 1024 * 1024;   // видео: до 100 МБ
-const SVID_SEC = 60;                  // и до 1 минуты
+const SVID_MAX = 512 * 1024 * 1024;   // безопасный предел буферизации медиа
+const SVID_SEC = 6 * 60 * 60;        // до 6 часов; старые клиенты — 1 минута
 let placer = null; // { file, url, x, y, w, aspect, el, vid: { dur, snd, vol } | null }
 let svidOut = null; // видео, которое сейчас уходит другу: { url, aspect, pl, vol, snd, status, ... }
 
@@ -5237,11 +5468,11 @@ function cleanPlacement(pl) {
   const x = n(pl.x), y = n(pl.y), w = n(pl.w);
   if (x == null || y == null || w == null) return null;
   const r = n(pl.r);
-  return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), w: Math.max(0.03, Math.min(0.95, w)), ...(r ? { r: Math.max(-180, Math.min(180, Math.round(r))) } : {}) };
+  return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), w: Math.max(0.03, Math.min(0.95, w)), frame: pl.frame !== false, nick: pl.nick !== false, ...(r ? { r: Math.max(-180, Math.min(180, Math.round(r))) } : {}) };
 }
 
 // нейросеть для «убрать фон»: первый раз — спросить и скачать (движок + модель) из GitHub проекта, дальше — без интернета
-const AI_NAMES = { person: 'человек', object: 'предмет' };
+const AI_NAMES = { object: 'Нейросеть' };
 async function aiReady(kind, btn) {
   const st = await window.duo.aiStatus();
   if (!st[kind] || !st.runtime) {
@@ -5269,7 +5500,10 @@ function probeVideo(file) {
     if (!S.friendPerm?.react) { toast(`${S.friendNick} не включил картинки и видео на экран в настройках`); resolve(null); return; }
     if (!S.friendPerm?.vid) { toast(`У ${S.friendNick} старая версия alloconnect — видео на экран появится, когда он обновится`); resolve(null); return; }
     if (svidOut && !svidOut.echo) { toast('Подожди — предыдущее видео ещё отправляется'); resolve(null); return; }
-    if (file.size > SVID_MAX) { toast(`Видео ${(file.size / 1048576).toFixed(0)} МБ — можно до 100 МБ`); resolve(null); return; }
+    if (/^audio\//.test(file.type) && !S.friendPerm?.mediaLong) { toast('Для звука на демонстрации другу нужно обновить alloconnect'); resolve(null); return; }
+    if (file.size > SVID_MAX) { toast('Видео больше 512 МБ — выбери поменьше'); resolve(null); return; }
+    if (file.size > 100 * 1048576 && !file.largeApproved && !confirm(`Видео ${(file.size / 1048576).toFixed(0)} МБ — больше 100 МБ. Отправить?`)) { resolve(null); return; }
+    if (file.size > 100 * 1048576 && !S.friendPerm?.mediaLong) { toast('Для большого видео другу нужно обновить alloconnect'); resolve(null); return; }
     const url = URL.createObjectURL(file);
     const v = document.createElement('video');
     v.muted = true;
@@ -5278,9 +5512,10 @@ function probeVideo(file) {
     const t = setTimeout(() => done(null, 'Не получилось открыть видео'), 8000);
     v.onloadedmetadata = () => {
       const dur = v.duration;
-      if (!v.videoWidth || !v.videoHeight) { done(null, 'В файле нет видео, которое можно показать'); return; }
-      if (!Number.isFinite(dur) || dur > SVID_SEC + 0.5) { done(null, Number.isFinite(dur) ? `Видео ${Math.round(dur)} с — можно до 1 минуты` : 'Не понял длину видео — нужно до 1 минуты'); return; }
-      done({ url, dur, aspect: v.videoHeight / v.videoWidth });
+      if (!/^audio\//.test(file.type) && (!v.videoWidth || !v.videoHeight)) { done(null, 'В файле нет видео, которое можно показать'); return; }
+      if (!S.friendPerm?.mediaLong && dur > 60.5) { done(null, 'Для видео длиннее минуты другу нужно обновить alloconnect'); return; }
+      if (!Number.isFinite(dur) || dur > SVID_SEC + 0.5) { done(null, Number.isFinite(dur) ? `Видео длиннее 6 часов` : 'Не понял длину видео'); return; }
+      done({ url, dur, aspect: /^audio\//.test(file.type) ? 0.2 : v.videoHeight / v.videoWidth });
     };
     v.onerror = () => done(null, 'Этот формат видео не поддерживается — лучше mp4 (H.264) или webm');
     v.src = url;
@@ -5290,7 +5525,7 @@ function probeVideo(file) {
 // at — точка на стриме (доли), куда бросили файл; без неё — сверху по центру
 function startPlacement(file, at) {
   if (!file || $('remoteScreenWrap').classList.contains('hidden')) return;
-  if (VID_TYPES.test(file.type || '') || (!file.type && /\.(mp4|webm|mov|mkv)$/i.test(file.name || ''))) {
+  if (/^audio\//.test(file.type || '') || VID_TYPES.test(file.type || '') || (!file.type && /\.(mp4|webm|mov|mkv)$/i.test(file.name || ''))) {
     probeVideo(file).then((info) => { if (info && !$('remoteScreenWrap').classList.contains('hidden')) openPlacer(file, at, info); else if (info) URL.revokeObjectURL(info.url); });
     return;
   }
@@ -5311,7 +5546,7 @@ function openPlacer(file, at, vinfo) {
   el.innerHTML = `<div class="placer-box">${media}<i class="placer-handle" title="Тяни — размер"></i></div>` +
     `<div class="placer-bar"><span class="placer-hint">Двигай мышью · размер — уголок или колёсико</span><span>Размер</span><input type="range" class="placer-size" min="5" max="90" step="1">` +
     `<span class="placer-sep"></span><button type="button" class="btn small placer-rl" title="Повернуть влево на 90°">⟲</button><input type="range" class="placer-rot" min="-180" max="180" step="5" value="0" title="Поворот"><button type="button" class="btn small placer-rr" title="Повернуть вправо на 90°">⟳</button><b class="placer-rotval small">0°</b>` +
-    (vinfo ? '' : `<span class="placer-sep"></span><span class="tdrop placer-bgwrap"><button type="button" class="btn small placer-bg" title="Убрать фон — станет прозрачным. Ещё раз — вернуть">✂ Фон</button><span class="tmenu hidden placer-bgmenu"><button type="button" class="btn small" data-bg="flat">Однотонный фон</button><button type="button" class="btn small" data-bg="person">Человек (нейросеть)</button><button type="button" class="btn small" data-bg="object">Предмет (нейросеть)</button></span></span>`) + `${vidCtl}<button class="btn small primary placer-send" title="Enter">Отправить</button><button class="btn small placer-cancel" title="Отмена (Esc)">✕</button></div>`;
+    (vinfo ? '' : `<span class="placer-sep"></span><span class="tdrop placer-bgwrap"><button type="button" class="btn small placer-bg" title="Убрать фон — станет прозрачным. Ещё раз — вернуть">✂ Фон</button><span class="tmenu hidden placer-bgmenu"><button type="button" class="btn small" data-bg="flat">Обычный</button><button type="button" class="btn small" data-bg="object">Нейросеть</button></span></span>`) + `${vidCtl}<label><input type="checkbox" class="placer-frame"> С рамкой</label><label><input type="checkbox" class="placer-nick"> Показывать ник</label><button class="btn small primary placer-send" title="Enter">Отправить</button><button class="btn small placer-cancel" title="Отмена (Esc)">✕</button></div>`;
   placer = { file, url, x: at ? at[0] : 0.5, y: at ? at[1] : 0.35, w: vinfo ? 0.35 : 0.3, r: 0, aspect: vinfo ? vinfo.aspect : 1, el,
     vid: vinfo ? { dur: vinfo.dur, snd: o.svidSound !== false, vol: Math.max(0, Math.min(100, Number(o.svidVol ?? 70))) } : null };
   if (vinfo) {
@@ -5326,6 +5561,9 @@ function openPlacer(file, at, vinfo) {
     img.onload = () => { if (placer?.el === el) { placer.aspect = img.naturalHeight / Math.max(1, img.naturalWidth); layoutPlacer(); } };
   }
   $('remoteScreenWrap').appendChild(el);
+  el.querySelector('.placer-frame').checked = o.mediaFrame === true;
+  el.querySelector('.placer-nick').checked = o.mediaNick !== false;
+  el.classList.toggle('media-frameless', o.mediaFrame !== true);
   bindPlacer(el);
   layoutPlacer();
 }
@@ -5373,6 +5611,7 @@ function layoutPlacer() {
 function bindPlacer(el) {
   const box = el.querySelector('.placer-box');
   const handle = el.querySelector('.placer-handle');
+  el.querySelector('.placer-frame').onchange = e => el.classList.toggle('media-frameless', !e.target.checked);
   let drag = null;
   box.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -5444,7 +5683,7 @@ function bindPlacer(el) {
         if (r && r.blob.size > 7.5 * 1024 * 1024) r = await window.removeBgAi(p.file, type, mode, (i, n) => { bgBtn.textContent = `✂ ${i}/${n}`; }, 320);
       }
       if (placer !== p) return;
-      if (!r || r.share < 0.02) { toast(mode === 'flat' ? 'Однотонного фона по краям не нашлось — попробуй «Человек» или «Предмет»' : 'Нейросеть не нашла, что вырезать'); return; }
+      if (!r || r.share < 0.02) { toast(mode === 'flat' ? 'Однотонного фона по краям не нашлось — попробуй «Нейросеть»' : 'Нейросеть не нашла, что вырезать'); return; }
       const name = (p.file.name || 'картинка').replace(/\.[^.]+$/, '') + (r.blob.type === 'image/gif' ? '.gif' : '.png');
       p.orig = { file: p.file };
       p.file = new File([r.blob], name, { type: r.blob.type });
@@ -5485,9 +5724,11 @@ function placeEcho(box, pl, aspect) {
 }
 
 function commitPlacement() {
-  if (!placer) return;
+  if (!placer || placer.bgBusy) return;
   const p = placer;
-  const pl = { x: n4(p.x), y: n4(p.y), w: n4(p.w), ...(p.r ? { r: p.r } : {}) };
+  const frame = p.el.querySelector('.placer-frame').checked, nick = p.el.querySelector('.placer-nick').checked;
+  store.set('settings', { ...settings(), mediaFrame: frame, mediaNick: nick });
+  const pl = { x: n4(p.x), y: n4(p.y), w: n4(p.w), frame, nick, ...(p.r ? { r: p.r } : {}) };
   const pv = p.el.querySelector('video');
   if (pv) { pv.pause(); pv.removeAttribute('src'); pv.load(); }
   placer.el.remove();
@@ -5497,7 +5738,7 @@ function commitPlacement() {
   queueFiles([p.file], 'screenimg', { pl });
   L('screenimg', { sent: true, w: pl.w });
   const box = document.createElement('div');
-  box.className = 'screenimg-echo placed';
+  box.className = 'screenimg-echo placed' + (pl.frame === false ? ' media-frameless' : '');
   const im = document.createElement('img');
   im.src = p.url;
   box.appendChild(im);
@@ -5508,6 +5749,7 @@ function commitPlacement() {
 
 /* ---------- Видео: отправка, полоска прогресса, показ у себя, когда у друга началось ---------- */
 function sendScreenVideo(p, pl) {
+  stopScreenVideo(true);
   const vol = p.vid.vol / 100;
   const snd = p.vid.snd && p.vid.vol > 0;
   store.set('settings', { ...settings(), svidVol: p.vid.vol, svidSound: p.vid.snd });
@@ -5515,8 +5757,8 @@ function sendScreenVideo(p, pl) {
   status.className = 'svid-status';
   status.textContent = '🎬 Видео → ' + S.friendNick + ': 0%';
   $('remoteScreenWrap').appendChild(status);
-  const size = p.file.size;
-  svidOut = { url: p.url, aspect: p.aspect, pl, vol, snd, dur: p.vid.dur, status, echo: null, sentAt: 0 };
+  const size = p.file.size,fid=crypto.getRandomValues(new Uint32Array(1))[0];
+  svidOut = { fid,url: p.url, aspect: p.aspect, pl, vol, snd, dur: p.vid.dur, status, echo: null, sentAt: 0 };
   const my = svidOut;
   const ui = {
     progress: (n) => { if (svidOut === my) status.textContent = `🎬 Видео → ${S.friendNick}: ${Math.floor((100 * n) / Math.max(1, size))}%`; },
@@ -5529,7 +5771,7 @@ function sendScreenVideo(p, pl) {
     },
     fail: (msg) => { if (svidOut !== my) return; status.remove(); URL.revokeObjectURL(my.url); svidOut = null; toast('Видео не отправилось: ' + msg); },
   };
-  queueFiles([p.file], 'screenvid', { pl, vol: Math.round(vol * 100) / 100, snd, ui });
+  queueFiles([p.file], 'screenvid', { fid,pl, vol: Math.round(vol * 100) / 100, snd, ui });
   if (!S.fileChan) ui.fail('нет связи');
   L('screenvid', { sent: true, w: pl.w, mb: Math.round(size / 1048576), sec: Math.round(p.vid.dur), snd });
 }
@@ -5539,7 +5781,7 @@ function startVideoEcho() {
   if (!my || my.echo) return;
   my.status.remove();
   const box = document.createElement('div');
-  box.className = 'screenimg-echo placed svid-echo';
+  box.className = 'screenimg-echo placed svid-echo' + (my.pl.frame === false ? ' media-frameless' : '');
   const v = document.createElement('video');
   v.src = my.url;
   v.playsInline = true;
@@ -5550,18 +5792,34 @@ function startVideoEcho() {
   $('remoteScreenWrap').appendChild(box);
   placeEcho(box, my.pl, my.aspect);
   my.echo = box;
-  const end = () => { if (!box.isConnected) return; v.pause(); box.remove(); URL.revokeObjectURL(my.url); if (svidOut === my) svidOut = null; };
+  let ended = false, timer;
+  const end = () => {
+    if (ended) return;
+    ended = true; clearTimeout(timer);
+    pauseMediaIn(v, true); box.remove();
+    URL.revokeObjectURL(my.url);
+    if (svidOut === my) svidOut = null;
+  };
+  my.stop = end;
   v.onended = end;
   v.onerror = end;
-  v.play().catch(() => { v.muted = true; v.play().catch(end); });
-  setTimeout(end, (SVID_SEC + 2) * 1000);
+  v.play().catch(() => { if(ended)return;v.muted = true; v.play().catch(end); });
+  timer=setTimeout(end,(SVID_SEC+30)*1000);
+}
+
+function stopScreenVideo(notify=false) {
+  const my = svidOut;
+  if (!my) return;
+  if(notify)send({t:'svid-cancel',fid:my.fid});
+  my.status.remove();
+  if (my.stop) my.stop();
+  else { pauseMediaIn(my.echo, true); my.echo?.remove(); URL.revokeObjectURL(my.url); }
+  svidOut = null;
 }
 
 function onVideoRefused(why) {
   if (!svidOut) return;
-  svidOut.status.remove();
-  URL.revokeObjectURL(svidOut.url);
-  svidOut = null;
+  stopScreenVideo();
   const txt = { off: `${S.friendNick} выключил картинки и видео на экран`, big: 'Видео слишком большое для друга', fmt: `У ${S.friendNick} это видео не открылось`, long: 'Видео длиннее минуты', busy: `${S.friendNick} сейчас не стримит` }[why];
   toast(txt || 'Друг не принял видео');
 }
@@ -5609,15 +5867,14 @@ let vidInLast = 0;
 async function onScreenVideo(blob, meta) {
   if (!S.localScreen) { send({ t: 'svid-no', why: 'busy' }); return; }
   if (!myPerm().react) { send({ t: 'svid-no', why: 'off' }); return; }
-  if (!/^video\//.test(meta.mime) || blob.size > SVID_MAX) { send({ t: 'svid-no', why: 'fmt' }); return; }
+  if (!/^(video|audio)\//.test(meta.mime) || blob.size > SVID_MAX) { send({ t: 'svid-no', why: 'fmt' }); return; }
   if (Date.now() - vidInLast < 3000) return;
   vidInLast = Date.now();
   const o = settings();
   const mine = o.svidInSound !== false ? Math.max(0, Math.min(100, Number(o.svidInVol ?? 80))) / 100 : 0;
   const vol = meta.snd && !S.deafened ? Math.round(meta.vol * mine * 100) / 100 : 0;
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  window.duo.ovlMsg({ t: 'vid', bytes, mime: meta.mime, nick: S.friendNick, pl: meta.pl || null, vol, sink: o.out || '' });
-  send({ t: 'svid-play' });
+  window.duo.ovlMsg({ t: 'vid', bytes, mime: meta.mime, nick: S.friendNick, pl: meta.pl || null, vol, sink: o.out || '',fid:meta.fid });
   L('screenvid', { received: true, mb: Math.round(blob.size / 1048576), vol });
 }
 
@@ -5882,7 +6139,11 @@ function bindLiveTools() {
     if (d?.kind === 'msg' && d.peer && friendsList.some((f) => f.id === d.peer) && !(S.inCall && S.peerIdent?.id === d.peer)) openDm(d.peer);
   });
   for (const id of ['btnFriendsCall', 'gFriends']) $(id).onclick = (e) => { e.stopPropagation(); toggleFriendsDrawer(); };
+  $('frGroupCodeGo').onclick=async()=>{const code=$('frGroupCode').value.trim(),info=await window.duo.fcParse(code);if(!info?.ok||info.own){toast('Нужен действующий код дружбы другого участника');return}if(!G.active){if(S.inCall){toast('Заверши звонок на двоих перед созданием группы');return}if(!await grpStart())return}if(G.members.size>=GRP_MAX){toast('В группе уже максимум участников');return}if(info.already){grpInvite([info.id]);return}groupCodeInvite={id:info.id,gid:G.gid};await fcOpen(code)};
   $('frDrawerClose').onclick = () => $('friendsDrawer').classList.add('hidden');
+  $('frReturnCall').onclick = () => { closeDm(); $('friendsDrawer').classList.add('hidden'); };
+  $('dmFriends').onclick = () => { closeDm(); $('friendsDrawer').classList.remove('hidden'); renderFriendsDrawer(); };
+  $('dmReturnCall').onclick = closeDm;
   document.addEventListener('mousedown', (e) => { const d = $('friendsDrawer'); if (!d.classList.contains('hidden') && !d.contains(e.target) && !e.target.closest?.('.fr-btn')) d.classList.add('hidden'); });
   $('btnScreenMin').onclick = () => winSetMin('screen', true);
   $('btnWinReset').onclick = () => { winReset(); toast('Окна расставлены как было'); };
@@ -6161,8 +6422,17 @@ async function saveClip() {
   showClipPreview(file, secs);
 }
 
-function showClipPreview(file, secs) {
+function closeClipPreview() {
+  $('clipModal').classList.add('hidden');
+  pauseMediaIn($('clipVideo'), true);
   if (S.clipUrl) URL.revokeObjectURL(S.clipUrl);
+  S.clipUrl = null;
+  $('clipSend').onclick = null;
+  $('clipSave').onclick = null;
+}
+
+function showClipPreview(file, secs) {
+  closeClipPreview();
   const url = URL.createObjectURL(file);
   S.clipUrl = url;
   $('clipVideo').src = url;
@@ -6172,7 +6442,7 @@ function showClipPreview(file, secs) {
   $('clipSend').onclick = () => {
     if (!S.connected) { toast('Друг не в звонке'); return; }
     queueFiles([file]);
-    $('clipModal').classList.add('hidden');
+    closeClipPreview();
     toast('Повтор отправляется другу');
   };
   $('clipSave').onclick = () => { const a = document.createElement('a'); a.href = url; a.download = file.name; a.click(); };
@@ -6298,6 +6568,7 @@ async function startUpdatePull(id, nick, ver) {
   if (upd.pull) { toast('Обновление уже идёт'); return; }
   if (!myUpd?.packaged) { toast('Обновляться можно только в собранной программе'); return; }
   upd.pull = { id, nick, ver, files: 0 };
+  window.downloadProgress?.({id:'peer-update',title:'Обновление от друга',stage:'starting',message:'Соединение с другом…'});
   updModal(`Обновление до ${ver}`, `Соединяюсь с ${nick}…`, false);
   try {
     const l = await getLink(id);
@@ -6338,6 +6609,7 @@ async function onUpdManifest(id, d) {
     return;
   }
   upd.pull.staging = true;
+  window.downloadProgress?.({id:'peer-update',title:'Обновление от друга',stage:'download',message:'Подпись проверена. Приём файлов…'});
   clearTimeout(upd.pull.timer);
   updModal(`Обновление до ${upd.pull.ver}`, 'Загружаю файлы…', false);
   const l = links.get(id);
@@ -6348,11 +6620,13 @@ async function onUpdateFile(id, blob, meta) {
   if (!upd.pull || upd.pull.id !== id || !upd.pull.staging) return;
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
+    window.downloadProgress?.({id:'peer-update',title:'Обновление от друга',stage:'verify',message:'Проверка файла '+meta.name+'…'});
     const r = await window.duo.updStageFile(meta.name, bytes);
     if (!r.ok) { finishUpdPull('файл не принят: ' + (r.error || '')); return; }
     upd.pull.files++;
     updModal(`Обновление до ${upd.pull.ver}`, `Загружено файлов: ${upd.pull.files} из ${UPDATE_FILES.length}…`, false);
     if (r.ready) {
+      window.downloadProgress?.({id:'peer-update',title:'Обновление от друга',stage:'ready',message:'Обновление проверено — можно устанавливать'});
       const st = await window.duo.updStaged();
       clearTimeout(upd.pull.timer);
       updModal(`Обновление до ${upd.pull.ver} готово`, (st?.notes ? st.notes + '\n\n' : '') + 'Установить и перезапустить alloconnect?', true);
@@ -6361,6 +6635,8 @@ async function onUpdateFile(id, blob, meta) {
 }
 
 function finishUpdPull(msg) {
+  const alreadyReady=upd.pull&&!$('updApply').classList.contains('hidden');
+  if(upd.pull&&!alreadyReady)window.downloadProgress?.({id:'peer-update',title:'Обновление от друга',stage:msg?'error':'cancelled',message:msg||'Получение обновления отменено'});
   if (upd.pull?.timer) clearTimeout(upd.pull.timer);
   upd.pull = null;
   $('updModal').classList.add('hidden');
@@ -6377,6 +6653,7 @@ function updModal(title, text, ready) {
 async function doUpdateApply() {
   const r = await window.duo.updApply().catch((e) => ({ ok: false, error: e.message }));
   if (!r.ok) { toast('Не удалось установить: ' + (r.error || '')); return; }
+  window.downloadProgress?.({id:'app-update-install',title:'Установка обновления',stage:'install',message:'Установка и перезапуск приложения…'});
   updModal('Обновление', 'Устанавливаю и перезапускаю…', false);
 }
 

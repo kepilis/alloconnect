@@ -1,6 +1,7 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('duo', {
+  uiScale: n => webFrame.setZoomFactor([1,1.1,1.25].includes(Number(n))?Number(n):1),
   getSources: () => ipcRenderer.invoke('get-sources'),
   selectSource: (src) => ipcRenderer.invoke('select-source', src),
   attention: () => ipcRenderer.invoke('attention'),
@@ -16,6 +17,10 @@ contextBridge.exposeInMainWorld('duo', {
   ringtoneLoad: () => ipcRenderer.invoke('ringtone-load'),
   ringtoneClear: () => ipcRenderer.invoke('ringtone-clear'),
   readAsset: (rel) => ipcRenderer.invoke('read-asset', rel),
+  onDownloadProgress: (fn) => ipcRenderer.on('download-progress', (_e, data) => fn(data)),
+  youtubeAuthGet: () => ipcRenderer.invoke('youtube-auth-get'),
+  youtubeAuthSet: (value) => ipcRenderer.invoke('youtube-auth-set', value),
+  youtubeMedia: (url) => ipcRenderer.invoke('youtube-media', url),
   fetchDropped: (url) => ipcRenderer.invoke('fetch-dropped', url),
   onHotkey: (fn) => ipcRenderer.on('hotkey', (_e, what) => fn(what)),
   log: (tag, data) => ipcRenderer.send('log', tag, data),
@@ -24,6 +29,7 @@ contextBridge.exposeInMainWorld('duo', {
   setFlags: (f) => ipcRenderer.invoke('set-flags', f),
   logPath: () => ipcRenderer.invoke('log-path'),
   friendsInfo: () => ipcRenderer.invoke('friends-info'),
+  friendsContact: (p) => ipcRenderer.invoke('friends-contact', p),
   friendsAdd: (f) => ipcRenderer.invoke('friends-add', f),
   friendsRemove: (id) => ipcRenderer.invoke('friends-remove', id),
   friendsProof: (id, prover, nonce, bind) => ipcRenderer.invoke('friends-proof', id, prover, nonce, bind),
@@ -51,9 +57,14 @@ contextBridge.exposeInMainWorld('duo', {
   stickersDel: (pack, id) => ipcRenderer.invoke('stickers-del', pack, id),
   friendsNick: (nick) => ipcRenderer.invoke('friends-nick', nick),
   hotkeysSet: (what, acc) => ipcRenderer.invoke('hotkeys-set', what, acc),
+  onOutboxDelivered: fn => ipcRenderer.on('outbox-delivered',(_e,d)=>fn(d)),
+  presenceGet:()=>ipcRenderer.invoke('presence-get'),
+  presenceSet:mode=>ipcRenderer.invoke('presence-set',mode),
+  onPresence:fn=>ipcRenderer.on('presence-update',(_e,d)=>fn(d)),
   onFriends: (fn) => ipcRenderer.on('friends-update', (_e, l) => fn(l)),
   onFriendMsg: (fn) => ipcRenderer.on('friends-msg', (_e, m) => fn(m)),
   netConfig: (c) => ipcRenderer.invoke('net-config', c),
+  relayIce: () => ipcRenderer.invoke('relay-ice'),
   netGet: () => ipcRenderer.invoke('net-get'),
   netRecheck: () => ipcRenderer.invoke('net-recheck'),
   netStun: (ip) => ipcRenderer.invoke('net-stun', ip),
@@ -74,6 +85,7 @@ contextBridge.exposeInMainWorld('duo', {
   onSysAudioData: (fn) => ipcRenderer.on('sysaudio-data', (_e, chunk) => fn(chunk)),
   onSysAudioEnd: (fn) => ipcRenderer.on('sysaudio-end', (_e, code) => fn(code)),
   // оверлей поверх экрана, который показываю
+  onOverlayVideoState: (fn) => ipcRenderer.on('overlay-video-state', (_e, state) => fn(state)),
   ovlOpen: (sourceId) => ipcRenderer.invoke('ovl-open', sourceId),
   ovlClose: () => ipcRenderer.invoke('ovl-close'),
   captureHide: (on) => ipcRenderer.invoke('capture-hide', on),
@@ -89,6 +101,8 @@ contextBridge.exposeInMainWorld('duo', {
   onInputEvt: (fn) => ipcRenderer.on('input-evt', (_e, l) => fn(l)),
   setPtt: (on) => ipcRenderer.invoke('set-ptt', !!on),
   // история чатов
+  histFolder: () => ipcRenderer.invoke('hist-folder'),
+  soundsFolder: () => ipcRenderer.invoke('sounds-folder'),
   histLoad: (id, limit, before) => ipcRenderer.invoke('hist-load', id, limit, before),
   histAppend: (id, e) => ipcRenderer.invoke('hist-append', id, e),
   histMediaSave: (id, bytes, name) => ipcRenderer.invoke('hist-media-save', id, bytes, name),

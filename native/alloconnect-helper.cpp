@@ -200,7 +200,7 @@ static DWORD WINAPI DuckStdin(LPVOID) {
   return 0;
 }
 
-static void duckScan(DWORD ourPid, std::map<std::wstring, Ducked> &map, float cur, bool track) {
+static void duckScan(DWORD ourPid, std::map<std::wstring, Ducked> &map, float cur, bool track, DWORD onlyPid = 0) {
   IMMDeviceEnumerator *en = nullptr;
   if (FAILED(CoCreateInstance(kCLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL, kIID_IMMDeviceEnumerator, (void **)&en))) return;
   std::set<DWORD> ours = processTree(ourPid);
@@ -227,7 +227,7 @@ static void duckScan(DWORD ourPid, std::map<std::wstring, Ducked> &map, float cu
               c2->GetProcessId(&pid);
               bool sys = c2->IsSystemSoundsSession() == S_OK;
               LPWSTR sid = nullptr;
-              if (!sys && pid && !ours.count(pid) && SUCCEEDED(c2->GetSessionInstanceIdentifier(&sid)) && sid) {
+              if (!sys && pid && (!onlyPid || pid == onlyPid) && !ours.count(pid) && SUCCEEDED(c2->GetSessionInstanceIdentifier(&sid)) && sid) {
                 std::wstring key(sid);
                 CoTaskMemFree(sid);
                 auto it = map.find(key);
@@ -237,8 +237,8 @@ static void duckScan(DWORD ourPid, std::map<std::wstring, Ducked> &map, float cu
                   ISimpleAudioVolume *vol = nullptr;
                   if (SUCCEEDED(ctl->QueryInterface(kIID_ISimpleAudioVolume, (void **)&vol)) && vol) {
                     float orig = 1.0f;
-                    vol->GetMasterVolume(&orig);
-                    map[key] = {vol, orig, true};
+                    if (SUCCEEDED(vol->GetMasterVolume(&orig))) map[key] = {vol, orig, true};
+                    else vol->Release();
                   }
                 }
               }
@@ -255,10 +255,8 @@ static void duckScan(DWORD ourPid, std::map<std::wstring, Ducked> &map, float cu
     devs->Release();
   }
   en->Release();
-  // сессии, которых больше нет
-  for (auto it = map.begin(); it != map.end();) {
-    if (!it->second.seen) { it->second.vol->Release(); it = map.erase(it); } else ++it;
-  }
+  // Keep saved baselines through endpoint/session enumeration gaps.
+  // Releasing an unseen session while it is attenuated loses its original volume.
   (void)cur;
 }
 
@@ -271,7 +269,14 @@ static void duckRestore(std::map<std::wstring, Ducked> &map) {
   map.clear();
 }
 
-static int runDuck(DWORD ourPid) {
+static int runDuck(DWORD ourPid, DWORD onlyPid = 0) {
+  // One owner per Windows logon session; multiple app instances must not multiply ducking.
+  std::wstring mutexName = L"Local\\alloconnect-duck-controller";
+  if (onlyPid) mutexName += L"-test-" + std::to_wstring(onlyPid);
+  HANDLE owner = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+  DWORD lock = owner ? WaitForSingleObject(owner, 10000) : WAIT_FAILED;
+  if (lock != WAIT_OBJECT_0 && lock != WAIT_ABANDONED) { if (owner) CloseHandle(owner); fprintf(stderr, "ERR duck already active\n"); return 2; }
+  HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, ourPid);
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(hr)) fail("CoInitializeEx", hr);
   CreateThread(nullptr, 0, DuckStdin, nullptr, 0, nullptr);
@@ -282,6 +287,7 @@ static int runDuck(DWORD ourPid) {
   DWORD lastScan = 0;
   for (;;) {
     float target = gDuckTarget / 1000.0f;
+    if (!parent || WaitForSingleObject(parent, 0) == WAIT_OBJECT_0) InterlockedExchange(&gDuckQuit, 1);
     if (gDuckQuit) target = 1.0f;
     float prev = cur;
     // быстро приглушаем (~0.15 с), плавно возвращаем (~0.5 с)
@@ -289,7 +295,7 @@ static int runDuck(DWORD ourPid) {
     else if (cur < target) cur = (cur + 0.06f > target) ? target : cur + 0.06f;
     DWORD now = GetTickCount();
     if (cur < 0.999f) {
-      if (prev >= 0.999f || now - lastScan > 1500) { duckScan(ourPid, map, cur, true); lastScan = now; }
+      if (prev >= 0.999f || now - lastScan > 1500) { duckScan(ourPid, map, cur, true, onlyPid); lastScan = now; }
       if (cur != prev || now - lastScan < 40) duckApply(map, cur);
     } else if (!map.empty()) {
       duckRestore(map);
@@ -297,6 +303,9 @@ static int runDuck(DWORD ourPid) {
     if (gDuckQuit && map.empty()) break;
     Sleep(30);
   }
+  if (parent) CloseHandle(parent);
+  ReleaseMutex(owner); CloseHandle(owner);
+  CoUninitialize();
   return 0;
 }
 
@@ -834,6 +843,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "OK\n");
     return 0;
   }
+  // Test-only mode changes only the explicitly named fixture process audio session.
+  if (strcmp(argv[1], "duck-test") == 0) return runDuck(argc > 3 ? (DWORD)strtoul(argv[3], nullptr, 10) : GetCurrentProcessId(), (DWORD)strtoul(argv[2], nullptr, 10));
   if (strcmp(argv[1], "duck") == 0) return runDuck((DWORD)strtoul(argv[2], nullptr, 10));
   if (strcmp(argv[1], "keys") == 0) return runKeys(argv[2]);
   if (strcmp(argv[1], "fg") == 0) return runFg();

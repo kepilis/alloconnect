@@ -363,3 +363,32 @@ html[data-theme="newspaper"] {
 [data-theme="newspaper"] .tbtn.wide { background: #fff; color: #111; }
 [data-theme="newspaper"] .danger-btn:hover { background: var(--accent); color: #fff; }
 [data-theme="newspaper"] .modal { background: rgba(30, 26, 20, .4); }
+
+/* Functional controls keep readable contrast in light themes. */
+:is([data-theme="retro98"],[data-theme="newspaper"],[data-theme="notebook"]) .downloads-panel { background:var(--panel);color:var(--text); }
+:is([data-theme="retro98"],[data-theme="newspaper"],[data-theme="notebook"]) :is(#btnNs,#gNs).on { background:#163c74;color:#fff;border-color:#163c74; }
+:is([data-theme="retro98"],[data-theme="newspaper"],[data-theme="notebook"]) .download-row[data-stage="error"] .download-status { color:#9c2020; }
+[data-theme="retro98"] .modal-head .icon-btn { width:24px;height:24px;min-width:24px;padding:0;line-height:20px;display:grid;place-items:center; }
+[data-theme="notebook"] :is(small,.small,.download-status,.field>span,.fname small,.friends-head) { font-family:'Segoe UI',sans-serif;font-size:13px;line-height:1.45; }
+:is(.btn,.ctl,.tbtn) { line-height:1.35; }
+:is(.btn,.ctl) { white-space:normal;overflow-wrap:anywhere;min-height:32px; }
+
+/* Север: muted blue surfaces and a restrained teal accent. */
+[data-theme="nord"] { --bg:#16242d;--panel:#20343f;--panel-2:#29434f;--line:#49626d;--text:#e5f0f0;--muted:#b5c8ce;--accent:#418c7e;--accent-2:#83c9ba;--ok:#83c9ba;--bad:#ed9199;--radius:12px; }
+[data-theme="nord"] #lobby { background:radial-gradient(ellipse at 15% 10%,#304a54,transparent 65%),var(--bg); }
+[data-theme="nord"] :is(.lobby-card,.modal-card,.soundpad) { box-shadow:0 16px 45px #06131c55; }
+[data-theme="nord"] :is(.btn:hover,.ctl:hover) { background:#345764;color:var(--text); }
+[data-theme="nord"] .msg.me .bubble { background:#315b58;color:#f0fcf7; }
+/* Лён: warm neutral surfaces; system typography stays legible. */
+[data-theme="linen"] { --bg:#e9e4db;--panel:#faf7f1;--panel-2:#eee8dc;--line:#c8c0b3;--text:#272e2b;--muted:#62695f;--accent:#365e58;--accent-2:#507c70;--ok:#2c6751;--bad:#a63637;--radius:12px; }
+[data-theme="linen"] #lobby { background:radial-gradient(ellipse at 80% 0%,#d8e2d4,transparent 65%),var(--bg); }
+[data-theme="linen"] :is(.lobby-card,.modal-card,.soundpad) { box-shadow:0 16px 45px #4b40351c; }
+[data-theme="linen"] :is(.btn:hover,.ctl:hover) { background:#dce3d8;color:var(--text); }
+[data-theme="linen"] .msg.me .bubble { background:#d7e3d7; }
+[data-theme="linen"] :is(.btn.primary,.ctl.share) { background:var(--accent);color:#fff; }
+[data-theme="linen"] .download-row[data-stage="error"] .download-status { color:#a63637; }
+
+:is([data-theme="pixel"],[data-theme="notebook"],[data-theme="newspaper"],[data-theme="terminal"]) :is(small,.small,.download-status,.field>span,.msg .meta,.fname small) { font-family:"Segoe UI",sans-serif;font-size:13px;line-height:1.45;letter-spacing:normal; }
+[data-theme="pixel"] :is(.btn,.ctl) { font-size:12px;line-height:1.5; }
+
+[data-theme="linen"] :is(.avatar,.favatar,.call-avatar) { background:#d7e3d7;color:#274c42; }

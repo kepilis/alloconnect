@@ -1,0 +1,35 @@
+{
+  "url": "https://github.com/kepilis/alloconnect/releases/download/media-tools-v1/media-tools-v1.zip",
+  "size": 163995490,
+  "sha256": "afae741dc9bf90954d22c7930f13602011669ba864161ca2bd58632db584e7c8",
+  "files": {
+    "ffmpeg.exe": {
+      "size": 145240576,
+      "sha256": "851aa8ea5366b5af33c0681cc292d662829c7088e9ac96f6e9b37030e6835ba4"
+    },
+    "ffprobe.exe": {
+      "size": 145030656,
+      "sha256": "01dd9a776db5df93d0e3a9b8714a7a7500402e8e628cdc68608ed781454f8b71"
+    },
+    "LICENSE-ffmpeg.txt": {
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    "LICENSE-node.txt": {
+      "size": 157609,
+      "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace"
+    },
+    "LICENSE-yt-dlp.txt": {
+      "size": 1211,
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+    },
+    "node.exe": {
+      "size": 93381448,
+      "sha256": "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5"
+    },
+    "yt-dlp.exe": {
+      "size": 17880111,
+      "sha256": "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555"
+    }
+  }
+}

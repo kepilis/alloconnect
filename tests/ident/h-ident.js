@@ -63,7 +63,13 @@ app.whenReady().then(async () => {
     } else {
       const offer = await take('offer');
       res.gotOffer = !!offer;
-      await js(`showStep('stepGuest'); makeAnswer(${JSON.stringify(offer)}); true`);
+      await js(`document.getElementById('codeEntry').value = ${JSON.stringify(offer)}; document.getElementById('codeEntry').dispatchEvent(new Event('input')); true`);
+      res.entryReady = await waitFor(W, `!document.getElementById('codeEntryGo').disabled`, 8000);
+      if (!res.entryReady) throw new Error('Приглашение не распознано единым полем');
+      await js(`document.getElementById('codeEntryGo').click(); true`);
+      res.entryRouted = await waitFor(W, `document.querySelector('.step.active').id === 'stepGuest' && document.getElementById('offerIn').value.startsWith('ALOI.')`, 8000);
+      if (!res.entryRouted) throw new Error('Приглашение не открыло создание ответа');
+      await js(`document.getElementById('btnMakeAnswer').click(); true`);
       await waitFor(W, `document.getElementById('answerOut').value.length > 100`, 30000);
       put('answer', await js(`document.getElementById('answerOut').value`));
     }

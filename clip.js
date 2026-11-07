@@ -32,6 +32,7 @@
       this.aconf = null;
       this.abort = new AbortController();
       this.lastDesc = null;
+      this.adesc = null;
       this.keyEvery = 2_000_000; // ключевой кадр каждые 2 с (мкс)
       this.lastKeyTs = -1e12;
       this.started = 0;
@@ -117,7 +118,7 @@
         const sup = await root.AudioEncoder.isConfigSupported(cfg).catch(() => null);
         if (!sup?.supported) { log('clip-audio', 'unsupported ' + d.sampleRate + '/' + ch); return false; }
         const enc = new root.AudioEncoder({
-          output: (chunk) => { this.audio.push({ ts: chunk.timestamp + off, chunk }); this._prune(); },
+          output: (chunk,meta) => { if(meta?.decoderConfig)this.adesc=meta.decoderConfig;this.audio.push({ ts: chunk.timestamp + off, chunk }); this._prune(); },
           error: (e) => log('clip-audio', e.message),
         });
         enc.configure(cfg);
@@ -191,14 +192,33 @@
         video: { codec: 'avc', width: this.vconf.width, height: this.vconf.height },
         audio: this.aconf ? { codec: 'opus', numberOfChannels: this.aconf.numberOfChannels, sampleRate: this.aconf.sampleRate } : undefined,
         fastStart: 'in-memory',
-        firstTimestampBehavior: 'offset',
+        firstTimestampBehavior: 'cross-track-offset',
       });
       let desc = vids[0].desc || this.lastDesc;
       for (const v of vids) muxer.addVideoChunk(v.chunk, { decoderConfig: { description: desc } }, v.ts - base);
       if (this.aconf) {
-        for (const a of this.audio) {
-          if (a.ts < base - 100000) continue;
-          muxer.addAudioChunk(a.chunk, undefined, Math.max(0, a.ts - base));
+        const end=vids[vids.length-1].ts+100000;
+        const audios=this.audio.filter(a=>a.ts>=base&&a.ts<=end);
+        if(audios.length){
+          // MP4 sample tables begin at zero. Encode silence for the initial gap;
+          // resetting each track to zero advances the audible content.
+          const gap=audios[0].ts-base;
+          if(gap>0){
+            const silence=[];
+            const enc=new root.AudioEncoder({output:(chunk,meta)=>silence.push({chunk,meta}),error:e=>{this.err=e.message}});
+            try{
+              enc.configure({codec:'opus',sampleRate:this.aconf.sampleRate,numberOfChannels:this.aconf.numberOfChannels,bitrate:128000});
+              const rate=this.aconf.sampleRate,channels=this.aconf.numberOfChannels,block=Math.round(rate/50),samples=Math.ceil(gap*rate/1e6);
+              for(let pos=0;pos<samples;pos+=block){
+                const frames=Math.min(block,samples-pos);
+                const data=new root.AudioData({format:'f32-planar',sampleRate:rate,numberOfChannels:channels,numberOfFrames:frames,timestamp:Math.round(pos*1e6/rate),data:new Float32Array(frames*channels)});
+                try{enc.encode(data)}finally{data.close()}
+              }
+              await enc.flush();
+            }finally{enc.close()}
+            for(const {chunk,meta} of silence)if(chunk.timestamp<gap)muxer.addAudioChunk(chunk,meta,Math.max(0,chunk.timestamp));
+          }
+          for (const a of audios) muxer.addAudioChunk(a.chunk,this.adesc?{decoderConfig:this.adesc}:undefined,a.ts-base);
         }
       }
       muxer.finalize();

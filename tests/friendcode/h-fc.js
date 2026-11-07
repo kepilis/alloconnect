@@ -34,13 +34,17 @@ app.whenReady().then(async () => {
   const isFriendOnline = (id) => `!!friendsList.find((f) => f.id === ${J(id)} && f.online)`;
   // открыть «Добавить друга» и взять свой код
   const myCode = async () => {
-    await js(`document.getElementById('btnAddFriendCode').click(); true`);
+    await js(`document.querySelector('.code-create').open = true; document.getElementById('btnAddFriendCode').click(); true`);
     await waitFor(W, `document.getElementById('fcMine').value.startsWith('ALOF.')`, 15000);
     return js(`document.getElementById('fcMine').value`);
   };
   // вставить код в поле и нажать «Добавить»
   const useCode = async (code) => {
-    await js(`document.getElementById('btnAddFriendCode').click(); document.getElementById('fcIn').value = ${J(code)}; fcCheckInput(); true`);
+    await js(`document.getElementById('fcModal').classList.add('hidden'); document.getElementById('codeEntry').value = ${J(code)}; document.getElementById('codeEntry').dispatchEvent(new Event('input')); true`);
+    const routed = await waitFor(W, `!document.getElementById('codeEntryGo').disabled`, 8000);
+    if (!routed) return false;
+    await js(`document.getElementById('codeEntryGo').click(); true`);
+    if (!await waitFor(W, `!document.getElementById('fcModal').classList.contains('hidden') && document.getElementById('fcIn').value.startsWith('ALOF.')`, 8000)) return false;
     const ok = await waitFor(W, `!document.getElementById('fcAdd').disabled`, 8000);
     if (ok) await js(`document.getElementById('fcAdd').click(); true`);
     return ok;

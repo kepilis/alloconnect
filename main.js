@@ -305,7 +305,7 @@ function createWindow() {
   });
   win.on('show', updateTray);
   win.on('hide', updateTray);
-  win.webContents.on('render-process-gone', (_e, d) => log('crash', { what: 'renderer', ...d }));
+  win.webContents.on('render-process-gone', (_e, d) => { duckStop(); log('crash', { what: 'renderer', ...d }); });
   win.on('unresponsive', () => log('warn', 'window unresponsive'));
   win.on('responsive', () => log('warn', 'window responsive again'));
 }
@@ -613,6 +613,7 @@ const net = {
   stunMapped: null, natType: 'unknown', portPreserved: null,
 };
 let netConfigResolve;
+let latestNetConfig = {};
 const netConfigReady = new Promise((r) => { netConfigResolve = r; setTimeout(() => r({}), 4000); });
 let upnpExternalIp = null;
 let stunIp = null;
@@ -651,11 +652,12 @@ async function startFriends() {
     net.upnp = 'error'; net.upnpError = e.message; publishNet();
     return;
   }
+  friends.setPresence(appSet.presence||'online');
   net.port = friends.port;
   const addrs = friends.localAddrs();
   net.ifacePublic = addrs.some((a) => a.kind === 'public');
   net.tailscale = addrs.some((a) => a.kind === 'tailscale');
-  friends.on('friends', (list) => sendWin('friends-update', list));
+  friends.on('friends', (list) => {sendWin('friends-update', list);for(const f of list)if(f.reachable||f.online)outbox.flush(f.id)});
   friends.on('message', (id, msg) => sendWin('friends-msg', { id, msg }));
   friends.on('fr', (e) => sendWin('friends-fr', e)); // код дружбы: запрос или ответ
   friends.on('probe-in', (_id, kind) => { if (!net.inboundConfirmed.includes(kind)) { net.inboundConfirmed.push(kind); publishNet(); } });
@@ -668,7 +670,9 @@ async function startFriends() {
     publishNet();
   });
   netConfigReady.then((cfg) => {
+    cfg = latestNetConfig;
     friends.setStunConfig(cfg);
+    friends.configureRelay(cfg.relayUrl || '');
     friendsStarted = true;
     if (cfg.noStun) { net.stunMapped = false; publishNet(); } else friends.startStun();
   });
@@ -708,6 +712,7 @@ async function runUpnp() {
 
 ipcMain.handle('friends-info', () => (friends ? { id: friends.id, port: friends.port, addrs: friends.localAddrs(), list: friends.list() } : null));
 ipcMain.handle('friends-add', (_e, f) => { const ok = friends?.addFriend(f); if (ok) setTimeout(() => friends.probe(f.id), 1500); return ok; });
+ipcMain.handle('friends-contact', (_e, p) => friends?.noteCallContact(p?.id, p?.addrs) || false);
 ipcMain.handle('friends-remove', (_e, id) => friends?.removeFriend(id));
 // код дружбы (ник — для кода и запроса)
 // мой ник — сразу в сеть друзей (уходит в пингах)
@@ -720,7 +725,22 @@ ipcMain.handle('fc-decline', (_e, id) => friends?.declineRequest(id));
 ipcMain.handle('fc-cancel', (_e, id) => friends?.cancelOutgoing(id));
 ipcMain.handle('fc-pending', () => friends?.pendingList() || { incoming: [], outgoing: [] });
 ipcMain.handle('friends-proof', (_e, id, prover, nonce, bind) => friends?.proof(id, prover, nonce, bind) || null);
+const {MessageOutbox}=require('./message-outbox.cjs');
+const outbox=new MessageOutbox(path.join(app.getPath('userData'),'message-outbox.json'),(id,msg)=>{if((appSet.presence||'online')==='offline')throw Error('offline');return friends.sendBig(id,msg)},(id,mid)=>{
+  try{const dir=histDir(id);fs.mkdirSync(dir,{recursive:true});fs.appendFileSync(path.join(dir,'log.jsonl'),JSON.stringify({type:'status',ref:mid,st:'sent'})+'\n')}catch{}
+  sendWin('outbox-delivered',{id,mid});
+});
+const outboxTimer=setInterval(()=>{for(const f of friends?.list()||[])if(f.reachable||f.online)outbox.flush(f.id)},30000);outboxTimer.unref();
+ipcMain.handle('presence-get',()=>({mode:appSet.presence||'online',effective:friends?.presence||'online'}));
+ipcMain.handle('presence-set',(_e,mode)=>{if(!['online','away','invisible','offline','dnd'].includes(mode))return false;appSet.presence=mode;saveFlags();friends?.setPresence(mode);return true});
+const presenceTimer=setInterval(()=>{const selected=appSet.presence||'online';const effective=selected==='online'&&screen.getSystemIdleTime()>=300?'away':selected;if(friends&&friends.presence!==effective){friends.setPresence(effective);sendWin('presence-update',{mode:selected,effective})}},5000);presenceTimer.unref();
 ipcMain.handle('friends-send', async (_e, id, msg) => {
+  if(msg?.t==='dm-op'&&typeof msg.ref==='string'&&['del','edit'].includes(msg.op)&&(msg.op!=='edit'||typeof msg.text==='string'&&msg.text.trim()&&msg.text.length<=2000)){const result=outbox.changePending(id,msg.ref,msg);if(result)return result}
+  if(msg?.t==='dm'){
+    if(!friends?.list().some(f=>f.id===id)||typeof msg.mid!=='string'||msg.mid.length>80||typeof msg.text!=='string'||!msg.text.trim()||msg.text.length>2000)return {ok:false,error:'Некорректное сообщение'};
+    try{outbox.add(id,msg);if(friends.list().some(f=>f.id===id&&(f.reachable||f.online)))setImmediate(()=>outbox.flush(id));return {ok:true,queued:true}}catch(e){return {ok:false,error:e.message}}
+  }
+  if((appSet.presence||'online')==='offline')return {ok:false,error:'Система друзей отключена'};
   try { await friends.sendBig(id, msg); return { ok: true }; } catch (e) { log('friends', { sendFailed: msg?.t, error: e.message }); return { ok: false, error: e.message }; }
 });
 ipcMain.handle('friends-probe', (_e, id) => friends?.probe(id));
@@ -733,13 +753,20 @@ ipcMain.handle('friends-callpath', (_e, p) => {
     ...r,
   });
 });
-ipcMain.handle('net-get', () => net);
+ipcMain.handle('net-get', () => ({ ...net, relayState: friends?.relayClient?.state || 'off' }));
+ipcMain.handle('relay-ice', async () => {
+  const client = friends?.relayClient;
+  if (!client || client.state !== 'ready') return [];
+  try { return await client.iceServers(); } catch { return []; }
+});
 let friendsStarted = false;
 ipcMain.handle('net-config', (_e, cfg) => {
-  netConfigResolve(cfg || {});
+  latestNetConfig = cfg || {};
+  netConfigResolve(latestNetConfig);
   // настройки STUN поменяли на ходу — переопрашиваем с новыми серверами
   if (friendsStarted && friends) {
     friends.setStunConfig(cfg || {});
+    friends.configureRelay(cfg?.relayUrl || '');
     clearInterval(friends.stunTimer);
     if (cfg?.noStun) { friends.stun = null; net.stunMapped = false; net.friendsStun = null; publishNet(); } else friends.startStun();
   }
@@ -764,7 +791,7 @@ app.on('before-quit', (e) => {
    Саундпад: звуки в %APPDATA%\alloconnect\sounds, горячие клавиши на каждый
    ========================================================= */
 const SOUND_MAX = 15 * 1024 * 1024;
-const SOUND_COUNT = 60;
+const SOUND_COUNT = 1000;
 function soundsDir() { return path.join(app.getPath('userData'), 'sounds'); }
 function soundsIndex() { return path.join(soundsDir(), 'sounds.json'); }
 function readSounds() {
@@ -840,6 +867,7 @@ function registerSoundHotkeys() {
   if (failed.length) log('soundpad', { hotkeysBusy: failed });
   return failed;
 }
+ipcMain.handle('sounds-folder',()=>shell.openPath(soundsDir()));
 ipcMain.handle('sounds-list', () => readSounds());
 ipcMain.handle('sounds-add', (_e, bytes, name) => {
   const d = readSounds();
@@ -871,6 +899,7 @@ ipcMain.handle('sounds-update', (_e, id, patch) => {
   else {
     const s = d.list.find((x) => x.id === id);
     if (!s) return { ok: false };
+    if (patch.category != null) s.category=String(patch.category).trim().slice(0,40);
     if (patch.name != null) s.name = String(patch.name).slice(0, 40);
     if (patch.vol != null) s.vol = Math.max(0, Math.min(200, Number(patch.vol) || 0));
     if (patch.hotkey != null) s.hotkey = String(patch.hotkey).slice(0, 60);
@@ -921,6 +950,7 @@ ipcMain.handle('read-asset', (_e, rel) => {
 let ovl = null;
 let ovlCtx = null;          // { kind: 'screen'|'window', bounds, minimized }
 let ovlHideTimer = null;
+let ovlVideoActive=false,ovlVideoId=null;
 let ovlPinned = false;      // идёт управление — плашка висит постоянно
 function winBuild() { const m = /^10\.0\.(\d+)/.exec(os.release()); return m ? Number(m[1]) : 0; }
 
@@ -936,7 +966,9 @@ function createOverlay() {
   ovl.setAlwaysOnTop(true, 'screen-saver');
   try { ovl.setContentProtection(true); } catch { /* */ }
   ovl.loadFile('overlay.html');
-  ovl.on('closed', () => { ovl = null; });
+  const stopped=()=>{if(ovlVideoActive)sendWin('overlay-video-state',{playing:false,fid:ovlVideoId,reason:'closed'});ovlVideoActive=false;ovlVideoId=null;clearTimeout(ovlHideTimer)};
+  ovl.webContents.on('render-process-gone',()=>{stopped();if(ovl&&!ovl.isDestroyed())ovl.destroy()});
+  ovl.on('closed', () => {stopped();ovl = null; });
   return ovl;
 }
 function ovlApplyBounds() {
@@ -948,10 +980,10 @@ function ovlShow() {
   if (!ovl || ovl.isDestroyed() || !ovlCtx?.bounds || ovlCtx.minimized) return;
   if (!ovl.isVisible()) { ovlApplyBounds(); ovl.showInactive(); ovl.setAlwaysOnTop(true, 'screen-saver'); }
   clearTimeout(ovlHideTimer);
-  // видео от друга играет до минуты — не прячем оверлей раньше
-  if (!ovlPinned) ovlHideTimer = setTimeout(() => { if (ovl && !ovl.isDestroyed() && !ovlPinned) ovl.hide(); }, Math.max(8000, ovlHoldUntil - Date.now()));
+  // A playing video owns the overlay until its actual playback-end event.
+  if (!ovlPinned&&!ovlVideoActive) ovlHideTimer=setTimeout(()=>{if(ovl&&!ovl.isDestroyed()&&!ovlPinned&&!ovlVideoActive)ovl.hide()},8000);
 }
-let ovlHoldUntil = 0;
+
 let lastWatchRect = null;
 let lastWatchState = 'normal';
 const toDip = (r) => (process.platform === 'win32' ? screen.screenToDipRect(null, r) : r);
@@ -967,7 +999,7 @@ function onWatchState(st) {
   if (!ovlCtx || ovlCtx.kind !== 'window') return;
   ovlCtx.minimized = st !== 'normal';
   if (ovlCtx.minimized && ovl && !ovl.isDestroyed()) ovl.hide();
-  else if (!ovlCtx.minimized && ovlPinned) ovlShow();
+  else if (!ovlCtx.minimized && (ovlPinned||ovlVideoActive)) ovlShow();
 }
 function displayFor(sourceId) {
   const did = sourceDisplay.get(sourceId);
@@ -990,6 +1022,8 @@ ipcMain.handle('ovl-open', (_e, sourceId) => {
 // показ всего экрана: окно alloconnect прячем из захвата — иначе превью стрима снимает само себя (эффект зеркала)
 ipcMain.handle('capture-hide', (_e, on) => { try { win?.setContentProtection(!!on); log('share', { hideOwnWindow: !!on }); return true; } catch { return false; } });
 ipcMain.handle('ovl-close', () => {
+  if(ovlVideoActive)sendWin('overlay-video-state',{playing:false,fid:ovlVideoId,reason:'closed'});
+  ovlVideoActive=false;ovlVideoId=null;
   ovlCtx = null;
   ovlPinned = false;
   clearTimeout(ovlHideTimer);
@@ -999,11 +1033,17 @@ ipcMain.handle('ovl-close', () => {
 ipcMain.on('ovl-msg', (_e, msg) => {
   if (!ovl || ovl.isDestroyed() || !msg || typeof msg !== 'object') return;
   if (msg.t === 'pin') { ovlPinned = !!msg.on; if (!ovlPinned) clearTimeout(ovlHideTimer); }
-  if (msg.t === 'vid') ovlHoldUntil = Date.now() + 63000;
+  if (msg.t === 'vid') {ovlVideoActive=true;ovlVideoId=Number.isInteger(msg.fid)?msg.fid:null;clearTimeout(ovlHideTimer)}
   ovl.webContents.send('ovl', msg);
   const content = ['stroke', 'ptr', 'react', 'img', 'vid'].includes(msg.t) || (msg.t === 'pin' && msg.on);
   if (content) ovlShow();
-  else if (msg.t === 'pin' && ovl.isVisible()) { clearTimeout(ovlHideTimer); ovlHideTimer = setTimeout(() => { if (ovl && !ovl.isDestroyed() && !ovlPinned) ovl.hide(); }, 4000); }
+  else if (msg.t === 'pin' && ovl.isVisible()&&!ovlVideoActive) { clearTimeout(ovlHideTimer); ovlHideTimer = setTimeout(() => { if (ovl && !ovl.isDestroyed() && !ovlPinned) ovl.hide(); }, 4000); }
+});
+ipcMain.on('ovl-video-state',(e,state)=>{
+  if(!ovl||ovl.isDestroyed()||e.sender!==ovl.webContents||!state||typeof state.playing!=='boolean')return;
+  const fid=Number.isInteger(state.fid)&&state.fid>=0&&state.fid<=0xffffffff?state.fid:null;
+  if(fid===ovlVideoId){ovlVideoActive=state.playing;if(state.playing)clearTimeout(ovlHideTimer);else ovlVideoId=null;ovlShow()}
+  sendWin('overlay-video-state',{playing:state.playing,fid,reason:['ended','error','clear','replaced','timeout','cancelled'].includes(state.reason)?state.reason:'playback'});
 });
 ipcMain.handle('win-build', () => (process.platform === 'win32' ? winBuild() : 0));
 
@@ -1011,7 +1051,8 @@ ipcMain.handle('win-build', () => (process.platform === 'win32' ? winBuild() : 0
    Приглушение других программ, пока идёт разговор (как в Discord)
    ========================================================= */
 let duckProc = null;
-let duckLevel = 1;
+let duckLevel = 1; // latest requested level
+let duckStopping = false;
 function duckStart() {
   if (duckProc || !helperUsable()) return;
   try {
@@ -1020,26 +1061,35 @@ function duckStart() {
   const p = duckProc;
   p.stderr.on('data', (d) => { const t = d.toString().trim(); if (t !== 'OK') log('duck', 'stderr: ' + t.slice(0, 200)); });
   p.on('error', (e) => log('duck', { error: e.message }));
-  p.on('exit', (code) => { log('duck', { exit: code }); if (duckProc === p) duckProc = null; });
+  p.on('exit', (code) => {
+    log('duck', { exit: code });
+    if (duckProc !== p) return;
+    const restart = duckStopping && duckLevel < 1;
+    duckProc = null; duckStopping = false;
+    if (restart) duckStart(); else duckLevel = 1;
+  });
   p.stdin.on('error', () => {});
+  try { p.stdin.write(`level ${duckLevel.toFixed(3)}\n`); } catch { /* process exit handles failure */ }
   log('duck', { started: true });
 }
 function duckStop() {
-  const p = duckProc;
-  if (!p) return;
-  duckProc = null;
   duckLevel = 1;
+  const p = duckProc;
+  if (!p || duckStopping) return;
+  duckStopping = true;
+  // Keep ownership until exit: another helper must not snapshot attenuated volumes.
   // не убиваем сразу: помощник сам вернёт громкость на место, когда закроется stdin
   try { p.stdin.end(); } catch { /* */ }
-  setTimeout(() => { try { p.kill(); } catch { /* */ } }, 3000);
+  // The native helper watches EOF/parent death and restores before exiting.
+  // A forced kill here would permanently discard its saved volume baselines.
 }
 ipcMain.handle('duck-set', (_e, level) => {
   const v = Math.max(0, Math.min(1, Number(level)));
   if (!Number.isFinite(v)) return;
-  if (v < 1) duckStart();
-  if (!duckProc) return;
-  if (Math.abs(v - duckLevel) < 0.005) return;
+  if (Math.abs(v - duckLevel) < 0.005 && duckProc && !duckStopping) return;
   duckLevel = v;
+  if (v < 1 && !duckProc) { duckStart(); return; }
+  if (!duckProc || duckStopping) return;
   try { duckProc.stdin.write(`level ${v.toFixed(3)}\n`); } catch { /* */ }
 });
 ipcMain.handle('duck-stop', () => duckStop());
@@ -1175,7 +1225,9 @@ ipcMain.handle('hist-search', (_e, id, q) => {
   }
   return out;
 });
+ipcMain.handle('hist-folder',async()=>{const dir=path.join(app.getPath('userData'),'history');fs.mkdirSync(dir,{recursive:true});return shell.openPath(dir)});
 ipcMain.handle('hist-media-save', (_e, id, bytes, name) => {
+  if(appSet.saveChatFiles===false)return null;
   const buf = Buffer.from(bytes);
   if (!buf.length || buf.length > 210 * 1024 * 1024) throw new Error('too big');
   const ext = (/\.([a-z0-9]{1,5})$/i.exec(String(name || '')) || [, 'bin'])[1].toLowerCase();
@@ -1412,10 +1464,15 @@ const { net: enet } = require('electron');
 const GH_API = process.env.ALOCALLS_GH_API || 'https://api.github.com';
 const GH_RAW = process.env.ALOCALLS_GH_RAW || 'https://raw.githubusercontent.com';
 let ghBusy = null;
-async function ghGet(url, asJson) {
-  const r = await enet.fetch(url, { headers: { 'User-Agent': 'alloconnect', Accept: asJson ? 'application/vnd.github+json' : 'application/octet-stream' }, cache: 'no-store' });
+async function ghGet(url, asJson, options = {}) {
+  const r = await enet.fetch(url, { headers: { 'User-Agent': 'alloconnect', Accept: asJson ? 'application/vnd.github+json' : 'application/octet-stream' }, cache: 'no-store', signal: AbortSignal.timeout(180000) });
   if (!r.ok) throw new Error(r.status === 404 ? 'обновлений пока нет' : 'GitHub ответил ' + r.status);
-  return asJson ? r.json() : Buffer.from(await r.arrayBuffer());
+  if(asJson)return r.json();
+  const total=options.size||Number(r.headers.get('content-length'))||0;
+  if(!options.progress)return Buffer.from(await r.arrayBuffer());
+  const parts=[];let got=0,last=0;options.progress(0,total);
+  for await(const b of r.body){got+=b.length;if(options.size&&got>options.size)throw Error('файл больше ожидаемого');parts.push(b);if(Date.now()-last>150){last=Date.now();options.progress(got,total)}}
+  options.progress(got,total);return Buffer.concat(parts);
 }
 /* ---------- Картинка, перетащенная из браузера ссылкой (не файлом) ----------
    Не все браузеры отдают при перетаскивании сам файл — часто только адрес картинки. Качаем здесь, без CORS. */
@@ -1442,7 +1499,7 @@ function mediaFromPage(html, base) {
   const img = meta('og:image:secure_url') || meta('og:image') || meta('twitter:image');
   return img ? abs(img) : null;
 }
-async function ipcMainFetchDropped(url, depth = 0) {
+async function ipcMainFetchDropped(url, depth = 0, progress=()=>{}) {
   try {
     const u = new URL(String(url));
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'bad-url' };
@@ -1453,22 +1510,25 @@ async function ipcMainFetchDropped(url, depth = 0) {
       if (!r.ok) return { error: 'http ' + r.status };
       const mime = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
       if (mime === 'text/html' && depth === 0) {
-        const html = (await r.text()).slice(0, 4 * 1024 * 1024);
+        const chunks=[];let received=0;progress({stage:'starting',message:'Поиск медиа на странице…'});for await(const b of r.body){received+=b.length;if(received>4*1048576){ac.abort();return {error:'too-big'}}chunks.push(b)}
+        const html=Buffer.concat(chunks).toString('utf8');
         const media = mediaFromPage(html, u.href);
         log('drop-fetch', { page: u.hostname, found: media ? new URL(media).pathname.split('.').pop() : null });
         if (!media) return { error: 'not-media' };
         clearTimeout(t);
-        return await ipcMainFetchDropped(media, 1);
+        return await ipcMainFetchDropped(media, 1, progress);
       }
       if (!/^(image|video)\//.test(mime)) return { error: 'not-media' };
       if (Number(r.headers.get('content-length')) > DROP_MAX) return { error: 'too-big' };
+      const total=Number(r.headers.get('content-length'))||0;progress({stage:'download',got:0,total});let last=0;
       const chunks = []; let size = 0;
       for await (const c of r.body) {
         size += c.length;
         if (size > DROP_MAX) { ac.abort(); return { error: 'too-big' }; }
-        chunks.push(c);
+        chunks.push(c);if(Date.now()-last>150){last=Date.now();progress({stage:'download',got:size,total})}
       }
       const name = decodeURIComponent(u.pathname.split('/').pop() || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 100);
+      progress({stage:'ready',message:'Медиафайл загружен — можно добавлять'});
       return { bytes: Buffer.concat(chunks), mime, name };
     } finally { clearTimeout(t); }
   } catch (e) {
@@ -1476,7 +1536,8 @@ async function ipcMainFetchDropped(url, depth = 0) {
     return { error: 'fail' };
   }
 }
-ipcMain.handle('fetch-dropped', (_e, url) => ipcMainFetchDropped(url, 0));
+require('./youtube-media.cjs').register({ ipcMain, app, dialog, BrowserWindow, net: enet, log });
+ipcMain.handle('fetch-dropped', async(e,url)=>{const progress=data=>{try{e.sender.send('download-progress',{id:'dropped-media',title:'Медиа по ссылке',...data})}catch{}};progress({stage:'starting'});const r=await ipcMainFetchDropped(url,0,progress);if(r.error)progress({stage:'error',message:r.error==='too-big'?'Медиа или страница слишком большие':'Не удалось загрузить медиа по ссылке'});return r});
 /* =========================================================
    Стикеры (1.21): свои наборы картинок и гифок. Папка userData/stickers/<набор>/<id>.<ext>, список — stickers.json.
    Добавить: файлы или папку (каждая подпапка с картинками — свой набор, имя — имя папки).
@@ -1617,12 +1678,13 @@ function aiHave(kind) {
 async function aiDownload(kind, progress) {
   let err = null;
   for (let i = 0; i < 3; i++) {
-    try { return await aiDownloadOnce(kind, progress); } catch (e) { err = e; log('ai', { retry: kind, n: i + 1, error: String(e.message).slice(0, 80) }); if (/повреждён|больше ожидаемого/.test(e.message)) break; await new Promise((r) => setTimeout(r, 1500)); }
+    try { return await aiDownloadOnce(kind, progress); } catch (e) { err = e; log('ai', { retry: kind, n: i + 1, error: String(e.message).slice(0, 80) }); if (/повреждён|больше ожидаемого/.test(e.message)) break; progress?.(kind,0,AI_FILES[kind].size,'retry'); await new Promise((r) => setTimeout(r, 1500)); }
   }
   throw err;
 }
 async function aiDownloadOnce(kind, progress) {
   const f = AI_FILES[kind];
+  progress?.(kind,0,f.size,'download');
   fs.mkdirSync(aiDir(), { recursive: true });
   const out = path.join(aiDir(), f.n);
   const part = out + '.part';
@@ -1640,16 +1702,19 @@ async function aiDownloadOnce(kind, progress) {
       if (Date.now() - last > 250) { last = Date.now(); progress?.(kind, got, f.size); }
     }
   } finally { await new Promise((res) => ws.end(res)); }
+  progress?.(kind,got,f.size,'verify');
   if (got !== f.size || h.digest('hex') !== f.sha) { try { fs.unlinkSync(part); } catch { /* */ } throw new Error('файл повреждён (контрольная сумма не совпала)'); }
   fs.renameSync(part, out);
   progress?.(kind, f.size, f.size);
   if (kind === 'runtime') {
+    progress?.(kind,got,f.size,'install');
     const dir = path.join(aiDir(), 'runtime');
     fs.rmSync(dir, { recursive: true, force: true });
     aiUntar(require('zlib').gunzipSync(fs.readFileSync(out)), dir);
     fs.unlinkSync(out);
     fs.writeFileSync(path.join(dir, '.ok-' + f.sha.slice(0, 16)), '');
   } else fs.writeFileSync(path.join(aiDir(), '.ok-' + f.sha.slice(0, 16)), '');
+  progress?.(kind,f.size,f.size,'ready');
   log('ai', { downloaded: kind, mb: Math.round(f.size / 1048576) });
 }
 // tar (ustar) → папка; только обычные файлы и папки внутри dir
@@ -1722,13 +1787,18 @@ ipcMain.handle('ai-status', () => ({ runtime: aiHave('runtime'), person: aiHave(
 ipcMain.handle('ai-prepare', async (e, kind) => {
   if (!AI_MODEL[kind]) return { ok: false, error: 'нет такой модели' };
   if (process.platform !== 'win32' || process.arch !== 'x64') return { ok: false, error: 'нейросеть есть только для Windows x64' };
-  const progress = (k, got, total) => { try { e.sender.send('ai-progress', { kind: k, got, total }); } catch { /* */ } };
+  const report=data=>{try{e.sender.send('download-progress',data)}catch{}};
+  let activeKind=null;
+  const progress = (k, got, total, stage='download') => { activeKind=stage==='ready'?null:k; try { e.sender.send('ai-progress', { kind:k,got,total,stage }); } catch {} report({id:'ai-'+k,title:k==='runtime'?'Движок нейросети':'Модель удаления фона',stage,got,total}); };
+  report({id:'ai-prepare',title:'Подготовка нейросети',stage:'starting'});
   try {
     if (!aiHave('runtime')) await aiDownload('runtime', progress);
     if (!aiHave(kind)) await aiDownload(kind, progress);
+    report({id:'ai-prepare',title:'Подготовка нейросети',stage:'loading'});
     await aiSession(kind);
+    report({id:'ai-prepare',title:'Подготовка нейросети',stage:'ready',message:'Нейросеть готова — можно обрабатывать изображение'});
     return { ok: true, ep: AI.ep };
-  } catch (err) { log('ai', { prepareFailed: kind, error: String(err.message).slice(0, 120) }); return { ok: false, error: err.message }; }
+  } catch (err) { if(activeKind)report({id:'ai-'+activeKind,title:activeKind==='runtime'?'Движок нейросети':'Модель удаления фона',stage:'error',message:err.message}); report({id:'ai-prepare',title:'Подготовка нейросети',stage:'error',message:err.message}); log('ai', { prepareFailed: kind, error: String(err.message).slice(0, 120) }); return { ok: false, error: err.message }; }
 });
 ipcMain.handle('ai-mask', (_e, kind, rgba, w, h) => {
   // по одному кадру за раз — нейросеть не любит параллельных запусков
@@ -1751,7 +1821,7 @@ ipcMain.handle('ai-mask', (_e, kind, rgba, w, h) => {
   return job;
 });
 
-async function ghCheck() {
+async function ghCheck(progress=()=>{}) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return { ok: false, error: 'no-repo' };
   // 1) ветка updates в репозитории: update.json + файлы рядом; 2) запасной путь — раздел релизов
   let u, fileUrl, page = `https://github.com/${GH_REPO}`;
@@ -1785,6 +1855,8 @@ async function ghCheck() {
   try { fs.rmSync(stagingDir(), { recursive: true, force: true }); } catch { /* */ }
   fs.mkdirSync(dir, { recursive: true });
   staged = { man: c.man, m: u.m, sig: u.sig, dir, got: new Set() };
+  const total=c.man.files.reduce((n,f)=>n+f.size,0);let complete=0;
+  progress({stage:'download',got:0,total,message:'Скачивание обновления '+v+'…'});
   log('update', { gh: 'download', v });
   for (const f of c.man.files) {
     const url = fileUrl(f.n);
@@ -1792,7 +1864,8 @@ async function ghCheck() {
     let buf, good = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        buf = await ghGet(url + (url.includes('?') ? '&' : '?') + 'attempt=' + attempt, false);
+        buf = await ghGet(url + (url.includes('?') ? '&' : '?') + 'attempt=' + attempt, false,{size:f.size,progress:(got)=>progress({stage:'download',got:complete+got,total,message:'Скачивание '+f.n+(attempt?' · повтор '+(attempt+1):'')})});
+        progress({stage:'verify',got:complete+buf.length,total,message:'Проверка '+f.n+'…'});
         good = buf.length === f.size && crypto2.createHash('sha256').update(buf).digest('hex') === f.sha256;
         if (good) break;
       } catch (e) { if (attempt === 2) throw e; }
@@ -1800,14 +1873,15 @@ async function ghCheck() {
     }
     if (!good) { staged = null; log('update', { gh: 'badFile', n: f.n }); return { ok: false, error: 'файл повреждён', page }; }
     ofs.writeFileSync(path.join(dir, f.n), buf);
-    staged.got.add(f.n);
+    staged.got.add(f.n);complete+=f.size;
   }
   fs.writeFileSync(path.join(dir, 'update.json'), JSON.stringify({ m: u.m, sig: u.sig }));
+  progress({stage:'ready',message:'Обновление '+v+' проверено — можно устанавливать'});
   log('update', { gh: 'ready', v });
   return { ok: true, ready: true, v, notes: String(c.man.notes || '').slice(0, 300) };
 }
 ipcMain.handle('gh-check', async () => {
-  if (!ghBusy) ghBusy = ghCheck().catch((e) => ({ ok: false, error: String(e.message || e).slice(0, 120) })).finally(() => { ghBusy = null; });
+  if (!ghBusy) {const progress=data=>sendWin('download-progress',{id:'github-update',title:'Обновление alloconnect',...data});ghBusy=ghCheck(progress).then(r=>{if(!r.ok)progress({stage:'error',message:r.error});return r}).catch(e=>{const error=String(e.message||e).slice(0,120);progress({stage:'error',message:error});return {ok:false,error}}).finally(()=>{ghBusy=null})}
   return ghBusy;
 });
 ipcMain.handle('gh-repo', () => (/^[\w.-]+\/[\w.-]+$/.test(GH_REPO) ? GH_REPO : ''));

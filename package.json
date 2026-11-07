@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.21.4",
+  "version": "1.21.12",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -21,6 +21,7 @@
     "productName": "alloconnect",
     "files": [
       "main.js",
+      "youtube-media.cjs",
       "preload.js",
       "index.html",
       "style.css",
@@ -29,6 +30,7 @@
       "pcm-worklet.js",
       "icon.png",
       "net-friends.js",
+      "relay-client.cjs",
       "upnp.js",
       "vendor/rnnoise-worklet.js",
       "vendor/rnnoise.wasm",
@@ -52,7 +54,12 @@
       "vendor/LICENSE-mp4-muxer",
       "themes.css",
       "vendor/fonts/*.woff2",
-      "vendor/fonts/OFL.txt"
+      "vendor/fonts/OFL.txt",
+      "media-tools.json",
+      "media-tools-loader.cjs",
+      "youtube-auth.cjs",
+      "download-progress.js",
+      "message-outbox.cjs"
     ],
     "win": {
       "target": "zip",
@@ -65,6 +72,9 @@
         "to": "alloconnect-helper.exe"
       }
     ],
-    "afterPack": "build/afterPack.js"
+    "afterPack": "build/afterPack.js",
+    "asar": {
+      "smartUnpack": false
+    }
   }
 }

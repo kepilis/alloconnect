@@ -79,7 +79,8 @@ function showImage(bytes, mime, nick, pl) {
   while (imgs.length >= 3) imgs.shift().remove();
   const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
   const box = document.createElement('div');
-  box.className = pl ? 'img placed' : 'img';
+  box.className = (pl ? 'img placed' : 'img') + (pl?.frame === false ? ' media-frameless' : '');
+  if (pl?.nick === false) nick = '';
   const im = document.createElement('img');
   im.src = url;
   box.appendChild(im);
@@ -105,11 +106,12 @@ function showImage(bytes, mime, nick, pl) {
 
 // видео от друга: одно за раз, до минуты, громкость уже посчитана (его выбор × моя настройка)
 let vidBox = null;
-function showVideo(bytes, mime, nick, pl, vol, sink) {
-  if (vidBox) vidBox.kill();
+function showVideo(bytes, mime, nick, pl, vol, sink, fid=null) {
+  if (vidBox) vidBox.kill('replaced');
   const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
   const box = document.createElement('div');
-  box.className = 'vid';
+  box.className = 'vid' + (pl?.frame === false ? ' media-frameless' : '');
+  if (pl?.nick === false) nick = '';
   box.style.visibility = 'hidden';
   const v = document.createElement('video');
   v.playsInline = true;
@@ -118,34 +120,41 @@ function showVideo(bytes, mime, nick, pl, vol, sink) {
   box.appendChild(v);
   if (nick) { const s = document.createElement('span'); s.textContent = nick; box.appendChild(s); }
   let dead = false;
-  const kill = () => {
+  const kill = (reason='clear') => {
     if (dead) return;
     dead = true;
     clearTimeout(hard);
-    v.pause();
+    v.pause();v.removeAttribute('src');v.load();
+    window.ovl.videoState?.({playing:false,fid,reason});
     box.classList.add('out');
-    setTimeout(() => { box.remove(); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); }, 450);
+    setTimeout(() => { box.remove();URL.revokeObjectURL(url); }, 450);
     if (vidBox === box) vidBox = null;
   };
-  box.kill = kill;
-  const hard = setTimeout(kill, 61000);
+  box.kill = kill;box.fid=fid;
+  let hard = setTimeout(()=>kill('timeout'),30000);
   v.onloadedmetadata = () => {
+    clearTimeout(hard);
+    if (!Number.isFinite(v.duration) || v.duration > 6 * 60 * 60) { kill(); return; }
+    hard = setTimeout(()=>kill('timeout'),(6*60*60+30)*1000);
     const W = innerWidth, H = innerHeight;
     const p = pl || { x: 0.5, y: 0.3, w: 0.35 };
-    const aspect = v.videoHeight / Math.max(1, v.videoWidth);
+    const aspect = /^audio\//.test(mime) ? 0.2 : v.videoHeight / Math.max(1, v.videoWidth);
     let w = p.w * W, h = w * aspect;
     if (h > 0.9 * H) { h = 0.9 * H; w = h / aspect; }
     const x = Math.max(w / 2, Math.min(W - w / 2, p.x * W));
     const y = Math.max(h / 2, Math.min(H - h / 2, p.y * H));
     Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', width: w + 'px', height: h + 'px', visibility: 'visible', rotate: p.r ? p.r + 'deg' : '' });
   };
-  v.ontimeupdate = () => { if (v.currentTime > 60.5) kill(); };
-  v.onended = kill;
-  v.onerror = kill;
+  v.ontimeupdate = () => { if (v.currentTime > 6 * 60 * 60) kill(); };
+  v.onplaying=()=>{if(!dead)window.ovl.videoState?.({playing:true,fid})};
+  v.onended=()=>kill('ended');
+  v.onerror=()=>kill('error');
   (async () => {
     try { if (sink && v.setSinkId) await v.setSinkId(sink); } catch { /* */ }
-    v.src = url;
-    try { await v.play(); } catch { v.muted = true; v.play().catch(kill); }
+    if(dead)return;
+    v.src=url;
+    try {await v.play()}catch{if(dead)return;v.muted=true;v.play().catch(()=>kill('error'))}
+    if(dead){v.pause();v.removeAttribute('src');v.load()}
   })();
   document.body.appendChild(box);
   vidBox = box;
@@ -156,7 +165,7 @@ function cleanPl(pl) {
   const ok = (v) => typeof v === 'number' && Number.isFinite(v);
   if (!ok(pl.x) || !ok(pl.y) || !ok(pl.w)) return null;
   const r = ok(pl.r) ? Math.max(-180, Math.min(180, Math.round(pl.r))) : 0;
-  return { x: clamp(pl.x), y: clamp(pl.y), w: Math.max(0.03, Math.min(0.95, pl.w)), r };
+  return { x: clamp(pl.x), y: clamp(pl.y), w: Math.max(0.03, Math.min(0.95, pl.w)), r, frame: pl.frame !== false, nick: pl.nick !== false };
 }
 
 const clamp = (v) => Math.max(0, Math.min(1, Number(v) || 0));
@@ -183,7 +192,8 @@ window.ovl.on((m) => {
     case 'ptr': ptrs.set(String(m.pid || 'one').slice(0, 64), { x: clamp(m.x), y: clamp(m.y), nick: String(m.nick || '').slice(0, 24), c: /^#[0-9a-f]{6}$/i.test(m.c) ? m.c : '#ff3c50', ts: Date.now() }); kick(); break;
     case 'ptr-off': if (m.pid) ptrs.delete(String(m.pid)); else ptrs.clear(); kick(); break;
     case 'react': react(String(m.e || '').slice(0, 8)); break;
-    case 'vid': if (m.bytes) showVideo(m.bytes, /^video\//.test(String(m.mime)) ? String(m.mime) : 'video/mp4', String(m.nick || '').slice(0, 24), cleanPl(m.pl), Number(m.vol) || 0, String(m.sink || '').slice(0, 200)); break;
+    case 'vid-stop':if(vidBox&&vidBox.fid===m.fid)vidBox.kill('cancelled');break;
+    case 'vid': if (m.bytes) showVideo(m.bytes, /^(video|audio)\//.test(String(m.mime)) ? String(m.mime) : 'video/mp4', String(m.nick || '').slice(0, 24), cleanPl(m.pl), Number(m.vol) || 0, String(m.sink || '').slice(0, 200),Number.isInteger(m.fid)?m.fid:null); break;
     case 'img': if (m.bytes) showImage(m.bytes, String(m.mime || 'image/png'), String(m.nick || '').slice(0, 24), cleanPl(m.pl)); break;
     case 'pin': {
       const b = document.getElementById('banner');

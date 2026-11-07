@@ -1,0 +1,26 @@
+const {app,BrowserWindow}=require('electron'),fs=require('fs'),path=require('path');
+require('./main.js');
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+app.whenReady().then(async()=>{const results={};try{
+await sleep(2500);const w=BrowserWindow.getAllWindows().find(w=>w.getTitle()==='alloconnect');const js=s=>w.webContents.executeJavaScript(s);
+results.rendererReady=await js(`typeof startPlacement==='function' && typeof toggleFriendsDrawer==='function'`);
+results.youtubePriority=await js(`(()=>{const dt=new DataTransfer();dt.setData('text/uri-list','https://www.youtube.com/watch?v=jNQXAC9IVRw');dt.setData('text/html','<img src="https://example.com/thumbnail.jpg">');return droppedMediaUrl(dt).includes('youtube.com');})()`);
+results.cleanFlags=await js(`(()=>{const p=cleanPlacement({x:.5,y:.5,w:.3,frame:false,nick:false});return p.frame===false&&p.nick===false&&cleanPlacement({x:.5,y:.5,w:.3}).frame===true})()`);
+await js(`S.inCall=true;S.friendPerm={react:true,vid:true,mediaLong:true};$('lobby').classList.remove('active');$('call').classList.add('active');$('remoteScreenWrap').classList.remove('hidden');store.set('settings',{...settings(),mediaFrame:false,mediaNick:false});window.__canvas=document.createElement('canvas');__canvas.width=100;__canvas.height=100;__canvas.getContext('2d').fillRect(25,25,50,50);true`);
+await js(`new Promise(r=>__canvas.toBlob(b=>{startPlacement(new File([b],'alpha.png',{type:'image/png'}));r(true)}))`);await sleep(200);
+results.twoModes=await js(`document.querySelectorAll('[data-bg]').length===2 && !document.querySelector('[data-bg="person"]')`);
+results.framelessPreview=await js(`getComputedStyle(document.querySelector('.placer img')).boxShadow==='none' && document.querySelector('.placer-frame').checked===false`);
+results.frameToggle=await js(`(()=>{const c=document.querySelector('.placer-frame');c.checked=true;c.dispatchEvent(new Event('change'));return !placer.el.classList.contains('media-frameless')})()`);
+results.transferFlags=await js(`(()=>{queueFiles=(files,p,extra)=>window.__sent=extra.pl;commitPlacement();return __sent.frame===true && __sent.nick===false})()`);
+results.navKeepsCall=await js(`(()=>{toggleFriendsDrawer();$('frReturnCall').click();return S.inCall&&$('friendsDrawer').classList.contains('hidden')})()`);
+const longBytes=[...fs.readFileSync(process.env.MEDIA_TEST_LONG)];
+results.longVideo=await js(`(async()=>{const f=new File([new Uint8Array(${JSON.stringify(longBytes)})],'long.mp4',{type:'video/mp4'});const info=await probeVideo(f);if(info)URL.revokeObjectURL(info.url);return !!info&&info.dur>60})()`);
+const audioBytes=[...fs.readFileSync(process.env.MEDIA_TEST_AUDIO)];
+results.bigVideoDeclined=await js(`(async()=>{const old=window.confirm;window.confirm=()=>false;try {const f=new File([new Uint8Array(1)],'big.mp4',{type:'video/mp4'});Object.defineProperty(f,'size',{value:101*1048576});return await probeVideo(f)===null;} finally {window.confirm=old;}})()`);
+results.audioProbe=await js(`(async()=>{const f=new File([new Uint8Array(${JSON.stringify(audioBytes)})],'sound.mp3',{type:'audio/mpeg'});const info=await probeVideo(f);if(info)URL.revokeObjectURL(info.url);return !!info&&info.aspect===.2})()`);
+const ov=new BrowserWindow({show:false,webPreferences:{preload:path.join(__dirname,'overlay-preload.js'),contextIsolation:true,nodeIntegration:false}});await ov.loadFile(path.join(__dirname,'overlay.html'));
+const png=await js(`new Promise(r=>__canvas.toBlob(async b=>r([...new Uint8Array(await b.arrayBuffer())])))`);
+ov.webContents.send('ovl',{t:'img',bytes:new Uint8Array(png),mime:'image/png',nick:'sender',pl:{x:.5,y:.5,w:.3,frame:false,nick:false}});await sleep(400);
+results.overlayNoFrameNoNick=await ov.webContents.executeJavaScript(`document.querySelector('.img')?.classList.contains('media-frameless') && !document.querySelector('.img span') && getComputedStyle(document.querySelector('.img img')).boxShadow==='none'`);
+fs.writeFileSync(path.join(process.env.RESULT_DIR,'interface.png'),(await w.webContents.capturePage()).toPNG());
+}catch(e){results.error=String(e.stack||e)}fs.writeFileSync(path.join(process.env.RESULT_DIR,'results.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));app.exit(Object.values(results).every(v=>v===true)?0:1)});

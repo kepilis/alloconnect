@@ -1316,6 +1316,7 @@ function grpReset() {
 
 function grpLeave(text) {
   if (!G.active) return;
+  sound('leave');
   L('grp', { leave: text || 'self' });
   grpSendAll({ t: 'bye' });
   // до кого нет прямой связи — сообщаем по каналу друзей

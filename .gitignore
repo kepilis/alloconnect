@@ -3,3 +3,4 @@ dist/
 *.pem
 !build/update-public.pem
 *.log
+vendor/media-tools/

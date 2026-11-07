@@ -801,3 +801,64 @@ body.popbody > #gView.popped > .ggrid { flex: 1; min-height: 0; }
 /* «✂ Фон» — меню вариантов */
 .placer-bgwrap .tmenu { top: auto; bottom: calc(100% + 6px); flex-direction: column; align-items: stretch; min-width: 190px; }
 .placer-bgwrap .tmenu .btn { text-align: left; white-space: nowrap; }
+
+/* Media alpha stays transparent; framing is an explicit sender choice. */
+.media-frameless img, .media-frameless video { border-radius: 0 !important; box-shadow: none !important; background: transparent !important; border: 0 !important; }
+.placer-bar { flex-wrap: wrap; }
+.placer-bar label { white-space: nowrap; }
+.fr-drawer { width: min(360px, calc(100vw - 24px)); }
+.dm-head { flex-wrap: wrap; }
+#frReturnCall { margin: 8px; }
+
+.downloads-toggle { position:fixed; left:16px; top:40px; z-index:9; }
+.downloads-toggle.busy { border-color:var(--accent,#8b68ff); }
+.downloads-panel { position:fixed; left:16px; top:82px; width:min(390px,calc(100vw - 32px)); max-height:65vh; overflow:auto; z-index:9; background:var(--panel,#17191f); color:var(--text,#e8e9ee); border:1px solid var(--line,#41434c); border-radius:12px; box-shadow:0 10px 35px #0008; padding:14px; }
+.downloads-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.download-row { padding:12px 0; border-top:1px solid var(--line,#41434c); margin-top:10px; }
+.download-status { margin:5px 0; font-size:13px; overflow-wrap:anywhere; }
+.download-row progress { width:100%; height:12px; accent-color:var(--accent,#8b68ff); }
+.download-row small { display:block; margin-top:4px; }
+.download-row[data-stage="error"] .download-status { color:#ff8383; }
+.download-row[data-stage="ready"] .download-status { color:#65cf9e; }
+
+/* Respect reduced motion and the user's interface preference. */
+@media (prefers-reduced-motion:no-preference) {
+html:not(.no-ui-animations) :is(.btn,.ctl,.friend,.theme-card) { transition:background-color .14s ease,color .14s ease,border-color .14s ease; }
+html:not(.no-ui-animations) :is(.modal-card,.downloads-panel):not(.hidden) { animation:ui-appear .14s ease-out; }
+}
+@keyframes ui-appear { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+.no-ui-animations *, .no-ui-animations *::before, .no-ui-animations *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important;transition:none!important;scroll-behavior:auto!important; } }
+.downloads-head { flex-wrap:wrap; }
+.download-row[data-stage="ready"] .download-status { color:var(--text); }
+
+.help-row { display:flex;align-items:center;gap:8px; }
+.help-row>.big { flex:1;min-width:0; }
+.code-entry { width:100%; min-height:72px; resize:vertical; box-sizing:border-box; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--text); font:12px/1.4 Consolas, monospace; outline:none; user-select:text; word-break:break-all; }
+.code-entry::placeholder { color:var(--muted); }
+.code-entry:focus { border-color:var(--accent); }
+.code-create { margin-top:16px; }
+.code-create .help-row { margin-top:8px; }
+.code-create .link { margin-top:10px; }
+.help-i { color:var(--text);background:transparent;border:0;cursor:help;flex-shrink:0;font:18px/1.3 sans-serif; }
+.net-warning { border-left:3px solid var(--accent);padding:8px 10px;background:var(--panel-2);line-height:1.45; }
+
+.lobby-soundpad { position:fixed;right:16px;bottom:16px;z-index:8; }
+body:has(#call.active) .lobby-soundpad,body:has(#gcall.active) .lobby-soundpad { display:none; }
+.sp-library-tools { display:flex;flex-wrap:wrap;gap:6px;margin:8px 0; }
+.sp-library-tools input { min-width:100px;flex:1; }
+.sp-pick { position:absolute;top:5px;left:5px; }
+.sp-tile:has(.sp-pick:checked) { outline:2px solid var(--accent); }
+.sp-name { padding:0 12px;overflow-wrap:anywhere; }
+
+@media(max-width:700px) { .soundpad { width:calc(100vw - 24px);right:12px; } .sp-head { flex-wrap:wrap; } .modal-card { max-width:calc(100vw - 24px); } .lobby-card { max-width:calc(100vw - 24px);padding:22px; } #lobby { overflow:auto;align-items:flex-start;padding:64px 0 72px; } }
+
+#frGroupInvite { padding:8px;margin:6px 8px;border:1px solid var(--line);border-radius:8px; }
+#frGroupInvites { display:flex;flex-direction:column;gap:4px;max-height:180px;overflow:auto; }
+#frGroupCode { width:100%;min-width:0;margin:8px 0; }
+
+#lobby { overflow:auto;align-items:flex-start;padding:56px 12px 72px; }
+#lobby .lobby-card { margin:auto;flex-shrink:0;max-width:100%; }
+.sp-head { flex-wrap:wrap; }
+
+#settings { z-index:100; }

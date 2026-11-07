@@ -22,6 +22,7 @@
     </label>
 
     <!-- Шаг 0: выбор -->
+    <label class="field presence-field"><span>Мой статус <span id="presenceHint" class="help-i" tabindex="0" title="В сети: автоматически станет «Нет на месте» через 5 минут бездействия.">ⓘ</span></span><select id="presenceMode"><option value="online">В сети</option><option value="away">Нет на месте</option><option value="invisible">Невидимка</option><option value="offline">Не в сети</option><option value="dnd">Не беспокоить</option></select></label>
     <div id="stepHome" class="step active">
       <div id="rejoinBar" class="rejoin-bar hidden">
         <span id="rejoinText"></span>
@@ -37,11 +38,15 @@
         </div>
         <div id="netVerdictLobby" class="net-verdict wait small"></div>
       </div>
-      <button id="btnAddFriendCode" class="btn primary big">➕ Добавить друга</button>
-      <p class="muted small hint">Один короткий код — и друг в списке: звони в один клик, а 💬 — чат и файлы без звонка.</p>
-      <div class="or"><span>или позвонить без добавления</span></div>
-      <button id="btnInvite" class="btn big">Пригласить по коду</button>
-      <button id="btnHaveInvite" class="btn big">У меня есть код приглашения</button>
+      <div class="stepnum">Получил код от друга?</div>
+      <textarea id="codeEntry" class="code-entry" placeholder="Вставь код дружбы или приглашение" spellcheck="false" aria-label="Код друга"></textarea>
+      <p id="codeEntryPreview" class="muted small info" role="status">Приложение определит тип кода перед действием.</p>
+      <button id="codeEntryGo" class="btn primary big" disabled>Продолжить</button>
+      <details class="adv code-create"><summary>Создать свой код или приглашение</summary>
+        <div class="help-row"><button id="btnAddFriendCode" class="btn big">➕ Код дружбы</button><button type="button" class="help-i" title="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей." aria-label="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей.">ⓘ</button></div>
+        <div class="help-row"><button id="btnInvite" class="btn big">Приглашение на звонок</button><button type="button" class="help-i" title="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране." aria-label="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране.">ⓘ</button></div>
+        <button id="btnHaveInvite" class="link" type="button">Ввести приглашение вручную</button>
+      </details>
     </div>
 
     <!-- Ты приглашаешь -->
@@ -81,9 +86,7 @@
     </div>
 
     <p id="lobbyError" class="error"></p>
-    <button id="btnSettingsLobby" class="link">Настройки звука и сети</button>
-    <button id="btnOpenLogsLobby" class="link logs-link">Открыть папку с логами</button>
-    <p class="muted small test-note">Тестовая сборка: пишет подробный лог звонков. Когда стрим лагает — нажми <kbd>Ctrl+Shift+L</kbd>, в логе появится метка.</p>
+    <button id="btnSettingsLobby" class="link">Настройки</button>
   </div>
 </section>
 
@@ -95,7 +98,7 @@
     </div>
     <button id="btnAddFriend" class="btn small add-friend hidden">➕ В друзья</button>
     <div id="status" class="status waiting"><i></i><span>Ждём друга…</span></div>
-    <button id="btnFriendsCall" class="icon-btn fr-btn" title="Друзья и сообщения">👥<b class="badge hidden"></b></button>
+    <button id="btnFriendsCall" class="btn small fr-btn" title="Открыть звонки и сообщения, не завершая текущий звонок">☰ Звонки и сообщения<b class="badge hidden"></b></button>
     <button id="btnSettings" class="icon-btn" title="Настройки">⚙</button>
   </header>
 
@@ -146,6 +149,7 @@
           <span class="tag warn" id="remoteReason"></span>
           <label class="tag vol">🔊 <input type="range" id="screenVol" min="0" max="100" value="100" /></label>
           <button class="tag btn-tag" id="btnScreenMin" title="Свернуть демонстрацию — звук стрима выключится">— Свернуть</button>
+          <button class="tag btn-tag" id="btnSaveReplay" title="Сохранить последние секунды демонстрации">⏺ Сохранить повтор</button>
           <button class="tag btn-tag" id="btnFull">⛶ На весь экран</button>
         </div>
       </div>
@@ -205,7 +209,7 @@
     <div class="room"><b>Групповой звонок</b> <span class="muted small">тест</span></div>
     <button id="gInviteMore" class="btn small add-friend">➕ Позвать</button>
     <div id="gStatus" class="status waiting"><i></i><span>Ждём участников…</span></div>
-    <button id="gFriends" class="icon-btn fr-btn" title="Друзья и сообщения">👥<b class="badge hidden"></b></button>
+    <button id="gFriends" class="btn small fr-btn" title="Открыть звонки и сообщения, не завершая текущий звонок">☰ Звонки и сообщения<b class="badge hidden"></b></button>
     <button id="gSettings" class="icon-btn" title="Настройки">⚙</button>
   </header>
   <main class="stage">
@@ -415,7 +419,9 @@
 
 <!-- Друзья во время звонка (1.21): список и переписка, не выходя из звонка -->
 <div id="friendsDrawer" class="fr-drawer hidden">
-  <div class="fr-drawer-head"><b>Друзья</b><button type="button" class="icon-btn" id="frDrawerClose" title="Закрыть">✕</button></div>
+  <div class="fr-drawer-head"><b>Звонки и сообщения</b><button type="button" class="icon-btn" id="frDrawerClose" title="Закрыть">✕</button></div>
+  <button type="button" id="frReturnCall" class="btn small">↩ Вернуться в звонок</button>
+  <details id="frGroupInvite" class="adv"><summary>Позвать в группу</summary><div id="frGroupInvites"></div><details class="adv"><summary>По коду дружбы</summary><input id="frGroupCode" placeholder="ALOF.…" aria-label="Код дружбы для приглашения в группу" /><button id="frGroupCodeGo" class="btn small">Добавить и позвать</button><small class="muted">Новый участник сначала подтвердит дружбу, затем получит приглашение в группу.</small></details></details>
   <div id="frDrawerList" class="fr-drawer-list"></div>
 </div>
 
@@ -427,6 +433,8 @@
       <button id="dmCall" class="btn primary small">📞 Позвонить</button>
       <button id="dmSearchBtn" class="icon-btn" title="Поиск по переписке">🔍</button>
       <button id="dmClear" class="icon-btn" title="Очистить историю с этим другом">🗑</button>
+      <button type="button" id="dmFriends" class="btn small">☰ Сообщения</button>
+      <button type="button" id="dmReturnCall" class="btn small">↩ В звонок</button>
       <button id="dmClose" class="icon-btn" title="Закрыть">✕</button>
     </div>
     <div id="dmMessages" class="messages dm-messages"></div>
@@ -461,10 +469,19 @@
     <details class="scat" data-cat="theme">
       <summary>🎨 Оформление</summary>
       <div class="scat-body">
+      <label class="field"><span>Масштаб интерфейса</span><select id="uiScale"><option value="1">100%</option><option value="1.1">110%</option><option value="1.25">125%</option></select><small class="muted">Увеличивает текст и кнопки вместе, сохраняя пропорции. Применяется сразу.</small></label>
+      <label class="check"><input type="checkbox" id="optAnimations" checked /><span>Плавные анимации интерфейса</span></label>
       <div id="themeGrid" class="theme-grid"></div>
       <small class="muted">Тема только у тебя — у друга остаётся его собственная.</small>
       </div>
     </details>
+
+    <details class="scat" data-cat="downloads"><summary>⬇ Загрузки и файлы</summary><div class="scat-body">
+      <label class="check"><input type="checkbox" id="optDownloadsAuto" checked /><span>Автоматически показывать загрузки на секунду</span></label>
+      <label class="check"><input type="checkbox" id="optSaveChatFiles" checked /><span>Сохранять файлы чатов на этом ПК</span></label>
+      <button id="btnChatFolder" class="btn small" type="button">Папка файлов чатов</button>
+      <small class="muted">Отключение действует на новые файлы. Уже сохранённые файлы остаются на диске.</small>
+    </div></details>
 
     <details class="scat" data-cat="sound">
       <summary>🔊 Звук и микрофон</summary>
@@ -534,7 +551,7 @@
     <div class="ringbox">
       <div class="ringbox-head">Поверх моего стрима</div>
       <label class="check"><input type="checkbox" id="optOvlDraw" /> <span>Друг может показывать указку и рисовать поверх моего экрана</span></label>
-      <label class="check"><input type="checkbox" id="optOvlReact" /> <span>Друг может присылать реакции, картинки, гифки и видео поверх моего экрана <small class="muted">(картинки — на пару секунд, видео — до минуты)</small></span></label>
+      <label class="check"><input type="checkbox" id="optOvlReact" /> <span>Друг может присылать реакции, картинки, гифки и видео поверх моего экрана <small class="muted">(картинки — на пару секунд, видео — до окончания воспроизведения)</small></span></label>
       <label class="check"><input type="checkbox" id="optSvidSound" /> <span>Звук у видео, которые присылает друг</span></label>
       <label class="field inline ring-vol"><span>Громкость видео</span><input type="range" id="svidInVol" min="0" max="100" step="5" value="80" /><b id="svidInVolVal" class="small">80%</b></label>
       <label class="check"><input type="checkbox" id="optCtlAllow" /> <span>Друг может попросить управление <small class="muted">(каждый раз спрошу разрешение)</small></span></label>
@@ -554,9 +571,18 @@
         <option value="4000">4 Мбит/с — хороший интернет</option>
       </select>
     </label>
+    <details class="adv" data-cat="youtube">
+      <summary>Перенос ссылок с YouTube <span class="help-i" title="Вставь ссылку YouTube в чат или перетащи на демонстрацию: приложение загрузит видео или звук для отправки другу. Для ограниченных видео нужен вход в YouTube." tabindex="0" aria-label="О переносе ссылок с YouTube">ⓘ</span></summary><div class="scat-body">
+      <label class="check"><input type="checkbox" id="youtubeAuthEnabled" /><span>Использовать вход в YouTube из браузера</span></label>
+      <label class="field"><span>Браузер с нужным аккаунтом YouTube</span><select id="youtubeAuthBrowser"><option value="auto">Браузер по умолчанию</option><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option><option value="firefox">Mozilla Firefox</option><option value="brave">Brave</option><option value="opera">Opera</option><option value="vivaldi">Vivaldi</option></select></label>
+      <p id="youtubeAuthStatus" class="muted small"></p>
+      <p class="muted small">Применяется сразу. В выбранном браузере должен быть выполнен вход в аккаунт, которому доступно видео. Куки остаются на этом ПК. Защита браузера может ограничивать чтение входа.</p>
+      </div></details>
     <label class="check"><input type="checkbox" id="optAv1" /> <span>AV1 через видеокарту <small class="muted">(экспериментально: RTX 40/50, RX 7000, Arc; применится после перезапуска)</small></span></label>
       </div>
     </details>
+
+
 
     <details class="scat" data-cat="keys">
       <summary>⌨ Горячие клавиши</summary>
@@ -601,6 +627,10 @@
     <details class="scat" data-cat="net">
       <summary>🌐 Сеть</summary>
       <div class="scat-body">
+      <p class="net-warning" role="note">Настройки для опытных пользователей. Неверные значения могут нарушить связь. Если звонки работают, оставь значения по умолчанию.</p>
+      <details class="adv"><summary>Как настроить связь</summary><p>Сначала проверь связь кнопкой «Перепроверить». STUN помогает найти прямой маршрут: оставь его включённым. Альтернативный список нужен, если обычный STUN недоступен.</p><p>Если напрямую не соединяется, попробуйте оба подключиться к одной сети Tailscale. TURN пересылает медиатрафик через указанный сервер: нужны адрес и учётные данные от владельца. «Только через TURN» включай лишь с рабочим сервером. Резерв связи помогает обмену приглашениями и не заменяет TURN для звука и видео.</p><p>Проверь новый звонок после изменения. При ухудшении верни прежние значения.</p></details>
+      <p class="net-warning" role="note">Настройки для опытных пользователей. Неверные значения могут нарушить связь. Если звонки работают, оставь значения по умолчанию.</p>
+      <details class="adv"><summary>Как настроить связь</summary><p>Сначала проверь связь кнопкой «Перепроверить». STUN помогает устройствам найти прямой маршрут: оставь его включённым. Альтернативный список нужен, если обычный STUN недоступен.</p><p>Если прямое соединение не устанавливается, попробуйте оба подключиться к одной сети Tailscale. TURN пересылает медиатрафик через указанный сервер: нужны его адрес и учётные данные. «Только через TURN» включай лишь с рабочим сервером. Резерв связи помогает обмену приглашениями и не заменяет TURN для звука и видео.</p><p>После изменения проверь новый звонок. При ухудшении верни прежние значения. Адреса и пароли бери у владельца своего сервера.</p></details>
     <div class="netbox">
       <div class="netbox-head">Сеть и звонки друзьям</div>
       <div id="netVerdict" class="net-verdict wait">Проверяю сеть…</div>
@@ -616,6 +646,10 @@
       <label class="field"><span>Свои STUN-серверы <small class="muted">(по одному на строку, например stun.example.com:3478; если заполнено — используются только они)</small></span>
         <textarea id="stunCustom" class="stun-custom" rows="3" spellcheck="false" placeholder="stun.example.com:3478"></textarea></label>
       <p class="muted small">Если у кого-то строгий NAT и напрямую не соединяется — проще всего поставить обоим Tailscale. Либо указать TURN-сервер (через него пойдёт трафик):</p>
+      <label class="field"><span>Резерв связи — адрес своего сервера (необязательно)</span><input id="relayUrl" placeholder="https://адрес-сервера" autocomplete="off" /></label>
+      <p class="muted small" id="relayStatus"></p>
+      <label class="field"><span>ID этого устройства для доступа к своему серверу</span><input id="relayDeviceId" readonly /></label>
+      <p class="muted small">Резерв помогает доставить вызов, когда прямой путь недоступен. Пакеты остаются зашифрованными. Настройки VPN не меняются.</p>
       <label class="field"><span>TURN адрес</span><input id="turnUrl" placeholder="turn:example.com:3478" /></label>
       <label class="field"><span>TURN логин</span><input id="turnUser" /></label>
       <label class="field"><span>TURN пароль</span><input id="turnPass" type="password" /></label>
@@ -639,6 +673,9 @@
     <button id="spClose" class="icon-btn">✕</button>
     <input type="file" id="spFile" multiple accept="audio/*,video/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac,.mp4,.webm,.mkv,.mov" class="hidden" />
   </div>
+  <div class="sp-library-tools"><input id="spSearch" type="search" placeholder="Найти звук" aria-label="Найти звук" /><select id="spCategory" aria-label="Категория"><option value="">Все категории</option></select><button id="spDeleteSelected" class="btn small">Удалить выбранные (0)</button><button id="spFolder" class="btn small">Папка звуков</button></div>
+  <details class="adv"><summary>Переместить выбранные в категорию</summary><div class="sp-library-tools"><input id="spMoveCategory" maxlength="40" placeholder="Категория (пусто — без категории)" /><button id="spMoveSelected" class="btn small">Переместить</button></div></details>
+  <small class="muted">Приложение хранит свою копию звуков. Отмечай файлы галочками для удаления.</small>
   <div id="spGrid" class="sp-grid"></div>
   <div id="spEmpty" class="sp-empty muted small">Перетащи сюда звук или видео (из видео возьмётся звук) или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
   <div class="sp-opts">
@@ -647,6 +684,7 @@
     <label class="check"><input type="checkbox" id="spWhenMuted" checked /> <span>Играть, даже когда микрофон выключен</span></label>
   </div>
   <div id="spEdit" class="sp-edit hidden">
+    <input id="spEditCategory" maxlength="40" placeholder="Категория (необязательно)" />
     <input id="spEditName" maxlength="40" placeholder="Название" />
     <label class="sp-vol">Громкость <input type="range" id="spEditVol" min="0" max="200" value="100" /></label>
     <span class="sp-keygrp"><button id="spEditKey" class="btn small">⌨ Клавиша: —</button><button id="spEditKeyClear" class="sp-keyx" title="Убрать клавишу">✕</button></span>
@@ -657,6 +695,13 @@
 </div>
 
 <div id="dropOverlay" class="drop-overlay hidden"><div>Отпусти, чтобы отправить другу</div></div>
+<button type="button" id="btnSoundpadLobby" class="btn lobby-soundpad">♫ Саундпад</button>
+<button type="button" id="downloadsToggle" class="btn small downloads-toggle hidden">⬇ Загрузки</button>
+<aside id="downloadsPanel" class="downloads-panel hidden" aria-label="Загрузки компонентов">
+  <div class="downloads-head"><b>Загрузки</b><button type="button" id="downloadsHide" class="btn small">Скрыть</button></div>
+  <button type="button" id="downloadsClear" class="btn small">Очистить загрузки</button>
+  <div id="downloadsList" aria-live="polite"></div>
+</aside>
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
 <div id="toast" class="toast"></div>
@@ -669,6 +714,7 @@
 <script src="gif-shrink.js"></script>
 <script src="group.js"></script>
 <script src="group-bridge.js"></script>
+<script src="download-progress.js"></script>
 <script src="renderer.js"></script>
 <script src="camera.js"></script>
 <script src="windows.js"></script>
