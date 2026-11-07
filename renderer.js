@@ -2943,8 +2943,9 @@ function spUpdateGains() {
 }
 
 async function spLoadList() {
-  const d = await window.duo.soundsList().catch(() => ({ list: [], stopKey: '' }));
+  const d = await window.duo.soundsList().catch(() => ({ list: [], categories: [], stopKey: '' }));
   spList = d.list;
+  spCategories = d.categories || [];
   spStopKey = d.stopKey || '';
   spRender();
 }
@@ -2952,37 +2953,111 @@ async function spLoadList() {
 const prettyKey = (k) => (k || '').replace('CommandOrControl', 'Ctrl').replace(/num(\d)/i, 'Num$1').replace(/\+/g, '+');
 
 const spSelected=new Set();
+let spCategories=[],spManaging=false,spLastSelect=null;
+const spClosedCategories=new Set();
 function spRender() {
   const g = $('spGrid');
-  g.innerHTML = '';
+  g.replaceChildren();
   $('spEmpty').classList.toggle('hidden', spList.length > 0);
   $('spStopKey').textContent = spStopKey ? prettyKey(spStopKey) : '';
-  const category=$('spCategory').value,cats=[...new Set(spList.map(s=>s.category).filter(Boolean))].sort();
-  $('spCategory').replaceChildren(new Option('Все категории',''),...cats.map(c=>new Option(c,c)));$('spCategory').value=cats.includes(category)?category:'';
   const query=$('spSearch').value.trim().toLocaleLowerCase();
   for(const id of spSelected)if(!spList.some(s=>s.id===id))spSelected.delete(id);
   $('spDeleteSelected').textContent='Удалить выбранные ('+spSelected.size+')';$('spDeleteSelected').disabled=!spSelected.size;
-  for (const s of spList.filter(s=>(!category||s.category===category)&&(!query||s.name.toLocaleLowerCase().includes(query)))) {
+  $('spCopy').disabled=!spSelected.size;
+  const categories=['',...new Set([...spCategories,...spList.map(s=>s.category||'')].filter(Boolean))].sort((a,b)=>!a?-1:!b?1:a.localeCompare(b));
+  for(const category of categories){
+    const sounds=spList.filter(s=>(s.category||'')===category&&(!query||s.name.toLocaleLowerCase().includes(query)));
+    if(!sounds.length&&(!spManaging||!category||query))continue;
+    const section=document.createElement('details');section.className='sp-category';section.dataset.category=category;section.open=query||!spClosedCategories.has(category);
+    const summary=document.createElement('summary');summary.textContent=(category||'Без категории')+' · '+sounds.length;section.appendChild(summary);
+    const tiles=document.createElement('div');tiles.className='sp-group-grid';section.appendChild(tiles);
+    section.addEventListener('toggle',()=>{if(section.open)spClosedCategories.delete(category);else spClosedCategories.add(category)});
+    for (const s of sounds) {
     const t = document.createElement('div');
-    t.className = 'sp-tile' + (spPlaying.has(s.id) ? ' playing' : '');
+    t.className = 'sp-tile' + (spPlaying.has(s.id) ? ' playing' : '')+(spSelected.has(s.id)&&spManaging?' selected':'');
     t.dataset.id = s.id;
+    t.tabIndex=0;
+    t.setAttribute('role','button');
+    t.setAttribute('aria-selected',String(spSelected.has(s.id)&&spManaging));
     const n = document.createElement('div');
     n.className = 'sp-name';
     n.textContent = s.name;
     const k = document.createElement('div');
     k.className = 'sp-key';
     k.textContent = s.hotkey ? prettyKey(s.hotkey) : ' ';
-    const more = document.createElement('button');
-    more.className = 'sp-more';
-    more.textContent = '⋯';
-    more.title = 'Настроить';
-    more.onclick = (e) => { e.stopPropagation(); spOpenEdit(s.id); };
-    const pick=document.createElement('input');pick.type='checkbox';pick.className='sp-pick';pick.checked=spSelected.has(s.id);pick.setAttribute('aria-label','Выбрать '+s.name);pick.onclick=e=>e.stopPropagation();pick.onchange=()=>{if(pick.checked)spSelected.add(s.id);else spSelected.delete(s.id);spRender()};
-    t.append(pick,n, k, more);
-    t.onclick = () => (spPlaying.has(s.id) ? spStop(s.id) : spPlay(s.id));
-    t.oncontextmenu = (e) => { e.preventDefault(); spOpenEdit(s.id); };
-    g.appendChild(t);
+    t.append(n,k);
+    t.onclick = () => {if(spManaging)return;spPlaying.has(s.id)?spStop(s.id):spPlay(s.id)};
+    t.onkeydown=e=>{if(spManaging&&(e.key==='Enter'||e.key===' ')){e.preventDefault();spSelectOne(s.id,e.ctrlKey||e.metaKey)}else if(!spManaging&&(e.key==='Enter'||e.key===' ')){e.preventDefault();t.click()}};
+    t.oncontextmenu = (e) => { e.preventDefault();if(spManaging&&!spSelected.has(s.id)){spSelected.clear();spSelected.add(s.id);spRender()}spOpenContext(e.clientX,e.clientY,s.id) };
+    tiles.appendChild(t);
+    }
+    g.appendChild(section);
   }
+  spRenderHotkeys();
+}
+
+function spSetManaging(on){
+  spManaging=!!on;spSelected.clear();spLastSelect=null;spCapture=null;
+  $('soundpad').classList.toggle('managing',spManaging);
+  $('spManage').textContent=spManaging?'Готово':'Редактировать';
+  $('spManageTools').classList.toggle('hidden',!spManaging);
+  $('spEditHint').classList.toggle('hidden',!spManaging);
+  $('spEdit').classList.add('hidden');$('spHotkeysPanel').classList.add('hidden');
+  $('spContext').classList.add('hidden');spRender();
+}
+function spSelectOne(id,add=false,range=false){
+  if(range&&spLastSelect){const order=[...$('spGrid').querySelectorAll('.sp-tile')].map(t=>t.dataset.id),a=order.indexOf(spLastSelect),b=order.indexOf(id);if(a>=0&&b>=0){if(!add)spSelected.clear();for(const key of order.slice(Math.min(a,b),Math.max(a,b)+1))spSelected.add(key)}}
+  else if(add){if(spSelected.has(id))spSelected.delete(id);else spSelected.add(id)}
+  else{spSelected.clear();spSelected.add(id)}
+  spLastSelect=id;spRender();
+}
+function spRenderHotkeys(){
+  const box=$('spHotkeyList');if(!box)return;box.replaceChildren();
+  for(const s of [...spList].sort((a,b)=>a.name.localeCompare(b.name))){const row=document.createElement('div');row.className='sp-hotkey-row';const name=document.createElement('span');name.textContent=s.name;const key=document.createElement('button');key.className='btn small';key.textContent=spCapture===s.id?'Нажми сочетание…':prettyKey(s.hotkey)||'Назначить';key.onclick=()=>{spCapture=s.id;spRenderHotkeys()};row.append(name,key);box.appendChild(row)}
+}
+async function spDelete(ids){
+  if(!ids.length||!confirm(`Удалить звуки: ${ids.length}?`))return;
+  for(const id of ids){spStop(id);await window.duo.soundsRemove(id);spBuffers.delete(id);spSelected.delete(id)}
+  await spLoadList();
+}
+async function spCopy(ids){
+  if(!ids.length)return;
+  try{const r=await window.duo.soundsCopyFiles(ids);toast(`Скопировано звуков: ${r.count}. В саундпаде вставятся кнопки, в Windows — файлы.`)}catch(e){toast('Не удалось скопировать: '+(e.message||e))}
+}
+async function spPaste(){
+  try{const ids=await window.duo.soundsPasteCopied();if(!ids.length){toast('Сначала скопируй звуки в саундпаде');return}const made=await window.duo.soundsClone(ids);await spLoadList();spSelected.clear();for(const s of made)spSelected.add(s.id);spRender();toast(`Вставлено звуков: ${made.length}`)}catch(e){toast('Не удалось вставить: '+(e.message||e))}
+}
+async function spMove(ids,category){
+  for(const id of ids)await window.duo.soundsUpdate(id,{category});
+  spSelected.clear();await spLoadList();toast(`Перемещено звуков: ${ids.length}`);
+}
+async function spRename(id){
+  const s=spList.find(x=>x.id===id);if(!s)return;
+  const name=prompt('Новое название звука',s.name)?.trim();if(!name||name===s.name)return;
+  await window.duo.soundsUpdate(id,{name});await spLoadList();
+}
+function spOpenContext(x,y,id){
+  const menu=$('spContext');menu.replaceChildren();
+  const ids=spManaging?[...spSelected]:[id];
+  const item=(label,fn,disabled=false)=>{const b=document.createElement('button');b.type='button';b.className='sp-context-item';b.textContent=label;b.disabled=disabled;b.onclick=()=>{menu.classList.add('hidden');Promise.resolve(fn()).catch(e=>toast(e.message||String(e)))};menu.appendChild(b)};
+  const heading=document.createElement('b');heading.className='sp-context-heading';heading.textContent=spManaging?`${ids.length} выбрано`:(spList.find(s=>s.id===id)?.name||'Звук');menu.appendChild(heading);
+  if(spManaging){
+    item('▶ Воспроизвести',()=>{for(const key of ids)spPlay(key)});
+    item('Копировать',()=>spCopy(ids));item('Вставить',spPaste);
+    if(ids.length===1)item('Переименовать',()=>spRename(ids[0]));
+    item('Без категории',()=>spMove(ids,''));
+    for(const category of spCategories)item('Добавить в категорию «'+category+'»',()=>spMove(ids,category));
+    if(ids.length===1)item('Громкость и клавиша…',()=>spOpenEdit(ids[0]));
+    item('Удалить',()=>spDelete(ids));
+  }else{
+    item('▶ Воспроизведение (динамики и микрофон)',()=>spPlay(id,'both'));
+    item('▶ Воспроизвести на динамиках',()=>spPlay(id,'speakers'));
+    item('▶ Воспроизвести на микрофоне',()=>spPlay(id,'mic'));
+    item('⌨ Задать горячую клавишу',()=>{spSetManaging(true);$('spHotkeysPanel').classList.remove('hidden');spCapture=id;spRenderHotkeys()});
+    item('📤 Отправить другу',()=>spShare(id),!inAnyCall());
+    item('Удалить',()=>spDelete([id]));
+  }
+  menu.classList.remove('hidden');menu.style.left=Math.min(x,innerWidth-menu.offsetWidth-8)+'px';menu.style.top=Math.min(y,innerHeight-menu.offsetHeight-8)+'px';
 }
 
 async function spGetBuffer(id) {
@@ -2994,7 +3069,7 @@ async function spGetBuffer(id) {
   return buf;
 }
 
-async function spPlay(id) {
+async function spPlay(id,route='default') {
   const s = spList.find((x) => x.id === id);
   if (!s) return;
   try {
@@ -3006,8 +3081,9 @@ async function spPlay(id) {
     const g = c.createGain();
     g.gain.value = (Number(s.vol) || 100) / 100;
     src.connect(g);
-    g.connect(spBus());
-    g.connect(spNodes.mon);
+    if(route!=='speakers')g.connect(spBus());
+    if(route==='speakers'||route==='both')g.connect(master);
+    else if(route==='default')g.connect(spNodes.mon);
     src.onended = () => { if (spPlaying.get(id) === src) { spPlaying.delete(id); spRender(); spBitrate(); } };
     spPlaying.set(id, src);
     src.start();
@@ -3104,7 +3180,6 @@ function spOpenEdit(id) {
   spCapture = null;
   $('spEdit').classList.remove('hidden');
   $('spEditName').value = s.name;
-  $('spEditCategory').value=s.category||'';
   $('spEditVol').value = String(s.vol ?? 100);
   $('spEditKey').classList.remove('capture');
   $('spEditKey').textContent = '⌨ ' + (s.hotkey ? prettyKey(s.hotkey) : 'Клавиша: —');
@@ -3114,7 +3189,7 @@ function spOpenEdit(id) {
 async function spSaveEdit() {
   const id = spEditId;
   if (!id) return;
-  await window.duo.soundsUpdate(id, { category:$('spEditCategory').value, name: $('spEditName').value.trim() || 'звук', vol: Number($('spEditVol').value) });
+  await window.duo.soundsUpdate(id, { name: $('spEditName').value.trim() || 'звук', vol: Number($('spEditVol').value) });
   spBuffers.delete(id);
   $('spEdit').classList.add('hidden');
   spEditId = null;
@@ -3142,10 +3217,22 @@ function accelFromEvent(e) {
 }
 
 function spBind() {
-  $('spMoveSelected').onclick=async()=>{const ids=[...spSelected];if(!ids.length){toast('Сначала отметь звуки галочками');return}const category=$('spMoveCategory').value.trim();for(const id of ids)await window.duo.soundsUpdate(id,{category});spSelected.clear();await spLoadList();toast('Перемещено звуков: '+ids.length)};
-  $('spSearch').oninput=spRender;$('spCategory').onchange=spRender;
+  $('spSearch').oninput=spRender;
   $('spFolder').onclick=()=>window.duo.soundsFolder();
-  $('spDeleteSelected').onclick=async()=>{const ids=[...spSelected];if(!ids.length||!confirm('Удалить звуки: '+ids.length+'?'))return;for(const id of ids){spStop(id);await window.duo.soundsRemove(id);spBuffers.delete(id);spSelected.delete(id)}await spLoadList()};
+  $('spManage').onclick=()=>spSetManaging(!spManaging);
+  $('spCreateCategory').onclick=async()=>{const name=prompt('Название новой категории')?.trim();if(!name)return;try{await window.duo.soundsCategoryCreate(name);await spLoadList()}catch(e){toast(e.message||String(e))}};
+  $('spCopy').onclick=()=>spCopy([...spSelected]);$('spPaste').onclick=spPaste;
+  $('spDeleteSelected').onclick=()=>spDelete([...spSelected]);
+  $('spHotkeys').onclick=()=>{$('spHotkeysPanel').classList.toggle('hidden');spRenderHotkeys()};
+  $('spHotkeysClose').onclick=()=>$('spHotkeysPanel').classList.add('hidden');
+  document.body.appendChild($('spContext'));
+  document.addEventListener('mousedown',e=>{if(!$('spContext').classList.contains('hidden')&&!$('spContext').contains(e.target))$('spContext').classList.add('hidden')});
+  let drag=null;const grid=$('spGrid'),box=document.createElement('div');box.className='sp-selection-box hidden';document.body.appendChild(box);
+  grid.addEventListener('pointerdown',e=>{if(!spManaging||e.button!==0||e.target.closest('summary'))return;const tile=e.target.closest('.sp-tile');drag={x:e.clientX,y:e.clientY,id:tile?.dataset.id||null,base:new Set(e.ctrlKey||e.metaKey?spSelected:[]),add:e.ctrlKey||e.metaKey,shift:e.shiftKey,moved:false};e.preventDefault()});
+  window.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(!drag.moved&&Math.hypot(dx,dy)<5)return;drag.moved=true;const left=Math.min(drag.x,e.clientX),top=Math.min(drag.y,e.clientY),right=Math.max(drag.x,e.clientX),bottom=Math.max(drag.y,e.clientY);Object.assign(box.style,{left:left+'px',top:top+'px',width:(right-left)+'px',height:(bottom-top)+'px'});box.classList.remove('hidden');spSelected.clear();for(const id of drag.base)spSelected.add(id);for(const tile of grid.querySelectorAll('.sp-tile')){const r=tile.getBoundingClientRect();if(r.width&&r.height&&r.left<right&&r.right>left&&r.top<bottom&&r.bottom>top)spSelected.add(tile.dataset.id);tile.classList.toggle('selected',spSelected.has(tile.dataset.id))}e.preventDefault()});
+  window.addEventListener('pointerup',e=>{if(!drag)return;const d=drag;drag=null;box.classList.add('hidden');if(d.moved){spRender();return}if(d.id)spSelectOne(d.id,d.add,d.shift);else if(!d.add){spSelected.clear();spRender()}e.preventDefault()});
+  document.addEventListener('paste',e=>{if(!spManaging||$('soundpad').classList.contains('hidden')||!$('soundpad').contains(document.activeElement))return;e.preventDefault();const files=filesFromEvent(e.clipboardData);window.duo.soundsPasteCopied().then(ids=>ids.length?spPaste():files.length?spAddFiles(files):toast('В буфере нет звуков'))},true);
+  document.addEventListener('keydown',e=>{if(!spManaging||$('soundpad').classList.contains('hidden')||spCapture||e.target.closest?.('input,textarea,[contenteditable]'))return;if(e.key==='Delete'&&spSelected.size){e.preventDefault();spDelete([...spSelected])}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='c'&&spSelected.size){e.preventDefault();spCopy([...spSelected])}else if(e.key==='Escape')$('spContext').classList.add('hidden')},true);
   $('btnSoundpadLobby').onclick=()=>$('btnSoundpad').click();
   $('uiScale').onchange=()=>{const scale=Number($('uiScale').value);store.set('settings',{...settings(),uiScale:scale});window.duo.uiScale(scale)};
   $('btnChatFolder').onclick=()=>window.duo.histFolder();
@@ -3157,7 +3244,7 @@ function spBind() {
     $('btnSoundpad').classList.toggle('on-pad', !p.classList.contains('hidden'));
     if (!p.classList.contains('hidden')) spLoadList();
   };
-  $('spClose').onclick = () => { $('soundpad').classList.add('hidden'); $('btnSoundpad').classList.remove('on-pad'); };
+  $('spClose').onclick = () => { $('soundpad').classList.add('hidden'); $('btnSoundpad').classList.remove('on-pad'); spSetManaging(false); };
   $('spAdd').onclick = () => $('spFile').click();
   $('spFile').onchange = (e) => { spAddFiles([...e.target.files]); e.target.value = ''; };
   $('spStop').onclick = (e) => { if (e.target.id === 'spStopKey') return; spStopAll(); };
@@ -3176,17 +3263,6 @@ function spBind() {
   for (const id of ['spVolOut', 'spVolMon']) $(id).oninput = saveOpts;
   for (const id of ['spMonitor', 'spWhenMuted']) $(id).onchange = saveOpts;
   $('spEditDone').onclick = spSaveEdit;
-  $('spEditDel').onclick = async () => {
-    const id = spEditId;
-    const s = spList.find((x) => x.id === id);
-    if (!id || !confirm(`Удалить «${s?.name}»?`)) return;
-    spStop(id);
-    await window.duo.soundsRemove(id);
-    spBuffers.delete(id);
-    $('spEdit').classList.add('hidden');
-    spEditId = null;
-    spLoadList();
-  };
   $('spEditKey').onclick = () => { spCapture = spEditId; $('spEditKey').classList.add('capture'); $('spEditKey').textContent = 'Нажми сочетание…'; };
   $('spEditKeyClear').onclick = async () => { if (!spEditId) return; await window.duo.soundsUpdate(spEditId, { hotkey: '' }); await spLoadList(); spOpenEdit(spEditId); };
   document.addEventListener('keydown', async (e) => {
@@ -3195,7 +3271,7 @@ function spBind() {
     e.preventDefault();
     e.stopPropagation();
     const target = spCapture;
-    if (e.key === 'Escape') { spCapture = null; if (target !== '__stop') spOpenEdit(target); return; }
+    if (e.key === 'Escape') { spCapture = null; if (target !== '__stop'&&!$('spEdit').classList.contains('hidden')) spOpenEdit(target);spRenderHotkeys(); return; }
     let acc = e.key === 'Backspace' ? '' : accelFromEvent(e);
     if (acc === 'NEED_MOD') { toast('Добавь Ctrl, Alt или Shift — иначе клавиша перестанет работать в других программах'); return; }
     if (acc === null) { toast('Эту клавишу назначить нельзя'); return; }
@@ -3204,7 +3280,8 @@ function spBind() {
     if (acc && r && r.ok === false) toast(`${prettyKey(acc)} уже занято другой программой — выбери другое сочетание`);
     else if (acc) toast(`Назначено: ${prettyKey(acc)}`);
     await spLoadList();
-    if (target !== '__stop') spOpenEdit(target);
+    if (target !== '__stop'&&!$('spEdit').classList.contains('hidden')) spOpenEdit(target);
+    spRenderHotkeys();
   }, true);
   spLoadList();
 }
@@ -3262,6 +3339,7 @@ async function openSettings() {
   $('uiScale').value=String(o.uiScale||1);
   $('optAnimations').checked = o.animations !== false;
   $('optDownloadsAuto').checked = o.downloadsAuto !== false;
+  $('downloadsDuration').value = String(Number.isInteger(Number(o.downloadsDuration)) && Number(o.downloadsDuration) >= 0 && Number(o.downloadsDuration) <= 10 ? Number(o.downloadsDuration) : 3);
   $('optNoise').checked = o.noise;
   $('optRnn').checked = o.rnn !== false;
   $('optEcho').checked = o.echo;
@@ -3386,6 +3464,7 @@ async function saveSettings() {
     sounds: $('optSounds').checked,
     animations: $('optAnimations').checked,
     downloadsAuto: $('optDownloadsAuto').checked,
+    downloadsDuration: Number($('downloadsDuration').value),
     ringVol: Number($('ringVol').value),
     ringMute: $('optRingMute').checked,
     noStun: $('optNoStun').checked,
@@ -3456,7 +3535,24 @@ async function saveSettings() {
 /* =========================================================
    Привязка событий
    ========================================================= */
+function helpBind() {
+  const tip=document.createElement('div');tip.className='help-tooltip hidden';tip.setAttribute('role','tooltip');document.body.appendChild(tip);
+  let active=null;
+  const hide=()=>{tip.classList.add('hidden');active=null};
+  const show=el=>{const msg=el.dataset.help;if(!msg)return;active=el;tip.textContent=msg;tip.classList.remove('hidden');const r=el.getBoundingClientRect(),w=tip.getBoundingClientRect().width;tip.style.left=Math.max(12,Math.min(innerWidth-w-12,r.left))+'px';tip.style.top=(r.bottom+tip.offsetHeight+12<innerHeight?r.bottom+8:r.top-tip.offsetHeight-8)+'px'};
+  for(const el of document.querySelectorAll('.help-i')){
+    el.dataset.help=el.getAttribute('title')||el.getAttribute('aria-label')||'';el.removeAttribute('title');el.textContent='i';
+    if(!el.hasAttribute('aria-label'))el.setAttribute('aria-label',el.dataset.help);
+    if(el.tagName!=='BUTTON'){el.setAttribute('role','button');el.tabIndex=0}
+    el.addEventListener('mouseenter',()=>show(el));el.addEventListener('mouseleave',hide);
+    el.addEventListener('focus',()=>show(el));el.addEventListener('blur',hide);
+    el.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();active===el?hide():show(el)});
+    el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();active===el?hide():show(el)}if(e.key==='Escape')hide()});
+  }
+  document.addEventListener('mousedown',e=>{if(active&&!active.contains(e.target))hide()});
+}
 function bind() {
+  helpBind();
   $('nick').value = store.get('nick', '');
   // ник сохраняется сразу (раньше — только при начале звонка) и уходит друзьям
   {
@@ -3483,7 +3579,7 @@ function bind() {
     codeEntry = null;
     if (!raw) { preview.textContent = 'Приложение определит тип кода перед действием.'; return; }
     if (raw.length > 100000) { preview.textContent = 'Код слишком длинный'; return; }
-    const match = /(ALOF\.[A-Za-z0-9_-]{60,400}|ALO[IA]\.[A-Za-z0-9_-]{200,})/.exec(raw);
+    const match = /(ALOF\.[A-Za-z0-9_-]{60,400}|ALOGI\.[A-Za-z0-9_-]{100,100000}|ALO[IA]\.[A-Za-z0-9_-]{200,})/.exec(raw);
     if (!match) { preview.textContent = 'Код не распознан. Скопируй его целиком.'; return; }
     const value = match[0];
     try {
@@ -3495,6 +3591,12 @@ function bind() {
         if (info.already) { preview.textContent = `${friendNickOf(info.id)} уже в друзьях`; return; }
         codeEntry = { kind: 'friend', value };
         preview.textContent = `${info.reply ? 'Ответный код' : 'Код дружбы'} от ${info.nick || 'друга'}. Отправим запрос после подтверждения.`;
+      } else if (value.startsWith('ALOGI.')) {
+        const info = await grpManualRead(value, 'I');
+        if (seq !== codeEntrySeq) return;
+        if (info.id === grpMe()) { preview.textContent = 'Это твоё приглашение в группу. Отправь его другому участнику.'; return; }
+        codeEntry = { kind: 'group', value };
+        preview.textContent = `Приглашение в группу от ${grpClean(info.nick) || 'участника'}. Можно войти без добавления в друзья.`;
       } else {
         const info = await unpackCode(value);
         if (seq !== codeEntrySeq) return;
@@ -3512,6 +3614,7 @@ function bind() {
     if (!codeEntry || $('codeEntryGo').disabled) return;
     const { kind, value } = codeEntry;
     if (kind === 'friend') fcOpen(value);
+    else if (kind === 'group') grpManualJoin(value);
     else { showStep('stepGuest'); $('offerIn').value = value; }
   };
   $('btnInvite').onclick = startInvite;
@@ -3798,7 +3901,6 @@ function bind() {
     send({t:state.playing?'svid-play':'svid-stop',fid:state.fid});
     L('screenvid',{playback:state.playing?'started':'stopped',reason:state.reason||''});
   });
-  $('spEditShare').onclick = () => { if (spEditId) spShare(spEditId); };
 
   window.duo?.onHotkey((what) => {
     if (what === 'mark') { toast('Метка в логе поставлена'); sound('msg'); return; }
@@ -3848,7 +3950,7 @@ const inAnyCall = () => S.inCall || G.active;
 
 async function initFriends() {
   const presenceHints={online:'Автоматически: «Нет на месте» через 5 минут бездействия.',away:'Ты отсутствуешь, но можешь пользоваться чатом.',invisible:'Вы будете показываться как «Не в сети», но по-прежнему сможете пользоваться чатом. Старые версии приложения могут показывать другой статус.',offline:'Выйти из системы друзей и чатов. Новые сообщения сохранятся на этом ПК до входа.',dnd:'Отключает уведомления в чатах.'};
-  const paintPresence=d=>{$('presenceMode').value=d.mode;$('presenceHint').title=presenceHints[d.mode];store.set('presence',d.mode);$('presenceMode').options[0].textContent=d.effective==='away'&&d.mode==='online'?'Нет на месте (автоматически)':'В сети'};
+  const paintPresence=d=>{$('presenceMode').value=d.mode;$('presenceHint').dataset.help=presenceHints[d.mode];store.set('presence',d.mode);$('presenceMode').options[0].textContent=d.effective==='away'&&d.mode==='online'?'🟡 Нет на месте (автоматически)':'🟢 В сети'};
   window.duo.presenceGet().then(paintPresence);window.duo.onPresence(paintPresence);
   $('presenceMode').onchange=async()=>{const mode=$('presenceMode').value;if(await window.duo.presenceSet(mode)){paintPresence({mode,effective:mode});if(mode==='offline'){if(G.active)grpLeave();if(S.inCall)leaveCall();closeDm()}}};
   window.duo.netConfig(netCfg());
@@ -3996,7 +4098,6 @@ function toggleFriendsDrawer() {
   closeDm();
   const d = $('friendsDrawer');
   d.classList.toggle('hidden');
-  $('frReturnCall').classList.toggle('hidden', !inAnyCall());
   renderFriendsDrawer();
 }
 
@@ -6141,7 +6242,6 @@ function bindLiveTools() {
   for (const id of ['btnFriendsCall', 'gFriends']) $(id).onclick = (e) => { e.stopPropagation(); toggleFriendsDrawer(); };
   $('frGroupCodeGo').onclick=async()=>{const code=$('frGroupCode').value.trim(),info=await window.duo.fcParse(code);if(!info?.ok||info.own){toast('Нужен действующий код дружбы другого участника');return}if(!G.active){if(S.inCall){toast('Заверши звонок на двоих перед созданием группы');return}if(!await grpStart())return}if(G.members.size>=GRP_MAX){toast('В группе уже максимум участников');return}if(info.already){grpInvite([info.id]);return}groupCodeInvite={id:info.id,gid:G.gid};await fcOpen(code)};
   $('frDrawerClose').onclick = () => $('friendsDrawer').classList.add('hidden');
-  $('frReturnCall').onclick = () => { closeDm(); $('friendsDrawer').classList.add('hidden'); };
   $('dmFriends').onclick = () => { closeDm(); $('friendsDrawer').classList.remove('hidden'); renderFriendsDrawer(); };
   $('dmReturnCall').onclick = closeDm;
   document.addEventListener('mousedown', (e) => { const d = $('friendsDrawer'); if (!d.classList.contains('hidden') && !d.contains(e.target) && !e.target.closest?.('.fr-btn')) d.classList.add('hidden'); });

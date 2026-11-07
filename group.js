@@ -23,7 +23,7 @@ const G = {
   lostTimers: new Map(), // id → таймер «потерялся» у того, кто ждёт вызова
   tiles: new Map(),     // id → плитка
   nickCache: new Map(), // ники бывших участников (из сохранённой группы) — для истории чата
-  conv: null, invite: null, share: null, focus: null, joinTimer: null, stopMyMeter: null,
+  conv: null, invite: null, share: null, focus: null, joinTimer: null, stopMyMeter: null, manualPending: null,
 };
 
 const grpMe = () => myIdent?.id || '';
@@ -123,6 +123,88 @@ function grpInvite(ids) {
       if (!r.ok && G.active) sysMsg(`${nick} не отвечает — не в сети?`);
     });
   }
+}
+
+/* ---------- Ручное приглашение без дружбы: предложение и ответ ---------- */
+async function grpManualPack(kind, data) { return `ALOG${kind}.` + b64uEnc(await deflate(JSON.stringify(data))); }
+async function grpManualRead(text, kind) {
+  const m = new RegExp(`ALOG${kind}\\.([A-Za-z0-9_-]{100,100000})`).exec(String(text || '').replace(/\s+/g, ''));
+  if (!m) throw new Error('Нужен полный код приглашения в группу');
+  let d;
+  try { d = JSON.parse(await inflate(b64uDec(m[1]))); } catch { throw new Error('Код группы повреждён'); }
+  if (d.v !== 1 || !grpGid(d.gid) || !ID_RE.test(String(d.id || '')) || !/^v=0/.test(String(d.sdp || '')) || Math.abs(Date.now() - d.at) > 5 * 60_000) throw new Error('Код группы повреждён или устарел');
+  return d;
+}
+async function grpManualCreate() {
+  if (S.inCall) { toast('Заверши звонок на двоих перед созданием группы'); return; }
+  if (!G.active && !(await grpStart())) return;
+  if (G.members.size >= GRP_MAX) { toast('В группе уже максимум участников'); return; }
+  if (G.manualPending) { grpClosePeer(G.manualPending.p); G.manualPending = null; }
+  const temp = grpNewGid(), nonce = grpNewGid();
+  let p;
+  try {
+    const res = await gatherWithFallback('grp-manual', cfg => {
+      if (p) grpClosePeer(p);
+      p = grpMakePeer(temp, nonce, 'out', cfg);
+      return p.pc;
+    }, async pc => { await pc.setLocalDescription(await pc.createOffer()); }, pc => G.active && G.peers.get(temp)?.pc === pc);
+    if (!res || !G.active || G.peers.get(temp) !== p) return;
+    G.manualPending = { p, temp, nonce, gid: G.gid };
+    $('frGroupManualOffer').value = await grpManualPack('I', { v: 1, gid: G.gid, id: grpMe(), nick: S.nick, nonce, at: Date.now(), sdp: grpSdp(p.pc) });
+    $('frGroupManualCopy').disabled = false;
+    $('frGroupManualApply').disabled = false;
+    toast('Код группы готов — отправь его участнику');
+  } catch (e) { if (p) grpClosePeer(p); G.manualPending = null; toast('Не удалось создать код группы: ' + e.message); }
+}
+async function grpManualJoin(text) {
+  let d;
+  try { d = await grpManualRead(text, 'I'); } catch (e) { toast(e.message); return; }
+  if (d.id === grpMe()) { toast('Это твоё приглашение'); return; }
+  if (grpBusy()) { toast('Сначала заверши текущий звонок'); return; }
+  if (!(await grpStart(d.gid, d.id))) return;
+  grpAddMember({ id: d.id, nick: grpClean(d.nick), via: '' }, true);
+  grpRender();
+  let p;
+  try {
+    const res = await gatherWithFallback('grp-manual-answer', cfg => {
+      if (p) grpClosePeer(p);
+      p = grpMakePeer(d.id, d.nonce, 'in', cfg);
+      return p.pc;
+    }, async pc => {
+      await pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+      [p.atx, p.vtx, p.satx] = pc.getTransceivers();
+      for (const t of [p.atx, p.vtx, p.satx]) if (t) t.direction = 'sendrecv';
+      grpAttachSenders(p);
+      await pc.setLocalDescription(await pc.createAnswer());
+    }, pc => G.active && G.peers.get(d.id)?.pc === pc, { answer: true });
+    if (!res || !G.active || G.peers.get(d.id) !== p) return;
+    p.manual = true;
+    $('groupManualReplyCode').value = await grpManualPack('A', { v: 1, gid: d.gid, id: grpMe(), nick: S.nick, nonce: d.nonce, at: Date.now(), sdp: grpSdp(p.pc) });
+    $('groupManualReply').classList.remove('hidden');
+    autoCopy($('groupManualReplyCode').value, $('groupManualReplyCopy'));
+    p.timer = setTimeout(() => { if (!p.connected) grpLeave('Ответ на приглашение не был применён'); }, 90_000);
+  } catch (e) { if (p) grpClosePeer(p); grpLeave('Не удалось ответить на приглашение: ' + e.message); }
+}
+async function grpManualApply(text) {
+  const pending = G.manualPending;
+  if (!G.active || !pending || pending.gid !== G.gid) { toast('Создай новое приглашение в группу'); return; }
+  let d;
+  try { d = await grpManualRead(text, 'A'); } catch (e) { toast(e.message); return; }
+  if (d.gid !== G.gid || d.nonce !== pending.nonce || d.id === grpMe() || G.members.has(d.id)) { toast('Ответ не относится к этому приглашению'); return; }
+  if (G.members.size >= GRP_MAX) { toast('В группе уже максимум участников'); return; }
+  const p = pending.p;
+  try {
+    G.peers.delete(pending.temp);
+    p.id = d.id;
+    p.manual = true;
+    G.peers.set(d.id, p);
+    grpAddMember({ id: d.id, nick: grpClean(d.nick), via: grpMe() }, true);
+    G.manualPending = null;
+    await p.pc.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+    p.timer = setTimeout(() => { if (!p.connected) grpPeerLost(p, 'не удалось соединиться'); }, 30_000);
+    grpRender();
+    toast('Ответ применён — соединяемся');
+  } catch (e) { grpClosePeer(p); grpMemberGone(d.id, 'не смог подключиться', true); toast('Не удалось применить ответ: ' + e.message); }
 }
 
 /* ---------- Входящее приглашение ---------- */
@@ -446,6 +528,7 @@ function grpPeerLost(p, why) {
   grpClosePeer(p);
   L('grp', { lost: why, was, tries: p.tries || 0 });
   if (!G.active || !G.members.has(p.id)) return;
+  if (p.manual && !isFriend(p.id) && ![...G.peers.values()].some(x => x.connected)) { grpMemberGone(p.id, why, true); sysMsg('Ручное соединение прервалось. Создай новое приглашение для повторного входа.'); return; }
   if (!G.lostAt.has(p.id)) {
     G.lostAt.set(p.id, Date.now());
     if (was) { sysMsg(`Связь с ${grpNick(p.id)} прервалась — переподключаюсь…`); sound('leave'); }
@@ -539,6 +622,7 @@ function grpVerified(p) {
   if (!p.virt) setTimeout(grpSendLinks, 300);
   sound('join');
   grpSaveCurrent();
+  if (p.manual) grpSendAll({ t: 'member', id: p.id, nick: grpNick(p.id), via: grpMe() });
   grpRender();
   for (const d of (p.queue || []).splice(0)) grpOnData(p, d);
 }
@@ -1307,6 +1391,9 @@ function grpRenderNow() {
 }
 
 function grpReset() {
+  if (G.manualPending?.p) grpClosePeer(G.manualPending.p);
+  G.manualPending = null;
+  $('groupManualReply').classList.add('hidden');
   for (const t of G.lostTimers.values()) clearTimeout(t);
   for (const m of [G.members, G.left, G.seen, G.peers, G.connecting, G.lostAt, G.lostTimers, G.tiles, G.nickCache]) m.clear();
   GT.mode = null; GT.stroke = null; GT.strokes.clear(); GT.ptrs.clear();
@@ -1348,6 +1435,11 @@ function grpLeave(text) {
 }
 
 function grpBind() {
+  $('frGroupManualCreate').onclick = grpManualCreate;
+  $('frGroupManualCopy').onclick = e => copyField('frGroupManualOffer', e.currentTarget);
+  $('frGroupManualApply').onclick = () => grpManualApply($('frGroupManualAnswer').value);
+  $('groupManualReplyCopy').onclick = e => copyField('groupManualReplyCode', e.currentTarget);
+  $('groupManualReplyClose').onclick = () => $('groupManualReply').classList.add('hidden');
   $('btnGroup').onclick = grpOpenPick;
   $('gPickGo').onclick = grpPickGo;
   $('gPickClose').onclick = () => $('gPick').classList.add('hidden');

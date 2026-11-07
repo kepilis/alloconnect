@@ -3,7 +3,8 @@
   const panel=document.getElementById('downloadsPanel'),list=document.getElementById('downloadsList'),toggle=document.getElementById('downloadsToggle');
   let hideTimer=null,manual=false;
   const autoShow=()=>{try{return JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsAuto!==false}catch{return true}};
-  const peek=()=>{if(manual||!autoShow())return;panel.classList.remove('hidden');clearTimeout(hideTimer);hideTimer=setTimeout(()=>panel.classList.add('hidden'),1000)};
+  const duration=()=>{try{const raw=JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsDuration,n=raw==null?3:Number(raw);return Number.isInteger(n)&&n>=0&&n<=10?n:3}catch{return 3}};
+  const peek=()=>{if(manual||!autoShow())return;panel.classList.remove('hidden');clearTimeout(hideTimer);const seconds=duration();if(seconds)hideTimer=setTimeout(()=>panel.classList.add('hidden'),seconds*1000)};
   const rows=new Map(),terminal=new Set(['ready','error','cancelled']);
   const mb=n=>(Math.max(0,Number(n)||0)/1048576).toFixed(1)+' МБ';
   const labels={starting:'Подготовка…',checking:'Проверка установленных файлов…',download:'Скачивание…',verify:'Проверка целостности…',install:'Установка…',loading:'Запуск нейросети…',processing:'Обработка…',retry:'Повторная попытка…',ready:'Готово — можно использовать',error:'Загрузка не завершена',cancelled:'Загрузка отменена'};

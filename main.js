@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, ipcMain, desktopCapturer, session, globalShortcut, shell, clipboard,
-  Tray, Menu, nativeImage, Notification, screen, dialog,
+  Tray, Menu, nativeImage, Notification, screen, dialog, ClipboardItem,
 } = require('electron');
 const path = require('path');
 const os = require('os');
@@ -797,8 +797,10 @@ function soundsIndex() { return path.join(soundsDir(), 'sounds.json'); }
 function readSounds() {
   try {
     const d = JSON.parse(fs.readFileSync(soundsIndex(), 'utf-8'));
-    return { list: Array.isArray(d.list) ? d.list : [], stopKey: d.stopKey ?? 'CommandOrControl+Alt+0' };
-  } catch { return { list: [], stopKey: 'CommandOrControl+Alt+0' }; }
+    const list=Array.isArray(d.list)?d.list:[];
+    const categories=[...new Set([...(Array.isArray(d.categories)?d.categories:[]),...list.map(s=>s.category)].filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim().slice(0,40)))];
+    return { list, categories, stopKey: d.stopKey ?? 'CommandOrControl+Alt+0' };
+  } catch { return { list: [], categories: [], stopKey: 'CommandOrControl+Alt+0' }; }
 }
 function writeSounds(d) {
   fs.mkdirSync(soundsDir(), { recursive: true });
@@ -869,6 +871,40 @@ function registerSoundHotkeys() {
 }
 ipcMain.handle('sounds-folder',()=>shell.openPath(soundsDir()));
 ipcMain.handle('sounds-list', () => readSounds());
+ipcMain.handle('sounds-category-create', (_e, name) => {
+  name=String(name||'').trim().slice(0,40);
+  if(!name)throw new Error('Введи название категории');
+  const d=readSounds();
+  if(d.categories.some(c=>c.toLocaleLowerCase()===name.toLocaleLowerCase()))throw new Error('Такая категория уже есть');
+  if(d.categories.length>=100)throw new Error('Слишком много категорий');
+  d.categories.push(name);writeSounds(d);return d.categories;
+});
+ipcMain.handle('sounds-clone', (_e, ids) => {
+  const d=readSounds(),unique=[...new Set(Array.isArray(ids)?ids:[])].slice(0,SOUND_COUNT);
+  const originals=unique.map(id=>d.list.find(s=>s.id===id));
+  if(originals.some(s=>!s))throw new Error('Звук для копирования не найден');
+  if(d.list.length+originals.length>SOUND_COUNT)throw new Error(`не больше ${SOUND_COUNT} звуков`);
+  const made=[];
+  try{for(const s of originals){const id=require('crypto').randomBytes(5).toString('hex'),ext=path.extname(s.file);const file=id+ext;fs.copyFileSync(path.join(soundsDir(),s.file),path.join(soundsDir(),file));made.push({id,file,name:(s.name+' — копия').slice(0,40),category:s.category||'',vol:s.vol??100,hotkey:''})}}
+  catch(e){for(const s of made)try{fs.unlinkSync(path.join(soundsDir(),s.file))}catch{}throw e}
+  d.list.push(...made);writeSounds(d);return made;
+});
+let copiedSounds=null;
+ipcMain.handle('sounds-copy-files', async (_e, ids) => {
+  const d=readSounds(),unique=[...new Set(Array.isArray(ids)?ids:[])].slice(0,SOUND_COUNT);
+  const sounds=unique.map(id=>d.list.find(s=>s.id===id));
+  if(!sounds.length||sounds.some(s=>!s))throw new Error('Выбери звуки для копирования');
+  const dir=path.join(app.getPath('userData'),'soundpad-clipboard',require('crypto').randomBytes(6).toString('hex'));
+  fs.mkdirSync(dir,{recursive:true});const used=new Set(),files=[];
+  for(const s of sounds){const ext=path.extname(s.file),base=(s.name||'звук').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/g,'').slice(0,60)||'звук';let name=base+ext,n=2;while(used.has(name.toLocaleLowerCase()))name=`${base} (${n++})${ext}`;used.add(name.toLocaleLowerCase());const target=path.join(dir,name);try{fs.linkSync(path.join(soundsDir(),s.file),target)}catch{fs.copyFileSync(path.join(soundsDir(),s.file),target)}files.push(target)}
+  const token=require('crypto').randomBytes(12).toString('hex');
+  await clipboard.write([new ClipboardItem({'text/uri-list':files.map(f=>require('node:url').pathToFileURL(f).href).join('\r\n'),'text/plain':'alloconnect:sounds:'+token})]);
+  copiedSounds={token,ids:unique};return {count:files.length};
+});
+ipcMain.handle('sounds-paste-copied', async () => {
+  if(!copiedSounds||await clipboard.readText()!=='alloconnect:sounds:'+copiedSounds.token)return [];
+  return copiedSounds.ids;
+});
 ipcMain.handle('sounds-add', (_e, bytes, name) => {
   const d = readSounds();
   if (d.list.length >= SOUND_COUNT) throw new Error(`не больше ${SOUND_COUNT} звуков`);
@@ -1650,6 +1686,39 @@ ipcMain.handle('stickers-del', (_e, packId, id) => {
   stkWrite(d);
   try { fs.unlinkSync(path.join(stkDir(), p.id, `${it.id}.${it.ext}`)); } catch { /* */ }
   return true;
+});
+ipcMain.handle('stickers-pack-create', (_e, name) => {
+  name=String(name||'').trim().slice(0,40);
+  if(!name)throw new Error('Введи название набора');
+  const d=stkRead();if(d.packs.some(p=>p.name.toLocaleLowerCase()===name.toLocaleLowerCase()))throw new Error('Такой набор уже есть');
+  if(d.packs.length>=100)throw new Error('Слишком много наборов');
+  const pack={id:stkId(),name,items:[]};d.packs.push(pack);stkWrite(d);return pack;
+});
+ipcMain.handle('stickers-items-edit', (_e, packId, ids, action, targetId, newName) => {
+  const d=stkRead(),pack=d.packs.find(p=>p.id===packId);
+  if(!pack)throw new Error('Набор не найден');
+  const unique=[...new Set(Array.isArray(ids)?ids:[])].slice(0,STK_TOTAL),items=unique.map(id=>pack.items.find(it=>it.id===id));
+  if(!items.length||items.some(it=>!it))throw new Error('Стикеры не найдены');
+  if(action==='rename'){
+    if(items.length!==1)throw new Error('Выбери один стикер');
+    const name=String(newName||'').trim().slice(0,40);if(!name)throw new Error('Введи название');items[0].name=name;stkWrite(d);return {count:1};
+  }
+  if(action==='delete'){
+    pack.items=pack.items.filter(it=>!unique.includes(it.id));stkWrite(d);
+    for(const it of items)try{fs.unlinkSync(path.join(stkDir(),pack.id,`${it.id}.${it.ext}`))}catch{}
+    return {count:items.length};
+  }
+  const target=d.packs.find(p=>p.id===targetId);if(!target)throw new Error('Набор назначения не найден');
+  if(action==='move'&&target.id===pack.id)return {count:0};
+  if(action==='copy'&&d.packs.reduce((n,p)=>n+p.items.length,0)+items.length>STK_TOTAL)throw new Error('Лимит стикеров');
+  if(!['move','copy'].includes(action))throw new Error('Неизвестное действие');
+  fs.mkdirSync(path.join(stkDir(),target.id),{recursive:true});
+  const done=[];
+  try{for(const it of items){const id=action==='copy'?stkId():it.id;const from=path.join(stkDir(),pack.id,`${it.id}.${it.ext}`),to=path.join(stkDir(),target.id,`${id}.${it.ext}`);if(action==='copy')fs.copyFileSync(from,to);else fs.renameSync(from,to);done.push({from,to,it,id})}}
+  catch(e){for(const x of done.reverse())try{if(action==='copy')fs.unlinkSync(x.to);else fs.renameSync(x.to,x.from)}catch{}throw e}
+  for(const x of done)target.items.push({...x.it,id:x.id,name:action==='copy'?(x.it.name+' — копия').slice(0,40):x.it.name});
+  if(action==='move')pack.items=pack.items.filter(it=>!unique.includes(it.id));
+  stkWrite(d);return {count:done.length};
 });
 
 /* =========================================================

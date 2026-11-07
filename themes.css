@@ -386,6 +386,8 @@ html[data-theme="newspaper"] {
 [data-theme="linen"] :is(.btn:hover,.ctl:hover) { background:#dce3d8;color:var(--text); }
 [data-theme="linen"] .msg.me .bubble { background:#d7e3d7; }
 [data-theme="linen"] :is(.btn.primary,.ctl.share) { background:var(--accent);color:#fff; }
+[data-theme="linen"] :is(#btnNs,#gNs).on { background:#234b42;color:#fff;border-color:#234b42; }
+[data-theme="linen"] :is(#btnNs,#gNs).on :is(b,span) { color:#fff; }
 [data-theme="linen"] .download-row[data-stage="error"] .download-status { color:#a63637; }
 
 :is([data-theme="pixel"],[data-theme="notebook"],[data-theme="newspaper"],[data-theme="terminal"]) :is(small,.small,.download-status,.field>span,.msg .meta,.fname small) { font-family:"Segoe UI",sans-serif;font-size:13px;line-height:1.45;letter-spacing:normal; }

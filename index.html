@@ -22,7 +22,7 @@
     </label>
 
     <!-- Шаг 0: выбор -->
-    <label class="field presence-field"><span>Мой статус <span id="presenceHint" class="help-i" tabindex="0" title="В сети: автоматически станет «Нет на месте» через 5 минут бездействия.">ⓘ</span></span><select id="presenceMode"><option value="online">В сети</option><option value="away">Нет на месте</option><option value="invisible">Невидимка</option><option value="offline">Не в сети</option><option value="dnd">Не беспокоить</option></select></label>
+    <label class="field presence-field"><span>Мой статус <span id="presenceHint" class="help-i" tabindex="0" title="В сети: автоматически станет «Нет на месте» через 5 минут бездействия.">i</span></span><select id="presenceMode"><option value="online">🟢 В сети</option><option value="away">🟡 Нет на месте</option><option value="invisible">⚪ Невидимка</option><option value="offline">⚫ Не в сети</option><option value="dnd">🔴 Не беспокоить</option></select></label>
     <div id="stepHome" class="step active">
       <div id="rejoinBar" class="rejoin-bar hidden">
         <span id="rejoinText"></span>
@@ -409,21 +409,23 @@
 <!-- Стикеры (1.21) -->
 <div id="stickerPicker" class="stk-picker hidden">
   <div id="stkTabs" class="stk-tabs"></div>
+  <div id="stkEditBar" class="stk-edit-bar hidden"><button type="button" id="stkCreatePack" class="btn small">＋ Набор</button><button type="button" id="stkCopy" class="btn small" disabled>Копировать</button><button type="button" id="stkPaste" class="btn small">Вставить</button><button type="button" id="stkDeleteSelected" class="btn small" disabled>Удалить (0)</button><small class="muted">ЛКМ — выбрать, удерживай ЛКМ для рамки</small></div>
   <div id="stkGrid" class="stk-grid"></div>
   <div class="stk-foot">
     <button type="button" id="stkAddFiles" class="btn small">➕ Добавить стикеры</button>
     <button type="button" id="stkAddFolder" class="btn small" title="Каждая подпапка с картинками станет отдельным набором">📁 Папку</button>
-    <small class="muted">правый клик — убрать</small>
+    <button type="button" id="stkEditToggle" class="btn small">Редактировать</button>
   </div>
 </div>
+<div id="stkContext" class="sp-context hidden" role="menu"></div>
 
 <!-- Друзья во время звонка (1.21): список и переписка, не выходя из звонка -->
 <div id="friendsDrawer" class="fr-drawer hidden">
   <div class="fr-drawer-head"><b>Звонки и сообщения</b><button type="button" class="icon-btn" id="frDrawerClose" title="Закрыть">✕</button></div>
-  <button type="button" id="frReturnCall" class="btn small">↩ Вернуться в звонок</button>
-  <details id="frGroupInvite" class="adv"><summary>Позвать в группу</summary><div id="frGroupInvites"></div><details class="adv"><summary>По коду дружбы</summary><input id="frGroupCode" placeholder="ALOF.…" aria-label="Код дружбы для приглашения в группу" /><button id="frGroupCodeGo" class="btn small">Добавить и позвать</button><small class="muted">Новый участник сначала подтвердит дружбу, затем получит приглашение в группу.</small></details></details>
+  <details id="frGroupInvite" class="adv"><summary>Позвать в группу</summary><div id="frGroupInvites"></div><details class="adv"><summary>По коду приглашения</summary><button id="frGroupManualCreate" class="btn small">Создать код</button><textarea id="frGroupManualOffer" readonly placeholder="Код приглашения появится здесь"></textarea><button id="frGroupManualCopy" class="btn small" disabled>Скопировать</button><textarea id="frGroupManualAnswer" placeholder="Вставь ответ участника"></textarea><button id="frGroupManualApply" class="btn small" disabled>Применить ответ</button><small class="muted">Отправь код через мессенджер. Участник вставит его в главное окно и пришлёт ответ.</small></details><details class="adv"><summary>По коду дружбы</summary><input id="frGroupCode" placeholder="ALOF.…" aria-label="Код дружбы для приглашения в группу" /><button id="frGroupCodeGo" class="btn small">Добавить и позвать</button><small class="muted">Новый участник сначала подтвердит дружбу, затем получит приглашение в группу.</small></details></details>
   <div id="frDrawerList" class="fr-drawer-list"></div>
 </div>
+<div id="groupManualReply" class="modal hidden"><div class="modal-card"><b>Ответ на приглашение в группу</b><p class="muted small">Отправь этот код позвавшему. После применения ответа вы соединитесь.</p><textarea id="groupManualReplyCode" readonly></textarea><button id="groupManualReplyCopy" class="btn primary">Скопировать ответ</button><button id="groupManualReplyClose" class="btn">Закрыть</button></div></div>
 
 <div id="dm" class="modal hidden">
   <div class="modal-card dm-card">
@@ -467,7 +469,7 @@
     </div>
 
     <details class="scat" data-cat="theme">
-      <summary>🎨 Оформление</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🎨</span>Оформление</summary>
       <div class="scat-body">
       <label class="field"><span>Масштаб интерфейса</span><select id="uiScale"><option value="1">100%</option><option value="1.1">110%</option><option value="1.25">125%</option></select><small class="muted">Увеличивает текст и кнопки вместе, сохраняя пропорции. Применяется сразу.</small></label>
       <label class="check"><input type="checkbox" id="optAnimations" checked /><span>Плавные анимации интерфейса</span></label>
@@ -476,15 +478,16 @@
       </div>
     </details>
 
-    <details class="scat" data-cat="downloads"><summary>⬇ Загрузки и файлы</summary><div class="scat-body">
-      <label class="check"><input type="checkbox" id="optDownloadsAuto" checked /><span>Автоматически показывать загрузки на секунду</span></label>
+    <details class="scat" data-cat="downloads"><summary><span class="scat-icon" aria-hidden="true">⬇</span>Загрузки и файлы</summary><div class="scat-body">
+      <label class="check"><input type="checkbox" id="optDownloadsAuto" checked /><span>Автоматически показывать загрузки</span></label>
+      <label class="field"><span>Через сколько скрывать панель</span><select id="downloadsDuration"><option value="1">1 секунда</option><option value="2">2 секунды</option><option value="3">3 секунды</option><option value="4">4 секунды</option><option value="5">5 секунд</option><option value="6">6 секунд</option><option value="7">7 секунд</option><option value="8">8 секунд</option><option value="9">9 секунд</option><option value="10">10 секунд</option><option value="0">Не скрывать</option></select></label>
       <label class="check"><input type="checkbox" id="optSaveChatFiles" checked /><span>Сохранять файлы чатов на этом ПК</span></label>
       <button id="btnChatFolder" class="btn small" type="button">Папка файлов чатов</button>
       <small class="muted">Отключение действует на новые файлы. Уже сохранённые файлы остаются на диске.</small>
     </div></details>
 
     <details class="scat" data-cat="sound">
-      <summary>🔊 Звук и микрофон</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🔊</span>Звук и микрофон</summary>
       <div class="scat-body">
     <label class="field">
       <span>Микрофон</span>
@@ -526,7 +529,7 @@
     </details>
 
     <details class="scat" data-cat="stickers">
-      <summary>🙂 Стикеры</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🙂</span>Стикеры</summary>
       <div class="scat-body">
     <p class="muted small">Свои картинки и гифки для чата. Можно выбрать файлы или целую папку — каждая подпапка с картинками станет отдельным набором.</p>
     <div class="row-btns"><button type="button" id="stkSetAddFiles" class="btn small">➕ Добавить стикеры</button> <button type="button" id="stkSetAddFolder" class="btn small">📁 Добавить папку</button></div>
@@ -535,7 +538,7 @@
     </details>
 
     <details class="scat" data-cat="cam">
-      <summary>📷 Камера и окна</summary>
+      <summary><span class="scat-icon" aria-hidden="true">📷</span>Камера и окна</summary>
       <div class="scat-body">
     <label class="field"><span>Вебкамера</span><select id="camSelect"></select></label>
     <label class="check"><input type="checkbox" id="optWinFree" /> <span>Свободное расположение окон <small class="muted">(демонстрацию, камеру и чат можно двигать, менять размер, закреплять, прицеплять друг к другу и выносить в отдельное окно)</small></span></label>
@@ -544,7 +547,7 @@
     </details>
 
     <details class="scat" data-cat="screen">
-      <summary>🖥 Демонстрация экрана</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🖥</span>Демонстрация экрана</summary>
       <div class="scat-body">
     <label class="check"><input type="checkbox" id="optStreamFrame" checked /> <span>Рамка вокруг стрима друга <small class="muted">(у каждой темы своя)</small></span></label>
     <label class="check"><input type="checkbox" id="optHideSelf" checked /> <span>Не показывать окно alloconnect, когда показываю весь экран <small class="muted">(иначе превью стрима снимает само себя — «зеркало»; на это время окно не попадёт и в скриншоты)</small></span></label>
@@ -585,7 +588,7 @@
 
 
     <details class="scat" data-cat="keys">
-      <summary>⌨ Горячие клавиши</summary>
+      <summary><span class="scat-icon" aria-hidden="true">⌨</span>Горячие клавиши</summary>
       <div class="scat-body">
     <div id="hkList" class="hk-list"></div>
     <p class="muted small">Нажми на сочетание, чтобы поменять (Backspace — выключить, Esc — отмена), ↺ — вернуть как было. Клавиши работают и в играх.
@@ -599,7 +602,7 @@
     </details>
 
     <details class="scat" data-cat="app">
-      <summary>🪟 Программа</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🪟</span>Программа</summary>
       <div class="scat-body">
     <div class="netbox">
       <label class="check"><input type="checkbox" id="appTray" /> <span>Значок в трее (возле часов)</span></label>
@@ -625,10 +628,8 @@
     </details>
 
     <details class="scat" data-cat="net">
-      <summary>🌐 Сеть</summary>
+      <summary><span class="scat-icon" aria-hidden="true">🌐</span>Сеть</summary>
       <div class="scat-body">
-      <p class="net-warning" role="note">Настройки для опытных пользователей. Неверные значения могут нарушить связь. Если звонки работают, оставь значения по умолчанию.</p>
-      <details class="adv"><summary>Как настроить связь</summary><p>Сначала проверь связь кнопкой «Перепроверить». STUN помогает найти прямой маршрут: оставь его включённым. Альтернативный список нужен, если обычный STUN недоступен.</p><p>Если напрямую не соединяется, попробуйте оба подключиться к одной сети Tailscale. TURN пересылает медиатрафик через указанный сервер: нужны адрес и учётные данные от владельца. «Только через TURN» включай лишь с рабочим сервером. Резерв связи помогает обмену приглашениями и не заменяет TURN для звука и видео.</p><p>Проверь новый звонок после изменения. При ухудшении верни прежние значения.</p></details>
       <p class="net-warning" role="note">Настройки для опытных пользователей. Неверные значения могут нарушить связь. Если звонки работают, оставь значения по умолчанию.</p>
       <details class="adv"><summary>Как настроить связь</summary><p>Сначала проверь связь кнопкой «Перепроверить». STUN помогает устройствам найти прямой маршрут: оставь его включённым. Альтернативный список нужен, если обычный STUN недоступен.</p><p>Если прямое соединение не устанавливается, попробуйте оба подключиться к одной сети Tailscale. TURN пересылает медиатрафик через указанный сервер: нужны его адрес и учётные данные. «Только через TURN» включай лишь с рабочим сервером. Резерв связи помогает обмену приглашениями и не заменяет TURN для звука и видео.</p><p>После изменения проверь новый звонок. При ухудшении верни прежние значения. Адреса и пароли бери у владельца своего сервера.</p></details>
     <div class="netbox">
@@ -669,27 +670,27 @@
   <div class="sp-head">
     <b>Саундпад</b>
     <button id="spAdd" class="btn small primary">＋ Звук</button>
+    <button id="spManage" class="btn small" type="button">Редактировать</button>
     <button id="spStop" class="btn small" title="Правый клик — назначить клавишу (или в Настройки → Горячие клавиши)">■ Стоп всё <small id="spStopKey" class="muted"></small></button>
     <button id="spClose" class="icon-btn">✕</button>
     <input type="file" id="spFile" multiple accept="audio/*,video/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac,.mp4,.webm,.mkv,.mov" class="hidden" />
   </div>
-  <div class="sp-library-tools"><input id="spSearch" type="search" placeholder="Найти звук" aria-label="Найти звук" /><select id="spCategory" aria-label="Категория"><option value="">Все категории</option></select><button id="spDeleteSelected" class="btn small">Удалить выбранные (0)</button><button id="spFolder" class="btn small">Папка звуков</button></div>
-  <details class="adv"><summary>Переместить выбранные в категорию</summary><div class="sp-library-tools"><input id="spMoveCategory" maxlength="40" placeholder="Категория (пусто — без категории)" /><button id="spMoveSelected" class="btn small">Переместить</button></div></details>
-  <small class="muted">Приложение хранит свою копию звуков. Отмечай файлы галочками для удаления.</small>
-  <div id="spGrid" class="sp-grid"></div>
-  <div id="spEmpty" class="sp-empty muted small">Перетащи сюда звук или видео (из видео возьмётся звук) или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
-  <div class="sp-opts">
+  <div class="sp-library-tools"><input id="spSearch" type="search" placeholder="Найти звук" aria-label="Найти звук" /><button id="spFolder" class="btn small">Папка звуков</button></div>
+  <div id="spManageTools" class="sp-library-tools hidden"><button id="spCreateCategory" class="btn small">＋ Категория</button><button id="spCopy" class="btn small" disabled>Копировать</button><button id="spPaste" class="btn small">Вставить</button><button id="spDeleteSelected" class="btn small" disabled>Удалить выбранные (0)</button><button id="spHotkeys" class="btn small">⌨ Горячие клавиши</button></div>
+  <div id="spHotkeysPanel" class="sp-hotkeys hidden"><div class="sp-hotkeys-head"><b>Горячие клавиши звуков</b><button id="spHotkeysClose" class="icon-btn" title="Закрыть">✕</button></div><div id="spHotkeyList"></div></div>
+  <small id="spEditHint" class="muted hidden">ЛКМ — выбрать, Ctrl+ЛКМ — добавить к выбору, удерживай ЛКМ и веди рамку. Правый клик — действия.</small>
+  <details class="adv sp-playback-opts"><summary>Громкость воспроизведения</summary><div class="sp-opts">
     <label class="sp-vol">Другу <input type="range" id="spVolOut" min="0" max="150" value="100" /></label>
     <label class="sp-vol"><input type="checkbox" id="spMonitor" checked /> Слышать себя <input type="range" id="spVolMon" min="0" max="100" value="60" /></label>
     <label class="check"><input type="checkbox" id="spWhenMuted" checked /> <span>Играть, даже когда микрофон выключен</span></label>
-  </div>
+  </div></details>
+  <div id="spGrid" class="sp-grid"></div>
+  <div id="spEmpty" class="sp-empty muted small">Перетащи сюда звук или видео (из видео возьмётся звук) или нажми «＋ Звук». Друг слышит звуки в звонке.</div>
+  <div id="spContext" class="sp-context hidden" role="menu"></div>
   <div id="spEdit" class="sp-edit hidden">
-    <input id="spEditCategory" maxlength="40" placeholder="Категория (необязательно)" />
     <input id="spEditName" maxlength="40" placeholder="Название" />
     <label class="sp-vol">Громкость <input type="range" id="spEditVol" min="0" max="200" value="100" /></label>
     <span class="sp-keygrp"><button id="spEditKey" class="btn small">⌨ Клавиша: —</button><button id="spEditKeyClear" class="sp-keyx" title="Убрать клавишу">✕</button></span>
-    <button id="spEditShare" class="btn small" title="Отправить этот звук другу в звонке">📤 Другу</button>
-    <button id="spEditDel" class="btn small danger-btn">Удалить</button>
     <button id="spEditDone" class="btn small primary">Готово</button>
   </div>
 </div>

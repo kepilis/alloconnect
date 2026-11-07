@@ -12,7 +12,7 @@ results.twoModes=await js(`document.querySelectorAll('[data-bg]').length===2 && 
 results.framelessPreview=await js(`getComputedStyle(document.querySelector('.placer img')).boxShadow==='none' && document.querySelector('.placer-frame').checked===false`);
 results.frameToggle=await js(`(()=>{const c=document.querySelector('.placer-frame');c.checked=true;c.dispatchEvent(new Event('change'));return !placer.el.classList.contains('media-frameless')})()`);
 results.transferFlags=await js(`(()=>{queueFiles=(files,p,extra)=>window.__sent=extra.pl;commitPlacement();return __sent.frame===true && __sent.nick===false})()`);
-results.navKeepsCall=await js(`(()=>{toggleFriendsDrawer();$('frReturnCall').click();return S.inCall&&$('friendsDrawer').classList.contains('hidden')})()`);
+results.navKeepsCall=await js(`(()=>{toggleFriendsDrawer();$('frDrawerClose').click();return S.inCall&&$('friendsDrawer').classList.contains('hidden')})()`);
 const longBytes=[...fs.readFileSync(process.env.MEDIA_TEST_LONG)];
 results.longVideo=await js(`(async()=>{const f=new File([new Uint8Array(${JSON.stringify(longBytes)})],'long.mp4',{type:'video/mp4'});const info=await probeVideo(f);if(info)URL.revokeObjectURL(info.url);return !!info&&info.dur>60})()`);
 const audioBytes=[...fs.readFileSync(process.env.MEDIA_TEST_AUDIO)];
