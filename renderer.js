@@ -3655,7 +3655,13 @@ function bind() {
   $('friendVol').value = fv;
   $('friendVolVal').textContent = fv + '%';
 
-  $('screenVol').oninput = (e) => { $('remoteScreen').volume = Number(e.target.value) / 100; };
+  const savedScreenVol = Number(store.get('screenVol', 100));
+  $('screenVol').value = Number.isFinite(savedScreenVol) ? Math.max(0, Math.min(100, savedScreenVol)) : 100;
+  $('screenVol').oninput = (e) => {
+    const value = Number(e.target.value);
+    $('remoteScreen').volume = value / 100;
+    store.set('screenVol', value);
+  };
   // одна кнопка полного экрана — в обе стороны (кнопка на панели сверху убрана)
   document.addEventListener('keydown',e=>{
     if(e.code!=='KeyF'||e.repeat||e.ctrlKey||e.altKey||e.metaKey||e.shiftKey||e.defaultPrevented||e.isComposing)return;

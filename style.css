@@ -746,7 +746,7 @@ body.popbody > .chat.popped { width: auto !important; }
    свободные окна или свёрнутый чат — наезжала на кнопки звонка) */
 .local-preview.solo { aspect-ratio: auto; height: auto; bottom: 16px; }
 .stage { overflow: hidden; }
-#call .controls, #call .topbar { position: relative; z-index: 20; }
+#call .controls, #call .topbar, #group .topbar { position: relative; z-index: 20; }
 
 /* ---------- Группа (1.19): камера в плитке, окна «Участники» и «Чат» ---------- */
 .gtile video.gcam { display: none; object-fit: cover; background: #0b0c10; z-index: 0; }
@@ -830,9 +830,13 @@ body.popbody > #gView.popped > .ggrid { flex: 1; min-height: 0; }
 .fr-drawer { width: min(360px, calc(100vw - 24px)); }
 .dm-head { flex-wrap: wrap; }
 
-.downloads-toggle { position:fixed; left:16px; top:64px; z-index:55; }
+.downloads-toggle { position:fixed; right:16px; top:16px; z-index:55; flex-shrink:0; }
+.topbar .downloads-toggle { position:static; }
+.topbar .room { min-width:0;overflow:hidden;white-space:nowrap; }
+.topbar .status { flex-shrink:0;white-space:nowrap; }
+@media(max-width:760px) { .topbar .fr-btn { max-width:42px;overflow:hidden;white-space:nowrap;padding:8px 10px; } }
 .downloads-toggle.busy { border-color:var(--accent,#8b68ff); }
-.downloads-panel { position:fixed; left:16px; top:108px; width:min(390px,calc(100vw - 32px)); max-height:65vh; overflow:auto; z-index:55; background:var(--panel,#17191f); color:var(--text,#e8e9ee); border:1px solid var(--line,#41434c); border-radius:12px; box-shadow:0 10px 35px #0008; padding:14px; }
+.downloads-panel { position:fixed; right:16px; top:56px; width:min(390px,calc(100vw - 32px)); max-height:65vh; overflow:auto; z-index:55; background:var(--panel,#17191f); color:var(--text,#e8e9ee); border:1px solid var(--line,#41434c); border-radius:12px; box-shadow:0 10px 35px #0008; padding:14px; }
 .downloads-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .download-row { padding:12px 0; border-top:1px solid var(--line,#41434c); margin-top:10px; }
 .download-status { margin:5px 0; font-size:13px; overflow-wrap:anywhere; }

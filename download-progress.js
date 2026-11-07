@@ -2,9 +2,25 @@
 (() => {
   const panel=document.getElementById('downloadsPanel'),list=document.getElementById('downloadsList'),toggle=document.getElementById('downloadsToggle');
   let hideTimer=null,manual=false;
+  const placePanel=()=>{
+    if(panel.classList.contains('hidden'))return;
+    const b=toggle.getBoundingClientRect();
+    panel.style.left=Math.max(8,Math.min(innerWidth-panel.offsetWidth-8,b.right-panel.offsetWidth))+'px';
+    panel.style.top=Math.max(8,Math.min(innerHeight-panel.offsetHeight-8,b.bottom+8))+'px';
+  };
+  const placeToggle=()=>{
+    const call=document.getElementById('call'),group=document.getElementById('group');
+    const status=call.classList.contains('active')?document.getElementById('status'):group.classList.contains('active')?document.getElementById('gStatus'):null;
+    if(status){if(toggle.previousElementSibling!==status)status.after(toggle)}
+    else if(toggle.parentElement!==document.body)document.body.append(toggle);
+    placePanel();
+  };
+  for(const id of ['lobby','call','group'])new MutationObserver(placeToggle).observe(document.getElementById(id),{attributes:true,attributeFilter:['class']});
+  window.addEventListener('resize',placePanel);
+  placeToggle();
   const autoShow=()=>{try{return JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsAuto!==false}catch{return true}};
   const duration=()=>{try{const raw=JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsDuration,n=raw==null?3:Number(raw);return Number.isInteger(n)&&n>=0&&n<=10?n:3}catch{return 3}};
-  const peek=()=>{if(manual||!autoShow())return;panel.classList.remove('hidden');clearTimeout(hideTimer);const seconds=duration();if(seconds)hideTimer=setTimeout(()=>panel.classList.add('hidden'),seconds*1000)};
+  const peek=()=>{if(manual||!autoShow())return;panel.classList.remove('hidden');placePanel();clearTimeout(hideTimer);const seconds=duration();if(seconds)hideTimer=setTimeout(()=>panel.classList.add('hidden'),seconds*1000)};
   const rows=new Map(),terminal=new Set(['ready','error','cancelled']);
   const mb=n=>(Math.max(0,Number(n)||0)/1048576).toFixed(1)+' МБ';
   const labels={starting:'Подготовка…',checking:'Проверка установленных файлов…',download:'Скачивание…',verify:'Проверка целостности…',install:'Установка…',loading:'Запуск нейросети…',processing:'Обработка…',retry:'Повторная попытка…',ready:'Готово — можно использовать',error:'Загрузка не завершена',cancelled:'Загрузка отменена'};
@@ -23,7 +39,7 @@
     toggle.textContent=active?'⬇ Загрузки: '+active:'⬇ Загрузки';toggle.classList.remove('hidden');toggle.classList.toggle('busy',!!active);
     if(!d.background&&((isNew||wasTerminal)&&!terminal.has(row.stage)||row.stage==='error'))peek();
   }
-  toggle.onclick=()=>{clearTimeout(hideTimer);manual=panel.classList.contains('hidden');panel.classList.toggle('hidden')};document.getElementById('downloadsHide').onclick=()=>{clearTimeout(hideTimer);manual=false;panel.classList.add('hidden')};
+  toggle.onclick=()=>{clearTimeout(hideTimer);manual=panel.classList.contains('hidden');panel.classList.toggle('hidden');placePanel()};document.getElementById('downloadsHide').onclick=()=>{clearTimeout(hideTimer);manual=false;panel.classList.add('hidden')};
   document.getElementById('downloadsClear').onclick=()=>{for(const [id,row] of rows)if(terminal.has(row.stage)){row.el.remove();rows.delete(id)}if(!rows.size){panel.classList.add('hidden');toggle.classList.add('hidden');manual=false}};
   document.getElementById('downloadsClear').title='Удалить завершённые загрузки из списка. Текущие продолжатся.';
   window.downloadProgress=update;
