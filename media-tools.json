@@ -1,5 +1,4 @@
 {
-  "url": "https://github.com/kepilis/alloconnect/releases/download/media-tools-v1/media-tools-v1.zip",
   "size": 163995490,
   "sha256": "afae741dc9bf90954d22c7930f13602011669ba864161ca2bd58632db584e7c8",
   "files": {
@@ -31,5 +30,10 @@
       "size": 17880111,
       "sha256": "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555"
     }
-  }
+  },
+  "urls": [
+    "https://raw.githubusercontent.com/kepilis/alloconnect/packages/media-tools-v1/media-tools-v1.zip.01",
+    "https://raw.githubusercontent.com/kepilis/alloconnect/packages/media-tools-v1/media-tools-v1.zip.02",
+    "https://raw.githubusercontent.com/kepilis/alloconnect/packages/media-tools-v1/media-tools-v1.zip.03"
+  ]
 }

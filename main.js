@@ -1735,7 +1735,7 @@ ipcMain.handle('stickers-items-edit', (_e, packId, ids, action, targetId, newNam
    с проверкой SHA-256, в userData/ai. В app.asar их нет: автообновление меняет только app.asar.
    ai-mask: RGBA кадра → маска (0–255) того же размера. Кадры гифки приходят по одному из окна.
    ========================================================= */
-const AI_BASE = process.env.ALOCALLS_AI_BASE || `https://github.com/${GH_REPO}/releases/download/models-v1`;
+const AI_BASE = process.env.ALOCALLS_AI_BASE || `https://raw.githubusercontent.com/${GH_REPO}/packages/models-v1`;
 const AI_FILES = {
   runtime: { n: 'ort-win-x64-1.31.1.tar.gz', sha: '8b0d6f34161adb47d1c469f629cde715dd4370305565e5f048cae80566e17d8a', size: 29073316 },
   person: { n: 'modnet.onnx', sha: '07c308cf0fc7e6e8b2065a12ed7fc07e1de8febb7dc7839d7b7f15dd66584df9', size: 25888640 },
@@ -1765,13 +1765,16 @@ async function aiDownloadOnce(kind, progress) {
   fs.mkdirSync(aiDir(), { recursive: true });
   const out = path.join(aiDir(), f.n);
   const part = out + '.part';
-  const r = await enet.fetch(`${AI_BASE}/${f.n}`, { headers: { 'User-Agent': 'alloconnect' } });
-  if (!r.ok) throw new Error('не скачалось: ' + r.status);
+  const baseUrl = AI_BASE + '/' + f.n;
+  const urls = kind === 'object' && !process.env.ALOCALLS_AI_BASE
+    ? ['.01', '.02', '.03'].map(suffix => baseUrl + suffix) : [baseUrl];
+  const chunks = require('./package-bytes.cjs').packageBytes((url, options) => enet.fetch(url, options), urls,
+    { headers: { 'User-Agent': 'alloconnect' } });
   const h = require('crypto').createHash('sha256');
   const ws = fs.createWriteStream(part);
   let got = 0, last = 0;
   try {
-    for await (const c of r.body) {
+    for await (const c of chunks) {
       got += c.length;
       if (got > f.size) throw new Error('файл больше ожидаемого');
       h.update(c);

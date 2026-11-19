@@ -1,0 +1,3 @@
+OpenPGP.js 6.3.2
+https://github.com/openpgpjs/openpgpjs
+Node bundle copied without modification; see LICENSE.

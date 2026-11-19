@@ -15,8 +15,9 @@ async function prepareTools({app,ask,fetch,progress=()=>{}}){
   fs.mkdirSync(parent,{recursive:true});const tmp=fs.mkdtempSync(path.join(parent,'download-'));
   try{
    progress({stage:'download',got:0,total:config.size});
-   const zip=path.join(tmp,'tools.zip'),r=await fetch(config.url,{signal:AbortSignal.timeout(10*60*1000)});if(!r.ok)throw Error('Не удалось скачать инструменты YouTube: '+r.status);
-   let got=0,last=0;const fd=fs.openSync(zip,'wx');try{for await(const b of r.body){got+=b.length;if(got>config.size)throw Error('Неверный размер пакета YouTube');fs.writeSync(fd,b);if(Date.now()-last>200){last=Date.now();progress({stage:'download',got,total:config.size})}}}finally{fs.closeSync(fd)}
+   const zip=path.join(tmp,'tools.zip');
+   const chunks=require('./package-bytes.cjs').packageBytes(fetch,config.urls,{signal:AbortSignal.timeout(10*60*1000)});
+   let got=0,last=0;const fd=fs.openSync(zip,'wx');try{for await(const b of chunks){got+=b.length;if(got>config.size)throw Error('Неверный размер пакета YouTube');fs.writeSync(fd,b);if(Date.now()-last>200){last=Date.now();progress({stage:'download',got,total:config.size})}}}finally{fs.closeSync(fd)}
    progress({stage:'verify',got,total:config.size});
    if(got!==config.size||await hash(zip)!==config.sha256)throw Error('Проверка пакета YouTube не прошла');
    progress({stage:'install'});
