@@ -1,3 +1,5 @@
-# AlloConnect для Android 0.16.9
+# AlloConnect для Android 0.16.11
 
-[Скачать APK для ARM64](alloconnect_android-0.16.9-arm64-v8a.apk?raw=1)
+[Скачать APK для ARM64](alloconnect_android-0.16.11-arm64-v8a.apk?raw=1)
+
+Картинки, GIF и видео можно подвести к краю демонстрации после поворота. Границы совпадают в предпросмотре и на экране друга.
