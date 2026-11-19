@@ -5,6 +5,7 @@ const os = require('os');
 const { execFile } = require('child_process');
 const {registerAuth}=require('./youtube-auth.cjs');
 const {prepareTools}=require('./media-tools-loader.cjs');
+const {createUpdater}=require('./yt-dlp-updater.cjs');
 const MAX = 512 * 1048576;
 function youtubeUrl(raw) {
   const u = new URL(String(raw));
@@ -37,6 +38,7 @@ function run(exe,args,timeout=120000,onProgress) {
 }
 function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
   const auth=registerAuth({ipcMain,app,dialog,BrowserWindow});
+  const updateExtractor=createUpdater({app,fetch:net?.fetch?.bind(net)||globalThis.fetch,log});
   let busy = false, preparedDir=null;
   const toolCache = new Map();
   const tool = name => {
@@ -69,6 +71,8 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
       mediaProgress({stage:'starting',message:'Подготовка загрузчика…'});
       preparedDir=await prepareTools({app,ask,fetch:net?.fetch?.bind(net)||globalThis.fetch,progress:data=>progress({id:'youtube-tools',title:'Инструменты YouTube',...data})});
       if(!preparedDir){mediaProgress({stage:'cancelled'});return {cancelled:true};}
+      const extractor=await updateExtractor({fallback:tool('yt-dlp'),progress:data=>progress({id:'youtube-extractor-update',title:'Обновление yt-dlp',...data})});
+      const ytDlp=extractor.path;
       tool('ffprobe');
       mediaProgress({stage:'starting',message:'Получение информации о видео…'});
       authLease=auth.begin?await auth.begin():{args:await auth.args(),dispose(){}};
@@ -76,7 +80,7 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
       const base = [...cookies,'--js-runtimes','node:'+tool('node'),'--ignore-config','--no-playlist','--no-warnings','--no-progress','--no-cache-dir','--no-write-info-json','--no-write-thumbnail','--socket-timeout','20','--retries','2','--ffmpeg-location',tool('ffmpeg')];
       const format = audio?'bestaudio[ext=m4a]/bestaudio':'bestvideo[height<=720][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]';
       let info;
-      const getInfo=async()=>JSON.parse(await run(tool('yt-dlp'),[...base,'-f',format,'--dump-single-json','--skip-download','--',url]));
+      const getInfo=async()=>JSON.parse(await run(ytDlp,[...base,'-f',format,'--dump-single-json','--skip-download','--',url]));
       try{info=await getInfo()}catch(err){
         if(!auth.login||!['age-restricted','login-required','cookies-protected','cookies-locked','cookies-missing'].includes(err.mediaCode))throw err;
         const answer=await ask({type:'question',message:'Для загрузки нужен вход в YouTube',detail:'Откроется отдельная сессия YouTube. Войди в аккаунт, которому доступно видео, затем закрой окно — загрузка продолжится автоматически. Сессия сохраняется на этом ПК с шифрованием Windows.',buttons:['Войти в YouTube','Отмена'],defaultId:0,cancelId:1,noLink:true});
@@ -101,7 +105,7 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
       tmp = fs.mkdtempSync(path.join(app.getPath('temp'),'alloconnect-youtube-'));
       const output = path.join(tmp,'media.%(ext)s');
       mediaProgress({stage:'download',got:0,total:size});
-      await run(tool('yt-dlp'),[...base,'--newline','--progress','--progress-template','download:ALO_PROGRESS:%(progress.downloaded_bytes)s:%(progress.total_bytes,progress.total_bytes_estimate)s','-f',format,'--max-filesize',String(MAX),'--merge-output-format','mp4','-o',output,...(audio?['-x','--audio-format','mp3']:[]),'--',url],20*60*1000,mediaProgress);
+      await run(ytDlp,[...base,'--newline','--progress','--progress-template','download:ALO_PROGRESS:%(progress.downloaded_bytes)s:%(progress.total_bytes,progress.total_bytes_estimate)s','-f',format,'--max-filesize',String(MAX),'--merge-output-format','mp4','-o',output,...(audio?['-x','--audio-format','mp3']:[]),'--',url],20*60*1000,mediaProgress);
       mediaProgress({stage:'processing',message:'Подготовка медиафайла…'});
       const file = fs.readdirSync(tmp).find(n=>audio?/\.mp3$/.test(n):/\.(mp4|webm|mkv)$/.test(n));
       if (!file) { const message='Загрузка не завершилась или медиа превышает 512 МБ'; mediaProgress({stage:'error',message}); return {error:message}; }

@@ -43,7 +43,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('duo.' + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
 const DEFAULTS = {
-  mic: '', out: '', noise: true, echo: true, agc: true, sounds: true,
+  micSystemCapture: true, mic: '', out: '', noise: true, echo: true, agc: true, sounds: true,
   noStun: false, stunAlt: false, stunCustom: '', relayUrl: '', turnUrl: '', turnUser: '', turnPass: '', relay: false, quality: '1080p60', minKbps: 2500, rnn: true,
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
@@ -368,9 +368,9 @@ function sound(kind) {
 /* =========================================================
    Микрофон
    ========================================================= */
-async function acquireMic() {
-  const o = settings();
-  const constraints = {
+function micConstraints(o) {
+  if (o.micSystemCapture) return { audio: true };
+  return {
     audio: {
       deviceId: o.mic ? { exact: o.mic } : undefined,
       echoCancellation: o.echo,
@@ -380,13 +380,25 @@ async function acquireMic() {
     },
     video: false,
   };
+}
+
+async function requestMicStream(o) {
+  const constraints = micConstraints(o);
   try {
     return await navigator.mediaDevices.getUserMedia(constraints);
   } catch (e) {
-    if (o.mic) {
-      constraints.audio.deviceId = undefined;
-      try { return await navigator.mediaDevices.getUserMedia(constraints); } catch { /* ниже */ }
+    if (!o.micSystemCapture && o.mic) {
+      delete constraints.audio.deviceId;
+      return navigator.mediaDevices.getUserMedia(constraints);
     }
+    throw e;
+  }
+}
+
+async function acquireMic() {
+  try {
+    return await requestMicStream(settings());
+  } catch (e) {
     console.warn('mic', e);
     toast('Микрофон не найден — друг тебя не услышит');
     return audio().createMediaStreamDestination().stream; // тишина, чтобы звонок работал
@@ -3363,6 +3375,12 @@ async function openSettings() {
   $('optAnimations').checked = o.animations !== false;
   $('optDownloadsAuto').checked = o.downloadsAuto !== false;
   $('downloadsDuration').value = String(Number.isInteger(Number(o.downloadsDuration)) && Number(o.downloadsDuration) >= 0 && Number(o.downloadsDuration) <= 10 ? Number(o.downloadsDuration) : 3);
+  $('optMicSystemCapture').checked = o.micSystemCapture;
+  const updateMicFields = () => {
+    for (const id of ['micSelect', 'optNoise', 'optEcho', 'optAgc']) $(id).disabled = $('optMicSystemCapture').checked;
+  };
+  $('optMicSystemCapture').onchange = updateMicFields;
+  updateMicFields();
   $('optNoise').checked = o.noise;
   $('optRnn').checked = o.rnn !== false;
   $('optEcho').checked = o.echo;
@@ -3424,7 +3442,7 @@ async function openSettings() {
   let meterStream = S.mic;
   if (!meterStream) {
     try {
-      settingsMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      settingsMicStream = await requestMicStream(o);
       meterStream = settingsMicStream;
     } catch { /* без доступа покажем то, что есть */ }
   }
@@ -3479,6 +3497,7 @@ async function saveSettings() {
   const before = settings();
   const after = {
     ...before,
+    micSystemCapture: $('optMicSystemCapture').checked,
     mic: $('micSelect').value,
     out: $('outSelect').value,
     noise: $('optNoise').checked,
@@ -3546,7 +3565,7 @@ async function saveSettings() {
   }
   if (after.out !== before.out) applyOutputDevice();
   if (after.rnn !== before.rnn) { if (after.rnn) await ensureRnnoise(); routeChain(); }
-  if (['mic', 'noise', 'echo', 'agc'].some((k) => after[k] !== before[k]) && S.mic) await restartMic();
+  if (['micSystemCapture', 'mic', 'noise', 'echo', 'agc'].some((k) => after[k] !== before[k]) && S.mic) await restartMic();
   if (['noStun', 'stunAlt', 'stunCustom', 'relayUrl'].some((k) => after[k] !== before[k])) {
     L('settings', { stun: stunPlan().map((p) => p.name).join('>'), customCount: STUN_LISTS.parse(after.stunCustom).length });
     if ($('stunCustom').value.trim() && !after.stunCustom) toast('Свои STUN-серверы не распознаны — пиши адрес вида stun.example.com:3478');
