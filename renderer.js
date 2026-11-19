@@ -28,6 +28,7 @@ const HOST_CONNECT_TIMEOUT = 25000;
 const GUEST_CONNECT_TIMEOUT = 120000;
 
 const QUALITY = {
+  '720p60':  { w: 1280, h: 720,  fps: 60, br: 4_000_000 },
   '720p30':  { w: 1280, h: 720,  fps: 30, br: 2_500_000 },
   '1080p30': { w: 1920, h: 1080, fps: 30, br: 4_500_000 },
   '1080p60': { w: 1920, h: 1080, fps: 60, br: 8_000_000 },
@@ -46,7 +47,7 @@ const DEFAULTS = {
   noStun: false, stunAlt: false, stunCustom: '', relayUrl: '', turnUrl: '', turnUser: '', turnPass: '', relay: false, quality: '1080p60', minKbps: 2500, rnn: true,
   ringVol: 80, ringMute: false, spVolOut: 100, spVolMon: 60, spMonitor: true, spWhenMuted: true,
   duckOn: true, duckAmount: 50, duckOthers: true, duckMe: false, duckStream: true,
-  ovlDraw: true, ovlReact: false, ctlAllow: true,
+  ovlDraw: true, ovlReact: false, ctlAllow: true, ctlBufferMs: 20,
   clip: true, clipSeconds: 30, clipAudio: false, streamFrame: true, hideSelf: true, winFree: false, cam: '',
   ptt: false, pttVk: 0, pttName: '', activity: false, autoUpdate: true,
   svidVol: 70, svidSound: true,      // видео на экран друга: как отправляю
@@ -332,7 +333,7 @@ function makeMeter(stream, onLevel) {
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     onLevel(Math.sqrt(sum / buf.length));
   }, 60);
-  return () => { clearInterval(timer); try { src.disconnect(); } catch { /* ignore */ } };
+  return () => { clearInterval(timer); onLevel(0); try { src.disconnect(); } catch { /* ignore */ } };
 }
 
 function sound(kind) {
@@ -479,7 +480,7 @@ function startMyMeter() {
   S.stopMyMeter?.();
   if (!S.mic) return;
   S.stopMyMeter = makeMeter(S.mic, (lvl) => {
-    $('meCard').classList.toggle('speaking', lvl > 0.02 && !S.muted && !S.deafened);
+    $('meCard').classList.toggle('speaking', lvl > 0.02 && !S.muted && !S.deafened); window.talkingAvatar?.level($('meCard'), (!S.muted && !S.deafened) ? lvl : 0);
     duckFeed('me', lvl);
   });
 }
@@ -1084,7 +1085,7 @@ function onData(d) {
       break;
     }
     case 'bye':
-      friendGone(`${S.friendNick} завершил звонок`);
+      friendGone(`${S.friendNick} завершил звонок`, 'peer');
       break;
     case 'perm':
       S.friendPerm = { draw: d.draw !== false, react: !!d.react, ctl: d.ctl !== false, vid: d.vid === 1, mediaLong: d.mediaLong === 1, ops: d.ops === 1 };
@@ -1137,40 +1138,42 @@ function onData(d) {
   }
 }
 
-async function tuneSender(sender, { video, audio: audioBr, mode, codec }) {
+async function tuneSender(sender, { video, audio: audioBr, mode, codec, encoding = {} }) {
   if (!sender || !sender.track) return;
-  const p = sender.getParameters();
-  if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-  if (video) {
-    p.encodings[0].maxBitrate = video.br;
-    p.encodings[0].maxFramerate = video.fps;
-    p.encodings[0].networkPriority = 'high';
-    // Игра: при нехватке ресурсов снижаем разрешение, но держим FPS. Текст: наоборот.
-    p.degradationPreference = mode === 'text' ? 'maintain-resolution' : 'maintain-framerate';
-    if (codec) p.encodings[0].codec = codec;
-  } else if (audioBr) {
-    p.encodings[0].maxBitrate = audioBr;
-    p.encodings[0].networkPriority = 'high';
-  }
-  // Retry optional parameters separately: an unsupported codec must not
-  // silently remove the frame-rate preference used for game capture.
-  const removed=[];
-  for(let attempt=0;attempt<4;attempt++){
-    try{
-      await sender.setParameters(p);
-      if(video)L('stream-sender',{targetFps:video.fps,mode:mode||'game',degradation:p.degradationPreference||'default',removed});
-      return;
-    }catch(e){
-      if(p.encodings.some(x=>x.codec)){
-        p.encodings.forEach(x=>delete x.codec);removed.push('codec');
-      }else if(p.encodings.some(x=>x.networkPriority)){
-        p.encodings.forEach(x=>delete x.networkPriority);removed.push('networkPriority');
-      }else if(p.degradationPreference){
-        delete p.degradationPreference;removed.push('degradationPreference');
-      }else{console.warn('setParameters',e);return}
-      L('stream-sender-retry',{removed:removed[removed.length-1],error:String(e.message||e).slice(0,180)});
+  const pending = tuneSender.pending || (tuneSender.pending = new WeakMap());
+  const task = (pending.get(sender) || Promise.resolve()).catch(() => {}).then(async () => {
+    if (!sender.track) return;
+    const removed = [];
+    for (let attempt = 0; attempt < 4; attempt++) {
+      // Chromium consumes the transaction even on failure. Always read fresh parameters.
+      const p = sender.getParameters();
+      if (!p.encodings?.length) p.encodings = [{}];
+      Object.assign(p.encodings[0], encoding);
+      if (video) {
+        p.encodings[0].maxBitrate = video.br;
+        p.encodings[0].maxFramerate = video.fps;
+        if (!removed.includes('degradationPreference')) p.degradationPreference = mode === 'text' ? 'maintain-resolution' : 'maintain-framerate';
+        if (codec && !removed.includes('codec')) p.encodings[0].codec = codec;
+      } else if (audioBr) p.encodings[0].maxBitrate = audioBr;
+      if (!removed.includes('networkPriority')) p.encodings[0].networkPriority = 'high';
+      for (const field of removed) {
+        if (field === 'degradationPreference') delete p[field];
+        else p.encodings.forEach(e => delete e[field]);
+      }
+      try {
+        await sender.setParameters(p);
+        if (video) L('stream-sender', { targetFps: video.fps, mode: mode || 'game', degradation: p.degradationPreference || 'default', removed });
+        return;
+      } catch (e) {
+        const field = p.encodings.some(x => x.codec) ? 'codec' : p.encodings.some(x => x.networkPriority) ? 'networkPriority' : p.degradationPreference ? 'degradationPreference' : null;
+        if (!field) { console.warn('setParameters', e); return; }
+        removed.push(field);
+        L('stream-sender-retry', { removed: field, error: String(e.message || e).slice(0, 180) });
+      }
     }
-  }
+  });
+  pending.set(sender, task);
+  try { await task; } finally { if (pending.get(sender) === task) pending.delete(sender); }
 }
 
 function attachRemoteVoice(stream) {
@@ -1185,7 +1188,7 @@ function attachRemoteVoice(stream) {
   remoteSrc.connect(friendGain);
   S.stopFriendMeter?.();
   S.stopFriendMeter = makeMeter(stream, (lvl) => {
-    $('friendCard').classList.toggle('speaking', lvl > 0.02 && !S.deafened);
+    $('friendCard').classList.toggle('speaking', lvl > 0.02 && !S.deafened); window.talkingAvatar?.level($('friendCard'), (!S.deafened) ? lvl : 0);
     duckFeed('friend', lvl);
   });
 }
@@ -1221,9 +1224,10 @@ function releaseMic() {
 }
 
 /* ---------- Друг ушёл / связь потеряна ---------- */
-function friendGone(reason) {
+function friendGone(reason, cause = 'network') {
   if (!S.connected) return;
-  L('call', { ended: reason });
+  L('call', { ended: reason, cause });
+  callEvent(cause === 'peer' ? reason : 'Связь потеряна — кто прервал соединение, определить не удалось.', cause);
   stopStatsLog();
   if (S.reconnecting) { clearTimeout(S.reconnecting.timer); S.reconnecting = null; $('call').classList.remove('reconnecting'); }
   ctlEnd('звонок закончился', false);
@@ -1705,7 +1709,10 @@ function showRemoteScreen() {
   if (!S.tx) return;
   const v = $('remoteScreen');
   // небольшой запас в буфере: короткие провалы сети не превращаются во фризы
-  try { S.tx.video.receiver.jitterBufferTarget = 100; S.tx.saudio.receiver.jitterBufferTarget = 100; } catch { /* старые версии */ }
+  if (CV.state === 'on' && !CV.link?.id) ctlReceiveLatency(true);
+  else for (const receiver of [S.tx.video.receiver, S.tx.saudio.receiver]) {
+    try { receiver.jitterBufferTarget = 100; } catch { /* старые версии */ }
+  }
   v.srcObject = new MediaStream([S.tx.video.receiver.track, S.tx.saudio.receiver.track]);
   v.muted = S.deafened || !!WIN.min.screen;
   v.volume = Number($('screenVol').value) / 100;
@@ -2210,10 +2217,14 @@ function markUndelivered(m) {
   m.querySelector('.meta').appendChild(s);
 }
 
-function sysMsg(text, conv = G.active ? G.conv : S.callConv) {
+function callEvent(text, cause) {
+  sysMsg(text, S.callConv, 'call-event ' + cause);
+}
+
+function sysMsg(text, conv = G.active ? G.conv : S.callConv, kind = '') {
   if (!conv) return;
   const m = document.createElement('div');
-  m.className = 'msg sys';
+  m.className = 'msg sys' + (kind ? ' ' + kind : '');
   m.textContent = text;
   conv.box.appendChild(m);
   scrollEnd(conv, true);
@@ -2677,10 +2688,12 @@ async function recordFile(conv, mine, meta, blob, from = {}) {
   record(conv, entry);
 }
 
+// Keep bulk file traffic from building a multi-megabyte SCTP queue during control.
+const ctlFileBusy = () => CV.state === 'on' || CS.on;
 function waitLow(fdc) {
   return new Promise((res) => {
     const done = () => { fdc.removeEventListener('bufferedamountlow', done); clearInterval(t); res(); };
-    const t = setInterval(() => { if (fdc.readyState !== 'open' || fdc.bufferedAmount < (4 << 20)) done(); }, 200);
+    const t = setInterval(() => { if (fdc.readyState !== 'open' || fdc.bufferedAmount < (ctlFileBusy() ? 64 << 10 : 4 << 20)) done(); }, 20);
     fdc.addEventListener('bufferedamountlow', done);
   });
 }
@@ -2697,7 +2710,7 @@ class FileChan {
     this.sending = null;
     this.lastActive = Date.now();
     fdc.binaryType = 'arraybuffer';
-    fdc.bufferedAmountLowThreshold = 1 << 20;
+    fdc.bufferedAmountLowThreshold = 64 << 10;
     fdc.addEventListener('message', (e) => this.onMsg(e.data));
     fdc.addEventListener('close', () => this.fail('связь прервалась'));
   }
@@ -2723,7 +2736,7 @@ class FileChan {
       const conv = this.getConv();
       const ui = extra.ui || ((p === 'chat' || p === 'sound') && conv ? fileBubble(conv, S.nick || 'Я', meta, true, { mid: fmid(meta.fid) }) : NOUI);
       ui.progress(0);
-      this.outgoing.push({ file: f, meta, ui });
+      this.outgoing.push({ file: f, meta, ui, conv });
       L('file', { queued: meta.kind, size: meta.size, p });
     }
     this.pump();
@@ -2736,13 +2749,14 @@ class FileChan {
       this.sending = job;
       const fdc = this.fdc;
       try {
-        if (fdc.readyState !== 'open') throw new Error('нет связи');
+        if (job.cancelled || fdc.readyState !== 'open') throw new Error('нет связи');
         fdc.send(JSON.stringify({ t: 'file-start', fid: job.meta.fid, name: job.meta.name, size: job.meta.size, mime: job.meta.mime, p: job.meta.p, pl: job.meta.pl, vol: job.meta.vol, snd: job.meta.snd, st: job.meta.st }));
         let last = 0;
         for (let off = 0; off < job.meta.size; off += CHUNK) {
-          if (fdc.bufferedAmount > (8 << 20)) await waitLow(fdc);
-          if (fdc.readyState !== 'open') throw new Error('связь прервалась');
+          if (fdc.bufferedAmount > (ctlFileBusy() ? 256 << 10 : 8 << 20)) await waitLow(fdc);
+          if (job.cancelled || fdc.readyState !== 'open') throw new Error('связь прервалась');
           const buf = await job.file.slice(off, off + CHUNK).arrayBuffer();
+          if (job.cancelled || fdc.readyState !== 'open') throw new Error('передача остановлена');
           const pkt = new Uint8Array(4 + buf.byteLength);
           new DataView(pkt.buffer).setUint32(0, job.meta.fid);
           pkt.set(new Uint8Array(buf), 4);
@@ -2754,9 +2768,9 @@ class FileChan {
         if (job.meta.p !== 'chat' && job.meta.p !== 'sound') job.ui.done?.();
         else if (job.ui !== NOUI) {
           const url = URL.createObjectURL(job.file);
-          this.getConv()?.blobs.push(url);
+          job.conv?.blobs.push(url);
           job.ui.done(url);
-          recordFile(this.getConv(), true, job.meta, job.file);
+          recordFile(job.conv, true, job.meta, job.file);
         }
         L('file', { sent: job.meta.kind, size: job.meta.size, p: job.meta.p });
       } catch (e) {
@@ -2773,7 +2787,9 @@ class FileChan {
     if (typeof data === 'string') {
       let m;
       try { m = JSON.parse(data); } catch { return; }
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return;
       if (m.t === 'file-start') {
+        if(!Number.isInteger(m.fid)||m.fid<0||m.fid>0xffffffff||!Number.isSafeInteger(m.size)||m.size<0)return;
         const p = ['chat', 'sound', 'avatar', 'screenimg', 'screenvid', 'update'].includes(m.p) ? m.p : 'chat';
         const meta = { fid: m.fid >>> 0, name: String(m.name || 'файл').slice(0, 200), size: Math.max(0, Number(m.size) || 0), mime: String(m.mime || 'application/octet-stream').slice(0, 100), p };
         if (p === 'screenimg' || p === 'screenvid') meta.pl = cleanPlacement(m.pl);
@@ -2788,10 +2804,11 @@ class FileChan {
         const ui = (p === 'chat' || p === 'sound') && conv ? fileBubble(conv, from.nick || conv.nick, meta, false, { mid: fmid(meta.fid), who: from.who }) : NOUI;
         ui.progress(0);
         if(this.incoming.has(meta.fid)){const old=this.incoming.get(meta.fid);old.ui.fail('передача заменена');this.downloadEvent(old,'error','Передача заменена новой');this.incoming.delete(meta.fid)}
-        const entry={meta,parts:[],got:0,ui,last:0};
+        const entry={meta,parts:[],got:0,ui,last:0,conv,from};
         this.incoming.set(meta.fid,entry);
         this.downloadEvent(entry,'download');
       } else if (m.t === 'file-end') {
+        if (!Number.isInteger(m.fid) || m.fid < 0 || m.fid > 0xffffffff) return;
         const e = this.incoming.get(m.fid >>> 0);
         if (!e) return;
         this.incoming.delete(m.fid >>> 0);
@@ -2803,7 +2820,7 @@ class FileChan {
         const blob = new Blob(e.parts, { type: safeMime });
         L('file', { received: e.meta.kind, size: e.got, p: e.meta.p });
         if (e.meta.p !== 'chat' && e.meta.p !== 'sound') { this.handlers[e.meta.p]?.(blob, e.meta); return; }
-        const conv = this.getConv();
+        const conv = e.conv;
         const url = URL.createObjectURL(blob);
         conv?.blobs.push(url);
         e.ui.done(url);
@@ -2831,6 +2848,7 @@ class FileChan {
   }
 
   fail(why) {
+    if (this.sending) this.sending.cancelled = true;
     for (const [, e] of this.incoming) {e.ui.fail(why);this.downloadEvent(e,'error',why)}
     this.incoming.clear();
     for (const j of this.outgoing.splice(0)) j.ui.fail(why);
@@ -3327,6 +3345,8 @@ let settingsMicStream = null;
 let stopSettingsMeter = null;
 
 function paintYoutubeAuth(state) {
+  $('youtubeSessionStatus').textContent=state.session?'Вход YouTube сохранён на этом ПК.':'Вход YouTube не выполнен. Обычные видео загружаются без входа.';
+  $('youtubeLogout').disabled=!state.session;
   $('youtubeAuthEnabled').checked = state.enabled;
   $('youtubeAuthBrowser').value = state.browser;
   $('youtubeAuthStatus').textContent = state.error || (state.enabled ? 'Использование входа разрешено.' : 'Выключено: загрузка без авторизации.') + (state.detected ? ' Браузер по умолчанию: ' + state.detected : '');
@@ -3370,6 +3390,7 @@ async function openSettings() {
   $('svidInVol').value = String(o.svidInVol ?? 80);
   $('svidInVolVal').textContent = (o.svidInVol ?? 80) + '%';
   $('optCtlAllow').checked = o.ctlAllow !== false;
+  $('optCtlBuffer').value = String(ctlBufferValue(o.ctlBufferMs));
   $('optClip').checked = o.clip !== false;
   $('optClipAudio').checked = o.clipAudio === true;
   $('optStreamFrame').checked = o.streamFrame !== false;
@@ -3486,6 +3507,7 @@ async function saveSettings() {
     svidInSound: $('optSvidSound').checked,
     svidInVol: Number($('svidInVol').value),
     ctlAllow: $('optCtlAllow').checked,
+    ctlBufferMs: ctlBufferValue($('optCtlBuffer').value),
     clip: $('optClip').checked,
     clipAudio: $('optClipAudio').checked,
     streamFrame: $('optStreamFrame').checked,
@@ -3498,6 +3520,7 @@ async function saveSettings() {
     activity: $('optActivity').checked,
   };
   store.set('settings', after);
+  if (CV.state === 'on' && after.ctlBufferMs !== before.ctlBufferMs) ctlReceiveLatency(true);
   document.documentElement.classList.toggle('no-ui-animations',after.animations===false);
   applyStreamFrame();
   if (after.winFree !== before.winFree) winSetMode();
@@ -3541,7 +3564,7 @@ function helpBind() {
   const hide=()=>{tip.classList.add('hidden');active=null};
   const show=el=>{const msg=el.dataset.help;if(!msg)return;active=el;tip.textContent=msg;tip.classList.remove('hidden');const r=el.getBoundingClientRect(),w=tip.getBoundingClientRect().width;tip.style.left=Math.max(12,Math.min(innerWidth-w-12,r.left))+'px';tip.style.top=(r.bottom+tip.offsetHeight+12<innerHeight?r.bottom+8:r.top-tip.offsetHeight-8)+'px'};
   for(const el of document.querySelectorAll('.help-i')){
-    el.dataset.help=el.getAttribute('title')||el.getAttribute('aria-label')||'';el.removeAttribute('title');el.textContent='i';
+    el.dataset.help=el.getAttribute('title')||el.getAttribute('aria-label')||'';el.removeAttribute('title');el.textContent='';
     if(!el.hasAttribute('aria-label'))el.setAttribute('aria-label',el.dataset.help);
     if(el.tagName!=='BUTTON'){el.setAttribute('role','button');el.tabIndex=0}
     el.addEventListener('mouseenter',()=>show(el));el.addEventListener('mouseleave',hide);
@@ -3797,6 +3820,7 @@ function bind() {
     catch { toast('Не удалось сохранить настройку YouTube'); }
     finally { enabled.disabled=browser.disabled=false; }
   };
+  for(const [id,method] of [['youtubeLogin','youtubeSessionLogin'],['youtubeLogout','youtubeSessionLogout']])$(id).onclick=async()=>{const buttons=[$('youtubeLogin'),$('youtubeLogout')];buttons.forEach(b=>b.disabled=true);try{const state=await window.duo[method]();paintYoutubeAuth(state);if(state.cancelled)toast('Вход не подтверждён: войди на сайте и закрой окно')}catch(e){toast(e.message||'Не удалось изменить вход YouTube')}finally{$('youtubeLogin').disabled=false;window.duo.youtubeAuthGet().then(paintYoutubeAuth).catch(()=>{})}};
   $('youtubeAuthEnabled').onchange=setYoutubeAuth;
   $('youtubeAuthBrowser').onchange=setYoutubeAuth;
   $('btnSettings').onclick = openSettings;
@@ -3878,6 +3902,12 @@ function bind() {
   $('btnAvatarPick').onclick = () => $('avatarInput').click();
   $('avatarInput').onchange = (e) => { pickAvatar(e.target.files[0]); e.target.value = ''; };
   $('btnAvatarClear').onclick = clearAvatar;
+  $('btnAvatarTalk').onclick = () => window.talkingAvatar.edit(myAvatar?.url, async (bytes, mime) => {
+    const hash = await window.duo.avatarSetMine(bytes, mime);
+    await loadMyAvatar(); await refreshAvatars();
+    if(window.accountLab?.engine.account)await window.accountLab.sync.mutate(async()=>{});
+    announceAvatar(hash); toast('Настройка говорящей аватарки сохранена');
+  });
   $('duckAmount').oninput = (e) => { $('duckAmountVal').textContent = e.target.value + '%'; };
   $('svidInVol').oninput = (e) => { $('svidInVolVal').textContent = e.target.value + '%'; };
   $('btnHistClearAll').onclick = async () => {
@@ -3897,6 +3927,7 @@ function bind() {
   $('pttKey').onclick = startPttCapture;
   $('btnRollback').onclick = doRollback;
   $('btnGhCheck').onclick = () => ghCheckNow(true);
+  $('btnGhCheckLobby').onclick = () => ghCheckNow(true, 'ghStatusLobby');
   document.addEventListener('keydown', (e) => { if (pttCapture) { e.preventDefault(); const vk = codeToVk(e); if (vk) finishPttCapture(vk); } }, true);
   document.addEventListener('mousedown', (e) => { if (pttCapture && e.button >= 1) { e.preventDefault(); finishPttCapture(e.button === 1 ? 4 : e.button === 3 ? 5 : e.button === 4 ? 6 : 0); } }, true);
   $('clipModal').addEventListener('mousedown', (e) => { if (e.target.id === 'clipModal') closeClipPreview(); });
@@ -4004,7 +4035,7 @@ function renderFriends() {
   box.classList.toggle('hidden', friendsList.length === 0);
   const list = $('friendsList');
   list.innerHTML = '';
-  const sorted = [...friendsList].sort((a, b) => (b.online - a.online) || a.nick.localeCompare(b.nick));
+  const sorted = [...friendsList].filter(f=>!window.accountLab?.ownDeviceIds().includes(f.id)).sort((a, b) => (b.online - a.online) || a.nick.localeCompare(b.nick));
   for (const f of sorted) {
     const row = document.createElement('div');
     row.className = 'friend' + (f.online ? ' online' : '');
@@ -4074,7 +4105,7 @@ function renderFriendsDrawer() {
   const invites=$('frGroupInvites');invites.replaceChildren();
   for(const f of friendsList.filter(f=>!G.active||!G.members.has(f.id))){const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent=f.nick+(f.online?'':' — не в сети');b.disabled=!f.online;b.onclick=()=>inviteDrawerFriend(f.id);invites.appendChild(b)}
   if (!friendsList.length) { const p = document.createElement('p'); p.className = 'muted small'; p.textContent = 'Друзей пока нет'; box.appendChild(p); return; }
-  const sorted = [...friendsList].sort((a, b) => ((convs.get(b.id)?.unread || 0) - (convs.get(a.id)?.unread || 0)) || (b.online - a.online) || a.nick.localeCompare(b.nick));
+  const sorted = [...friendsList].filter(f=>!window.accountLab?.ownDeviceIds().includes(f.id)).sort((a, b) => ((convs.get(b.id)?.unread || 0) - (convs.get(a.id)?.unread || 0)) || (b.online - a.online) || a.nick.localeCompare(b.nick));
   for (const f of sorted) {
     const row = document.createElement('button');
     row.type = 'button';
@@ -4169,6 +4200,7 @@ async function fcAdd() {
 }
 
 function fcOnEvent(e) {
+  if(window.accountLab?.handlesFriendCode(e))return;
   if (!e || !ID_RE.test(String(e.id || ''))) return;
   if (e.type === 'request') {
     if (FC.cur?.id !== e.id && !FC.reqs.some((x) => x.id === e.id)) FC.reqs.push({ id: e.id, nick: String(e.nick || 'Без имени') });
@@ -4860,6 +4892,9 @@ async function collectStats() {
         decoded: dec, dropped: d(r, 'framesDropped'), lost: d(r, 'packetsLost'),
         freezes: d(r, 'freezeCount'), freezeSec: r1(d(r, 'totalFreezesDuration')), pauses: d(r, 'pauseCount'),
         jitterMs: r1((r.jitter || 0) * 1000), bufferMs: jbe ? r1((jbd / jbe) * 1000) : null,
+        bufferTargetMs: jbe && r.jitterBufferTargetDelay != null ? r1(d(r, 'jitterBufferTargetDelay') * 1000 / jbe) : null,
+        bufferMinimumMs: jbe && r.jitterBufferMinimumDelay != null ? r1(d(r, 'jitterBufferMinimumDelay') * 1000 / jbe) : null,
+        control: CV.state === 'on',
         decMsPerFrame: dec ? r1(((d(r, 'totalDecodeTime') || 0) * 1000) / dec) : null,
         nackSent: d(r, 'nackCount'), pliSent: d(r, 'pliCount'),
       };
@@ -4940,6 +4975,7 @@ function paintAvatar(el, url) {
   if (!el) return;
   el.style.backgroundImage = url ? `url("${url}")` : '';
   el.classList.toggle('has-img', !!url);
+  window.talkingAvatar?.bind(el, url);
 }
 
 async function refreshAvatars() {
@@ -4950,6 +4986,7 @@ async function refreshAvatars() {
   if (S.friendCall) paintAvatar($('callAvatar'), (await friendAvatar(S.friendCall.id))?.url);
   if (dmOpen) paintAvatar($('dmAvatar'), (await friendAvatar(dmOpen.id))?.url);
   for (const el of document.querySelectorAll('#friendsList .favatar')) paintAvatar(el, (await friendAvatar(el.dataset.id))?.url);
+  if (G.active) for (const id of G.tiles.keys()) grpPaintAvatar(id);
 }
 
 // собеседник сообщил хэш своей аватарки → скачиваем, если у нас другая
@@ -5012,6 +5049,7 @@ async function pickAvatar(file) {
     const hash = await window.duo.avatarSetMine(bytes, mime);
     await loadMyAvatar();
     refreshAvatars();
+    if(window.accountLab?.engine.account)await window.accountLab.sync.mutate(async()=>{});
     announceAvatar(hash);
     toast(S.connected || G.active ? 'Аватарка сохранена — в звонке её уже видят' : 'Аватарка сохранена — друзья увидят её в звонке или в чате');
   } catch (e) { toast('Не получилось: ' + (e.message || e)); }
@@ -5021,6 +5059,7 @@ async function clearAvatar() {
   await window.duo.avatarClearMine();
   await loadMyAvatar();
   refreshAvatars();
+  if(window.accountLab?.engine.account)await window.accountLab.sync.mutate(async()=>{});
   announceAvatar('');
 }
 
@@ -5260,7 +5299,7 @@ function startReconnect(why, peerLed) {
   L('reconnect', { start: why, canSignal: canSignal(), role: S.role });
   setStatus('waiting', 'Переподключение…');
   $('call').classList.add('reconnecting');
-  sysMsg(canSignal() ? 'Связь прервалась — переподключаюсь…' : 'Связь прервалась — жду, вдруг вернётся…');
+  callEvent(canSignal() ? 'Связь прервалась — переподключаюсь…' : 'Связь прервалась — жду, вдруг вернётся…', 'network');
   const tick = () => {
     const r = S.reconnecting;
     if (!r || S.pc !== pc) return;
@@ -5284,7 +5323,7 @@ function finishReconnect(ok) {
   L('reconnect', { ok, sec: Math.round((Date.now() - r.t0) / 1000), attempts: r.attempts });
   if (ok) {
     setStatus('ok', 'Соединено');
-    sysMsg('Связь восстановлена');
+    callEvent('Связь восстановлена', 'recovered');
     sound('join');
     pairLogged = false; // новый путь — запишем в лог
   } else {
@@ -5997,7 +6036,7 @@ async function onScreenImage(blob, meta) {
    Удалённое управление
    Зритель (CV) шлёт мышь/клавиши/геймпад; стримящий (CS) разрешает и передаёт в Windows.
    ========================================================= */
-const CV = { link: null, state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: null, reqTimer: null, lastPad: '', lastPadSent: 0, hadPad: false, padObj: null, moveQ: null, rel: [0, 0], raf: 0, rumble: { l: 0, s: 0, iv: null } };
+const CV = { moveTimer: null, moveSentAt: -Infinity, receiveBuffers: new Map(), link: null, state: 'off', perm: {}, keys: new Set(), padTimer: null, hbTimer: null, reqTimer: null, lastPad: '', lastPadSent: 0, hadPad: false, padObj: null, moveQ: null, rel: [0, 0], rumble: { l: 0, s: 0, iv: null } };
 const CS = { link: null, on: false, perm: null, lastMsg: 0, released: true, wd: null, reqTimer: null, req: null, mods: new Set() };
 
 /* С кем идёт управление: CV.link — тот, кем я управляю ('v'), CS.link — тот, кто управляет мной ('s').
@@ -6012,6 +6051,7 @@ const CTL_FRIEND = {
   nick: () => S.friendNick,
   focused: () => S.connected && !$('remoteScreenWrap').classList.contains('hidden'),
   src: () => (S.localScreen && S.shareCtx?.srcId) || null,
+  receivers: () => [S.tx?.video?.receiver, S.tx?.saudio?.receiver],
   changed: () => {},
 };
 const ctlLink = (side) => (side === 'v' ? CV.link : CS.link) || (G.active ? null : CTL_FRIEND);
@@ -6034,9 +6074,35 @@ function ctlRequest() {
   CV.reqTimer = setTimeout(() => { if (CV.state === 'req') { const n = ctlNick('v'); CV.state = 'off'; CV.link = null; updateToolbar(); toast(`${n} не ответил на запрос`); } }, 35000);
 }
 
+// Buffer targets affect only the screen being controlled, never the microphone.
+function ctlBufferValue(value) {
+  const ms = Number(value);
+  return [0, 20, 50, 100].includes(ms) ? ms : 20;
+}
+function ctlReceiveLatency(on) {
+  if (!on) {
+    for (const [receiver, target] of CV.receiveBuffers) {
+      try { receiver.jitterBufferTarget = target; } catch { /* closed/unsupported */ }
+    }
+    CV.receiveBuffers.clear();
+    return;
+  }
+  const target = ctlBufferValue(settings().ctlBufferMs);
+  for (const receiver of ctlLink('v')?.receivers?.() || []) {
+    if (!receiver || !('jitterBufferTarget' in receiver)) continue;
+    try {
+      if (!CV.receiveBuffers.has(receiver)) CV.receiveBuffers.set(receiver, receiver.jitterBufferTarget);
+      receiver.jitterBufferTarget = target;
+    } catch { /* unsupported by this runtime */ }
+  }
+  L('control-buffer', { targetMs: target, receivers: CV.receiveBuffers.size });
+}
+
 function ctlViewStart(perm) {
   clearTimeout(CV.reqTimer);
+  if (CV.state === 'on') return; // duplicate grant must not create extra polling timers
   CV.state = 'on';
+  ctlReceiveLatency(true);
   CV.perm = { mouse: !!perm.mouse, kb: !!perm.kb, pad: !!perm.pad };
   tools.mode = null;
   if (!G.active) send({ t: 'ptr-off' });
@@ -6056,6 +6122,9 @@ function kbLockEsc() { navigator.keyboard?.lock?.(['Escape']).catch(() => {}); }
 function ctlViewStop(notify, why) {
   if (CV.state === 'off') return;
   const was = CV.state;
+  ctlReceiveLatency(false);
+  clearTimeout(CV.moveTimer); CV.moveTimer = null;
+  CV.moveQ = null; CV.rel = [0, 0]; CV.moveSentAt = -Infinity;
   for (const code of CV.keys) ctlSend(['k', code, 0]);
   CV.keys.clear();
   if (CV.hadPad) ctlSend(['p', 0, 0, 0, 0, 0, 0, 0]);
@@ -6073,12 +6142,20 @@ function ctlViewStop(notify, why) {
 
 const MOUSE_BTN = { 0: 0, 2: 1, 1: 2, 3: 3, 4: 4 };
 function flushMove() {
-  CV.raf = 0;
+  clearTimeout(CV.moveTimer); CV.moveTimer = null;
   if (CV.state !== 'on') return;
+  CV.moveSentAt = performance.now();
   if (CV.rel[0] || CV.rel[1]) { ctlSend(['r', Math.round(CV.rel[0]), Math.round(CV.rel[1])], true); CV.rel = [0, 0]; }
   if (CV.moveQ) { ctlSend(['m', n4(CV.moveQ[0]), n4(CV.moveQ[1])], true); CV.moveQ = null; }
 }
-function queueMoveFlush() { if (!CV.raf) CV.raf = requestAnimationFrame(flushMove); }
+// Send the first movement immediately; coalesce a burst at up to 250 Hz.
+// A timer keeps input independent of the display refresh rate.
+function queueMoveFlush() {
+  if (CV.state !== 'on' || CV.moveTimer !== null) return;
+  const wait = Math.max(0, 4 - (performance.now() - CV.moveSentAt));
+  if (!wait) flushMove();
+  else CV.moveTimer = setTimeout(flushMove, wait);
+}
 
 function padPoll() {
   const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
@@ -6156,6 +6233,7 @@ function bindLiveTools() {
     if (CV.state === 'on') {
       e.preventDefault();
       if (!CV.perm.mouse || MOUSE_BTN[e.button] == null) return;
+      flushMove(); // preserve movement-before-button order, including pointer lock
       if (document.pointerLockElement !== layer) ctlSend(['m', ...normPt(e).map(n4)]);
       ctlSend(['b', MOUSE_BTN[e.button], 1]);
       return;
@@ -6175,7 +6253,7 @@ function bindLiveTools() {
     }
   });
   const up = (e) => {
-    if (CV.state === 'on') { if (CV.perm.mouse && MOUSE_BTN[e.button] != null) ctlSend(['b', MOUSE_BTN[e.button], 0]); return; }
+    if (CV.state === 'on') { if (CV.perm.mouse && MOUSE_BTN[e.button] != null) { flushMove(); ctlSend(['b', MOUSE_BTN[e.button], 0]); } return; }
     if (tools.stroke) {
       clearInterval(tools.flushT);
       const l = tools.local.get(tools.stroke.id);
@@ -6620,11 +6698,11 @@ const verCmpR = (a, b) => {
 };
 const upd = { pull: null, declined: new Set() };
 
-// GitHub: тихая проверка через минуту после запуска и раз в 6 часов; «Проверить сейчас» — в настройках
+// GitHub: тихая проверка через минуту и раз в 6 часов; ручная — из лобби и настроек.
 let ghTimer = null;
 let ghShown = '';
-async function ghCheckNow(manual) {
-  const st = $('ghStatus');
+async function ghCheckNow(manual, statusId = 'ghStatus') {
+  const st = $(statusId);
   if (manual) st.textContent = 'Проверяю…';
   const r = await window.duo.ghCheck().catch((e) => ({ ok: false, error: e.message }));
   L('update', { gh: r.ok ? (r.ready ? 'ready' : r.manual ? 'manual' : 'none') : 'error', v: r.v });

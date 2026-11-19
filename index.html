@@ -7,13 +7,21 @@
   <title>alloconnect</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="themes.css" />
+<link rel="stylesheet" href="account-lab.css">
 </head>
 <body>
 
 <!-- ЛОББИ -->
 <section id="lobby" class="screen active">
+  <div class="lobby-update-actions">
+    <span id="ghStatusLobby" class="muted small" role="status" aria-live="polite"></span>
+    <button type="button" id="btnGhCheckLobby" class="btn small">Проверить обновления</button>
+  </div>
   <div class="lobby-card">
-    <div class="logo"><img src="icon.png" alt="" class="logo-img" /> alloconnect</div>
+    <div class="lobby-card-head">
+      <div class="logo"><img src="icon.png" alt="" class="logo-img" /><span class="logo-name">alloconnect</span></div>
+    <button id="btnSettingsLobby" class="icon-btn settings-button" type="button" title="Настройки" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
+    </div>
     <p class="muted">Звонки, демонстрация экрана, чат и файлы с друзьями. Напрямую, без серверов. Первый раз — короткий код дружбы через любой мессенджер, дальше — из списка друзей в один клик.</p>
 
     <label class="field">
@@ -43,7 +51,7 @@
       <p id="codeEntryPreview" class="muted small info" role="status">Приложение определит тип кода перед действием.</p>
       <button id="codeEntryGo" class="btn primary big" disabled>Продолжить</button>
       <details class="adv code-create"><summary>Создать свой код или приглашение</summary>
-        <div class="help-row"><button id="btnAddFriendCode" class="btn big">➕ Код дружбы</button><button type="button" class="help-i" title="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей." aria-label="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей.">ⓘ</button></div>
+        <div class="help-row"><button id="btnAddFriendCode" class="btn big">➕ Код дружбы</button><button type="button" class="help-i" title="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей." aria-label="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей.">i</button></div>
         <div class="help-row"><button id="btnInvite" class="btn big">Приглашение на звонок</button><button type="button" class="help-i" title="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране." aria-label="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране.">ⓘ</button></div>
         <button id="btnHaveInvite" class="link" type="button">Ввести приглашение вручную</button>
       </details>
@@ -86,7 +94,7 @@
     </div>
 
     <p id="lobbyError" class="error"></p>
-    <button id="btnSettingsLobby" class="link">Настройки</button>
+
   </div>
 </section>
 
@@ -99,7 +107,7 @@
     <button id="btnAddFriend" class="btn small add-friend hidden">➕ В друзья</button>
     <div id="status" class="status waiting"><i></i><span>Ждём друга…</span></div>
     <button id="btnFriendsCall" class="btn small fr-btn" title="Открыть звонки и сообщения, не завершая текущий звонок">☰ Звонки и сообщения<b class="badge hidden"></b></button>
-    <button id="btnSettings" class="icon-btn" title="Настройки">⚙</button>
+    <button id="btnSettings" class="icon-btn settings-button" type="button" title="Настройки" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
   </header>
 
   <main class="stage">
@@ -281,6 +289,7 @@
         <span>Качество</span>
         <select id="quality">
           <option value="720p30">720p · 30 fps</option>
+          <option value="720p60">720p · 60 fps</option>
           <option value="1080p30">1080p · 30 fps</option>
           <option value="1080p60" selected>1080p · 60 fps</option>
           <option value="1440p60">1440p · 60 fps</option>
@@ -464,6 +473,7 @@
         <small class="muted">Картинка или гифка — можно перетащить сюда. Большая сама уменьшится до нужного размера. Друзья увидят её в списке и в звонке</small><br />
         <button type="button" id="btnAvatarPick" class="btn small">Выбрать…</button>
         <button type="button" id="btnAvatarClear" class="btn small">Убрать</button>
+        <button type="button" id="btnAvatarTalk" class="btn small">Говорящий аватар…</button>
         <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
       </div>
     </div>
@@ -558,6 +568,13 @@
       <label class="check"><input type="checkbox" id="optSvidSound" /> <span>Звук у видео, которые присылает друг</span></label>
       <label class="field inline ring-vol"><span>Громкость видео</span><input type="range" id="svidInVol" min="0" max="100" step="5" value="80" /><b id="svidInVolVal" class="small">80%</b></label>
       <label class="check"><input type="checkbox" id="optCtlAllow" /> <span>Друг может попросить управление <small class="muted">(каждый раз спрошу разрешение)</small></span></label>
+      <label class="field"><span>Отклик, когда я управляю другом</span><select id="optCtlBuffer">
+        <option value="0">Минимальная задержка</option>
+        <option value="20">Быстрый — рекомендуется</option>
+        <option value="50">Более плавный</option>
+        <option value="100">Обычный показ</option>
+      </select></label>
+      <p class="muted small">Меньше задержка — возможны подёргивания при нестабильной сети. После управления обычный буфер вернётся. Для слабого канала попробуйте 720p · 60 fps у показывающего.</p>
       <p class="muted small">Поверх игры видно в оконном режиме и «без рамки», в эксклюзивном полноэкранном — нет.</p>
     </div>
     <div class="ringbox">
@@ -575,11 +592,17 @@
       </select>
     </label>
     <details class="adv" data-cat="youtube">
-      <summary>Перенос ссылок с YouTube <span class="help-i" title="Вставь ссылку YouTube в чат или перетащи на демонстрацию: приложение загрузит видео или звук для отправки другу. Для ограниченных видео нужен вход в YouTube." tabindex="0" aria-label="О переносе ссылок с YouTube">ⓘ</span></summary><div class="scat-body">
+      <summary>Перенос ссылок с YouTube <span class="help-i" title="Вставь ссылку YouTube в чат или перетащи на демонстрацию: приложение загрузит видео или звук для отправки другу. Для ограниченных видео нужен вход в YouTube." tabindex="0" aria-label="О переносе ссылок с YouTube">i</span></summary><div class="scat-body">
+      <p id="youtubeSessionStatus" class="muted small"></p>
+      <button type="button" id="youtubeLogin" class="btn small primary">Войти в YouTube</button>
+      <button type="button" id="youtubeLogout" class="btn small">Выйти из YouTube</button>
+      <p class="muted small">Вход нужен только для видео, требующих авторизации. Войди на сайте и закрой окно — загрузка продолжится. Сессия хранится на этом ПК с шифрованием Windows. Пароль в alloconnect вводить не нужно.</p>
+      <details class="adv"><summary>Другой способ: вход из браузера</summary>
       <label class="check"><input type="checkbox" id="youtubeAuthEnabled" /><span>Использовать вход в YouTube из браузера</span></label>
       <label class="field"><span>Браузер с нужным аккаунтом YouTube</span><select id="youtubeAuthBrowser"><option value="auto">Браузер по умолчанию</option><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option><option value="firefox">Mozilla Firefox</option><option value="brave">Brave</option><option value="opera">Opera</option><option value="vivaldi">Vivaldi</option></select></label>
       <p id="youtubeAuthStatus" class="muted small"></p>
       <p class="muted small">Применяется сразу. В выбранном браузере должен быть выполнен вход в аккаунт, которому доступно видео. Куки остаются на этом ПК. Защита браузера может ограничивать чтение входа.</p>
+      </details>
       </div></details>
     <label class="check"><input type="checkbox" id="optAv1" /> <span>AV1 через видеокарту <small class="muted">(экспериментально: RTX 40/50, RX 7000, Arc; применится после перезапуска)</small></span></label>
       </div>
@@ -713,10 +736,19 @@
 <script src="vendor/mp4-muxer.js"></script>
 <script src="clip.js"></script>
 <script src="gif-shrink.js"></script>
+<script src="talking-avatar.js"></script>
 <script src="group.js"></script>
 <script src="group-bridge.js"></script>
 <script src="download-progress.js"></script>
+<script src="account-data.js"></script>
+<script src="account-data-browser.js"></script>
+<script src="account-engine.js"></script>
+<script src="account-sync.js"></script>
+<script src="account-native.js"></script>
+<script src="account-recovery.js"></script>
+<script src="account-boot.js"></script>
 <script src="renderer.js"></script>
+<script src="account-ui.js"></script>
 <script src="camera.js"></script>
 <script src="windows.js"></script>
 <script src="stickers.js"></script>

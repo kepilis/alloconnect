@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.21.14",
+  "version": "1.22.7",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -59,7 +59,24 @@
       "media-tools-loader.cjs",
       "youtube-auth.cjs",
       "download-progress.js",
-      "message-outbox.cjs"
+      "message-outbox.cjs",
+      "youtube-session.cjs",
+      "youtube-session-vault.cjs",
+      "youtube-cookie-format.cjs",
+      "talking-avatar.js",
+      "vendor/mouth/**/*",
+      "mouth-detector.html",
+      "mouth-detector.js",
+      "account-data.js",
+      "account-data-browser.js",
+      "account-engine.js",
+      "account-sync.js",
+      "account-native.js",
+      "account-boot.js",
+      "account-ui.js",
+      "account-lab.css",
+      "account-recovery.js",
+      "friend-recovery.cjs"
     ],
     "win": {
       "target": "zip",
@@ -76,5 +93,9 @@
     "asar": {
       "smartUnpack": false
     }
+  },
+  "overrides": {
+    "minimatch@>=7 <11.0.1": "11.0.1",
+    "fast-uri": "3.1.9"
   }
 }

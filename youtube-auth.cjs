@@ -5,9 +5,10 @@ function browserFromProgId(value){const s=String(value).toLowerCase();if(s.inclu
 function defaultBrowser(){if(process.platform!=='win32')return Promise.resolve(null);return new Promise(resolve=>execFile('reg.exe',['query','HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice','/v','ProgId'],{windowsHide:true,timeout:5000,encoding:'utf8'},(e,out)=>resolve(e?null:browserFromProgId(out))))}
 function cookieArgs(config,detected){if(config.enabled!==true)return [];if(!BROWSERS.has(config.browser))throw Error('Выбери поддерживаемый браузер');const browser=config.browser==='auto'?detected:config.browser;if(!browser||!BROWSERS.has(browser)||browser==='auto')throw Error('Не удалось определить браузер по умолчанию. Выбери браузер в настройках YouTube.');return ['--cookies-from-browser',browser]}
 function registerAuth({ipcMain,app,dialog,BrowserWindow}){
+ const managed=require('./youtube-session.cjs').create({app,BrowserWindow});
  const file=path.join(app.getPath('userData'),'youtube-auth.json');
  function read(){try{const d=JSON.parse(fs.readFileSync(file,'utf8'));return {enabled:d.enabled===true,browser:BROWSERS.has(d.browser)?d.browser:'auto'}}catch{return {enabled:false,browser:'auto'}}}
- async function status(){return {...read(),detected:await defaultBrowser()}}
+ async function status(){return {...read(),session:managed.hasSession(),detected:await defaultBrowser()}}
  ipcMain.handle('youtube-auth-get',status);
  ipcMain.handle('youtube-auth-set',async(e,value)=>{
   const current=read();if(!value||typeof value.enabled!=='boolean'||!BROWSERS.has(value.browser))return {...await status(),error:'Неверный браузер'};
@@ -17,6 +18,10 @@ function registerAuth({ipcMain,app,dialog,BrowserWindow}){
   }
   fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify({enabled:value.enabled,browser:value.browser}),{mode:0o600});return status();
  });
- return {args:async()=>{const config=read();return cookieArgs(config,config.enabled&&config.browser==='auto'?await defaultBrowser():null)}};
+ const login=async owner=>{const ok=await managed.login(owner);if(ok){const current=read();fs.writeFileSync(file,JSON.stringify({...current,enabled:false}),{mode:0o600})}return ok};
+ const trusted=e=>{if(!e.sender.getURL?.().startsWith('file:'))throw Error('Недопустимый источник запроса')};
+ ipcMain.handle('youtube-session-login',async e=>{trusted(e);const ok=await login(BrowserWindow.fromWebContents(e.sender));return {...await status(),cancelled:!ok}});
+ ipcMain.handle('youtube-session-logout',async e=>{trusted(e);await managed.logout();return status()});
+ return {login,begin:async()=>await managed.begin()||{args:cookieArgs(read(),read().enabled&&read().browser==='auto'?await defaultBrowser():null),dispose(){}},args:async()=>{const config=read();return cookieArgs(config,config.enabled&&config.browser==='auto'?await defaultBrowser():null)}};
 }
 module.exports={registerAuth,cookieArgs,browserFromProgId};

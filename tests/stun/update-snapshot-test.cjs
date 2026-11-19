@@ -1,8 +1,8 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),crypto=require('node:crypto'),assert=require('node:assert/strict');
-const root=process.env.ALLOCONNECT_DESKTOP||'C:/Users/user/Desktop/claude/alloconnect-src';
+const root=process.env.ALLOCONNECT_DESKTOP||path.resolve(__dirname,'../..');
 const source=fs.readFileSync(path.join(root,'main.js'),'utf8');
 const part=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
-const functions=part('function verCmp(', 'let ownUpdate =')+part('async function ghCheck()', "ipcMain.handle('gh-check'");
+const functions=part('function verCmp(', 'let ownUpdate =')+part('async function ghCheck(', "ipcMain.handle('gh-check'");
 const keys=crypto.generateKeyPairSync('ed25519'),head='a'.repeat(40),files=['app.asar','alloconnect-helper.exe'];
 const data=Object.fromEntries(files.map(n=>[n,Buffer.from('trusted fixture '+n)]));
 const manifest={app:'alloconnect',v:'99.0.0',electron:'test',files:files.map(n=>({n,size:data[n].length,sha256:crypto.createHash('sha256').update(data[n]).digest('hex')}))};

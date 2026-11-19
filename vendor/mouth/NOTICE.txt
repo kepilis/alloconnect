@@ -1,0 +1,6 @@
+MediaPipe Tasks Vision 1.2.3 — Apache-2.0
+https://github.com/google-ai-edge/mediapipe
+https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-1.2.3.tgz
+Face Landmarker float16 version 1
+https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+Images are processed locally. No model is loaded during calls.

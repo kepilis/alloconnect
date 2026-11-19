@@ -16,6 +16,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const dns = require('dns');
 const STUN_LISTS = require('./stun-lists.js');
+const { FriendRecovery } = require('./friend-recovery.cjs');
 
 const MAGIC = Buffer.from('ALC1');
 const PING_EVERY = 15000;
@@ -95,6 +96,7 @@ class FriendsNet extends EventEmitter {
     this.activity = null; // { game } — во что сейчас играю (только для друзей)
     this.dir = dir;
     this.log = log || (() => {});
+    this.recovery = new FriendRecovery({ping:id=>this.ping(id),log:data=>this.log('friends-recovery',data)});
     this.friends = new Map();   // id -> friend
     this.keys = new Map();      // id -> aes key
     this.seenNonces = new Map();
@@ -230,7 +232,7 @@ class FriendsNet extends EventEmitter {
       }
     }, 2000);
     this.timer = setInterval(() => this.pingAll(), PING_EVERY);
-    this.punchTimer = setInterval(() => { if (Date.now() < this.punchUntil) this.pingAll(); }, PUNCH_EVERY);
+    this.punchTimer = setInterval(() => { const now=Date.now();if(now<this.punchUntil)this.pingAll();this.recoverFriends(now); }, PUNCH_EVERY);
     this.punch();
     this.statusTimer = setInterval(() => this.refreshOnline(), 5000);
     setTimeout(() => this.pingAll(), 500);
@@ -386,6 +388,7 @@ class FriendsNet extends EventEmitter {
     this.pingAll(); // друзья увидят сразу, а не через 15 с
   }
   emitList() { this.emit('friends', this.list()); }
+  recoverFriends(now=Date.now()) { this.recovery.tick(this.friends.values(),this.presence,now); }
   refreshOnline() {
     let changed = false;
     for (const f of this.friends.values()) {
@@ -530,7 +533,7 @@ class FriendsNet extends EventEmitter {
         if (!sent) { this.pending.delete(rid); reject(new Error('нет адресов друга')); return; }
         p.timer = setTimeout(attempt, every);
       };
-      const p = { resolve, reject, timer: null };
+      const p = { id, resolve, reject, timer: null };
       this.pending.set(rid, p);
       attempt();
     });
@@ -573,7 +576,7 @@ class FriendsNet extends EventEmitter {
   // в пинге — и мой ник (1.21): друзья видят новый ник сразу, а не тот, под которым меня добавили
   ping(id) { this.sendAll(id, { t: 'ping', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); }
   pingAll() {
-    for (const id of this.friends.keys()) this.ping(id);
+    for (const id of this.friends.keys()) { try { this.ping(id); } catch { this.log('friends-error',{pingFailed:id.slice(0,8)}); } }
     this.knockAll();
   }
 
@@ -931,14 +934,14 @@ class FriendsNet extends EventEmitter {
         return;
       case 'ack': {
         const p = this.pending.get(msg.rid);
-        if (p) { clearTimeout(p.timer); this.pending.delete(msg.rid); p.resolve(); }
+        if (p && p.id === id) { clearTimeout(p.timer); this.pending.delete(msg.rid); p.resolve(); }
         return;
       }
       default:
         if (msg.rid) {
           reply({ t: 'ack', rid: msg.rid });
-          if (this.seenRids.has(msg.rid)) return; // дубликат повторной отправки
-          this.seenRids.set(msg.rid, Date.now());
+          if (this.seenRids.has(id + ':' + msg.rid)) return; // дубликат повторной отправки
+          this.seenRids.set(id + ':' + msg.rid, Date.now());
         }
         if (msg.t === 'part') {
           if (!Number.isInteger(msg.n) || msg.n < 1 || msg.n > 1024 ||

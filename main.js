@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, ipcMain, desktopCapturer, session, globalShortcut, shell, clipboard,
-  Tray, Menu, nativeImage, Notification, screen, dialog, ClipboardItem,
+  Tray, Menu, nativeImage, Notification, screen, powerMonitor, dialog, ClipboardItem,
 } = require('electron');
 const path = require('path');
 const os = require('os');
@@ -335,13 +335,14 @@ app.whenReady().then(() => {
 
   // getDisplayMedia() в окне → отдаём источник, выбранный в нашем пикере
   ses.setDisplayMediaRequestHandler(async (_req, callback) => {
+    const selected = pendingSource ? { ...pendingSource } : null;
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      const src = sources.find((s) => s.id === pendingSource?.id) || sources.find((s) => s.id.startsWith('screen'));
+      const src = selected && sources.find((s) => s.id === selected.id);
       if (!src) return callback({});
       const resp = { video: src };
       // Системный звук умеет захватываться только на Windows
-      if (pendingSource?.audio && process.platform === 'win32') resp.audio = 'loopback';
+      if (selected?.audio && process.platform === 'win32') resp.audio = 'loopback';
       callback(resp);
     } catch (e) {
       console.error(e);
@@ -710,10 +711,20 @@ async function runUpnp() {
   friends.pingAll();
 }
 
+ipcMain.handle('account-lab-upsert',(_e,f)=>{if(!friends?.addFriend(f))return false;const actual=friends.friends.get(f.id);actual.renamed=!!f.renamed;friends.saveFriends();friends.emitList();return true});
+ipcMain.handle('account-lab-rename', (_e,id,nick)=>friends?.renameFriend(id,nick));
+// account-data-native: raw history preserves operations and message identities.
+ipcMain.handle('account-lab-history-read',()=>{try{const root=path.join(app.getPath('userData'),'history'),history={};if(fs.existsSync(root))for(const id of fs.readdirSync(root)){if(!/^[A-Za-z0-9_-]{20,64}$/.test(id))continue;const file=path.join(root,id,'log.jsonl');if(fs.existsSync(file))history[id]=fs.readFileSync(file,'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line))}return {ok:true,history}}catch{return {ok:false,error:'Не удалось прочитать историю'}}});
+ipcMain.handle('account-lab-history-write',(_e,id,rows)=>{if(!Array.isArray(rows))throw Error('Некорректная история');const dir=histDir(id);fs.mkdirSync(dir,{recursive:true});const text=rows.map(e=>JSON.stringify(e)).join('\n')+'\n';if(Buffer.byteLength(text)>32*1024*1024)throw Error('Слишком большая история');const file=path.join(dir,'log.jsonl'),tmp=file+'.account-tmp';fs.writeFileSync(tmp,text,{mode:0o600});fs.renameSync(tmp,file);return {ok:true}});
+ipcMain.handle('account-recovery-reload',(e)=>{setTimeout(()=>{if(!e.sender.isDestroyed())e.sender.reload()},100);return true});
+ipcMain.handle('account-recovery-reset',()=>{const file=path.join(app.getPath('userData'),'account-lab-record.json');fs.rmSync(file,{force:true});return {ok:true}});
+ipcMain.handle('account-lab-read',()=>{try{const file=path.join(app.getPath('userData'),'account-lab-record.json');return {ok:true,record:fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null}}catch{return {ok:false,error:'Не удалось прочитать данные аккаунта'}}});
+ipcMain.handle('account-lab-write',(_e,json)=>{if(typeof json!=='string'||Buffer.byteLength(json)>64*1024*1024)throw Error('Слишком большой объём данных аккаунта');const value=JSON.parse(json);if(value.v!==1)throw Error('Неизвестная версия данных');const file=path.join(app.getPath('userData'),'account-lab-record.json'),tmp=file+'.tmp';fs.writeFileSync(tmp,json,{mode:0o600});fs.renameSync(tmp,file);return {ok:true}});
+ipcMain.handle('account-lab-info', () => friends?.id ? {id:friends.id,list:[...friends.friends.values()].map(f=>({id:f.id,nick:f.nick,addrs:f.addrs||[],renamed:!!f.renamed}))} : null);
 ipcMain.handle('friends-info', () => (friends ? { id: friends.id, port: friends.port, addrs: friends.localAddrs(), list: friends.list() } : null));
 ipcMain.handle('friends-add', (_e, f) => { const ok = friends?.addFriend(f); if (ok) setTimeout(() => friends.probe(f.id), 1500); return ok; });
 ipcMain.handle('friends-contact', (_e, p) => friends?.noteCallContact(p?.id, p?.addrs) || false);
-ipcMain.handle('friends-remove', (_e, id) => friends?.removeFriend(id));
+ipcMain.handle('friends-remove', (_e, id) => { outbox.forget(id); return friends?.removeFriend(id); });
 // код дружбы (ник — для кода и запроса)
 // мой ник — сразу в сеть друзей (уходит в пингах)
 ipcMain.handle('friends-nick', (_e, nick) => { if (!friends) return false; const was = friends.nick; friends.setNick(String(nick || '')); if (friends.nick !== was) friends.pingAll(); return true; });
@@ -733,7 +744,7 @@ const outbox=new MessageOutbox(path.join(app.getPath('userData'),'message-outbox
 const outboxTimer=setInterval(()=>{for(const f of friends?.list()||[])if(f.reachable||f.online)outbox.flush(f.id)},30000);outboxTimer.unref();
 ipcMain.handle('presence-get',()=>({mode:appSet.presence||'online',effective:friends?.presence||'online'}));
 ipcMain.handle('presence-set',(_e,mode)=>{if(!['online','away','invisible','offline','dnd'].includes(mode))return false;appSet.presence=mode;saveFlags();friends?.setPresence(mode);return true});
-const presenceTimer=setInterval(()=>{const selected=appSet.presence||'online';const effective=selected==='online'&&screen.getSystemIdleTime()>=300?'away':selected;if(friends&&friends.presence!==effective){friends.setPresence(effective);sendWin('presence-update',{mode:selected,effective})}},5000);presenceTimer.unref();
+const presenceTimer=setInterval(()=>{const selected=appSet.presence||'online';const effective=selected==='online'&&powerMonitor.getSystemIdleTime()>=300?'away':selected;if(friends&&friends.presence!==effective){friends.setPresence(effective);sendWin('presence-update',{mode:selected,effective})}},5000);presenceTimer.unref();
 ipcMain.handle('friends-send', async (_e, id, msg) => {
   if(msg?.t==='dm-op'&&typeof msg.ref==='string'&&['del','edit'].includes(msg.op)&&(msg.op!=='edit'||typeof msg.text==='string'&&msg.text.trim()&&msg.text.length<=2000)){const result=outbox.changePending(id,msg.ref,msg);if(result)return result}
   if(msg?.t==='dm'){
@@ -1207,16 +1218,13 @@ function histRead(id) {
   let text;
   try { text = fs.readFileSync(f, 'utf-8'); } catch { return []; }
   let lines = text.split('\n').filter(Boolean);
-  if (text.length > 4 * 1024 * 1024) { // ограничиваем размер — оставляем последние 3000 записей
-    lines = lines.slice(-3000);
-    try { fs.writeFileSync(f, lines.join('\n') + '\n'); } catch { /* */ }
-  }
   const out = [];
   const byMid = new Map();
   for (const l of lines) {
     let e;
     try { e = JSON.parse(l); } catch { continue; }
-    if (e.type === 'status') { const t = byMid.get(e.ref); if (t) t.st = e.st; continue; }
+    if (!e || typeof e !== 'object' || Array.isArray(e) || !['text', 'file', 'call', 'op', 'status'].includes(e.type)) continue;
+    if (e.type === 'status') { const t = byMid.get(e.ref), rank = { fail: 0, queued: 1, sent: 2, read: 3 }; if (t && Object.hasOwn(rank, e.st) && (t.st == null || !Object.hasOwn(rank, t.st) || rank[e.st] >= rank[t.st])) t.st = e.st; continue; }
     if (e.type === 'op') { // реакции, правки, удаление
       const t = byMid.get(e.ref);
       if (!t || t.deleted) continue;
@@ -1924,6 +1932,7 @@ async function ghCheck(progress=()=>{}) {
   try { fs.rmSync(stagingDir(), { recursive: true, force: true }); } catch { /* */ }
   fs.mkdirSync(dir, { recursive: true });
   staged = { man: c.man, m: u.m, sig: u.sig, dir, got: new Set() };
+  const download = staged;
   const total=c.man.files.reduce((n,f)=>n+f.size,0);let complete=0;
   progress({stage:'download',got:0,total,message:'Скачивание обновления '+v+'…'});
   log('update', { gh: 'download', v });
@@ -1934,6 +1943,7 @@ async function ghCheck(progress=()=>{}) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         buf = await ghGet(url + (url.includes('?') ? '&' : '?') + 'attempt=' + attempt, false,{size:f.size,progress:(got)=>progress({stage:'download',got:complete+got,total,message:'Скачивание '+f.n+(attempt?' · повтор '+(attempt+1):'')})});
+        if (staged !== download) return { ok: false, error: 'Загрузка заменена другой передачей обновления', page };
         progress({stage:'verify',got:complete+buf.length,total,message:'Проверка '+f.n+'…'});
         good = buf.length === f.size && crypto2.createHash('sha256').update(buf).digest('hex') === f.sha256;
         if (good) break;
@@ -1942,7 +1952,7 @@ async function ghCheck(progress=()=>{}) {
     }
     if (!good) { staged = null; log('update', { gh: 'badFile', n: f.n }); return { ok: false, error: 'файл повреждён', page }; }
     ofs.writeFileSync(path.join(dir, f.n), buf);
-    staged.got.add(f.n);complete+=f.size;
+    download.got.add(f.n);complete+=f.size;
   }
   fs.writeFileSync(path.join(dir, 'update.json'), JSON.stringify({ m: u.m, sig: u.sig }));
   progress({stage:'ready',message:'Обновление '+v+' проверено — можно устанавливать'});

@@ -20,8 +20,8 @@ function mediaError(e, stderr = '') {
   if (/failed to decrypt|decrypt.*cookies|DPAPI|app.bound/i.test(text)) { code='cookies-protected'; message='Не удалось расшифровать куки браузера. Его защита не позволяет yt-dlp прочитать вход. Выбери другой поддерживаемый браузер, где выполнен вход в YouTube.'; }
   else if (/could not copy.*cookie|cookie.*database.*locked|permission denied.*cookies/i.test(text)) { code='cookies-locked'; message='Браузер заблокировал доступ к куки. Полностью закрой выбранный браузер и повтори загрузку.'; }
   else if (/could not find.*cookies|could not find.*profile|could not find.*database/i.test(text)) { code='cookies-missing'; message='Профиль браузера не найден. Открой выбранный браузер, войди в YouTube или выбери другой браузер в настройках.'; }
-  else if (/confirm your age|age[- ]restricted|inappropriate for some users/i.test(text)) { code='age-restricted'; message='У этого видео возрастное ограничение YouTube. Для загрузки требуется вход в аккаунт и подтверждение возраста. Включи использование входа из браузера в настройках YouTube и убедись, что нужный аккаунт имеет доступ к видео.'; }
-  else if (/sign in|login required|members.only|private video/i.test(text)) { code='login-required'; message='Для этого видео YouTube требует вход в аккаунт. Загрузчик alloconnect сейчас работает без авторизации.'; }
+  else if (/confirm your age|age[- ]restricted|inappropriate for some users/i.test(text)) { code='age-restricted'; message='У этого видео возрастное ограничение YouTube. Для загрузки требуется вход в аккаунт и подтверждение возраста. Войди в YouTube в настройках демонстрации экрана и проверь доступ аккаунта к видео.'; }
+  else if (/sign in|login required|members.only|private video/i.test(text)) { code='login-required'; message='Для этого видео YouTube требует вход в аккаунт. Войди в YouTube в настройках демонстрации экрана; аккаунт должен иметь доступ к видео.'; }
   else if (/video.*unavailable|removed|not available in your country/i.test(text)) { code='unavailable'; message='YouTube сообщает, что видео недоступно или ограничено для текущего региона.'; }
   else if (/requested format is not available/i.test(text)) { code='format-unavailable'; message='YouTube не предоставил подходящий видеоформат для этого ролика.'; }
   else if (/429|too many requests/i.test(text)) { code='rate-limited'; message='YouTube временно ограничил запросы. Попробуй позже.'; }
@@ -56,7 +56,7 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
   };
   ipcMain.handle('youtube-media', async (e,raw) => {
     if (busy) return {error:'Дождись предыдущей загрузки YouTube'};
-    busy = true; let tmp;
+    busy = true; let tmp,authLease;
     const progress=data=>{try{e.sender.send('download-progress',data)}catch{}};
     let mediaStage=null;
     const mediaProgress=data=>{mediaStage=data.stage;progress({id:'youtube-media',title:'Медиа с YouTube',...data})};
@@ -71,10 +71,22 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
       if(!preparedDir){mediaProgress({stage:'cancelled'});return {cancelled:true};}
       tool('ffprobe');
       mediaProgress({stage:'starting',message:'Получение информации о видео…'});
-      const cookies=await auth.args();
+      authLease=auth.begin?await auth.begin():{args:await auth.args(),dispose(){}};
+      const cookies=authLease.args;
       const base = [...cookies,'--js-runtimes','node:'+tool('node'),'--ignore-config','--no-playlist','--no-warnings','--no-progress','--no-cache-dir','--no-write-info-json','--no-write-thumbnail','--socket-timeout','20','--retries','2','--ffmpeg-location',tool('ffmpeg')];
       const format = audio?'bestaudio[ext=m4a]/bestaudio':'bestvideo[height<=720][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]';
-      const info = JSON.parse(await run(tool('yt-dlp'),[...base,'-f',format,'--dump-single-json','--skip-download','--',url]));
+      let info;
+      const getInfo=async()=>JSON.parse(await run(tool('yt-dlp'),[...base,'-f',format,'--dump-single-json','--skip-download','--',url]));
+      try{info=await getInfo()}catch(err){
+        if(!auth.login||!['age-restricted','login-required','cookies-protected','cookies-locked','cookies-missing'].includes(err.mediaCode))throw err;
+        const answer=await ask({type:'question',message:'Для загрузки нужен вход в YouTube',detail:'Откроется отдельная сессия YouTube. Войди в аккаунт, которому доступно видео, затем закрой окно — загрузка продолжится автоматически. Сессия сохраняется на этом ПК с шифрованием Windows.',buttons:['Войти в YouTube','Отмена'],defaultId:0,cancelId:1,noLink:true});
+        authLease?.dispose();authLease=null;
+        if(answer.response!==0){mediaProgress({stage:'cancelled'});return {cancelled:true}}
+        mediaProgress({stage:'starting',message:'Ожидание входа YouTube — после входа закрой окно сайта…'});
+        if(!await auth.login(owner)){mediaProgress({stage:'cancelled',message:'Вход не подтверждён. Повтори вход в настройках YouTube.'});return {cancelled:true}}
+        authLease=await auth.begin();base.splice(0,cookies.length,...authLease.args);
+        mediaProgress({stage:'starting',message:'Вход выполнен. Повторная проверка видео…'});info=await getInfo();
+      }
       if (info.is_live || info.duration > 21600) { const message='Прямой эфир или видео длиннее 6 часов не поддерживается'; mediaProgress({stage:'error',message}); return {error:message}; }
       const tracks = info.requested_formats || [info];
       const known = tracks.every(t => Number(t.filesize || t.filesize_approx)>0);
@@ -104,7 +116,7 @@ function register({ipcMain,app,dialog,BrowserWindow,net,log}) {
       mediaProgress({stage:'ready',message:'Файл загружен — можно добавлять'});
       return {bytes:fs.readFileSync(p),name:String(info.title || 'YouTube').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,100)+ext,mime:audio?'audio/mpeg':ext==='.webm'?'video/webm':ext==='.mkv'?'video/x-matroska':'video/mp4',largeApproved};
     } catch (err) { mediaProgress({stage:'error',message:err.message}); log?.('youtube',{error:err.mediaCode||'prepare-failed'}); return {error:err.message}; }
-    finally { if(mediaStage&&!['ready','error','cancelled'].includes(mediaStage))mediaProgress({stage:'cancelled',message:'Загрузка остановлена'}); busy=false; if (tmp) fs.rmSync(tmp,{recursive:true,force:true}); }
+    finally { authLease?.dispose();if(mediaStage&&!['ready','error','cancelled'].includes(mediaStage))mediaProgress({stage:'cancelled',message:'Загрузка остановлена'}); busy=false; if (tmp) fs.rmSync(tmp,{recursive:true,force:true}); }
   });
 }
 module.exports = {register,youtubeUrl,mediaError};

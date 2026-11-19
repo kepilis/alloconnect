@@ -12,7 +12,11 @@
     const call=document.getElementById('call'),group=document.getElementById('group');
     const status=call.classList.contains('active')?document.getElementById('status'):group.classList.contains('active')?document.getElementById('gStatus'):null;
     if(status){if(toggle.previousElementSibling!==status)status.after(toggle)}
-    else if(toggle.parentElement!==document.body)document.body.append(toggle);
+    else {
+      const actions=document.querySelector('#lobby .lobby-update-actions');
+      const host=actions||document.body;
+      if(toggle.parentElement!==host)host.append(toggle);
+    }
     placePanel();
   };
   for(const id of ['lobby','call','group'])new MutationObserver(placeToggle).observe(document.getElementById(id),{attributes:true,attributeFilter:['class']});

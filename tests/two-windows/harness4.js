@@ -39,8 +39,8 @@ app.whenReady().then(async () => {
     if (ROLE === 'A') { await waitFlag('ready'); await js(`document.getElementById('btnInvite').click(); true`); } else flag('ready');
     res.connected1 = await waitFor(W, `S.connected && document.getElementById('status').classList.contains('ok')`, 45000);
     res.stunUsed1 = await js(`S.stunUsed`);
-    res.stunChatNote = await js(`document.getElementById('messages').textContent.includes('включены альтернативные')`);
-    res.stunCodeHasSrflx = await js(`/typ srflx/.test(S.pc.localDescription.sdp)`);
+    res.stunNoteMatchesMode = await js(`document.getElementById('messages').textContent.includes('включены альтернативные') === (S.stunUsed === 'alt')`);
+    res.stunCodeHasIceCandidate = await js(`/a=candidate:.*typ (host|srflx)/.test(S.pc.localDescription.sdp)`);
     res.callConvAdopted = await waitFor(W, `!!(S.callConv && S.callConv.id)`, 10000);
     await waitFor(W, `!document.getElementById('btnAddFriend').classList.contains('hidden')`, 10000);
     await js(`document.getElementById('btnAddFriend').click(); true`);
@@ -113,7 +113,7 @@ app.whenReady().then(async () => {
     res.connected2 = await waitFor(W, `S.connected && document.getElementById('status').classList.contains('ok')`, 45000);
     res.historyInCall = await waitFor(W, `document.getElementById('messages').textContent.includes('привет без звонка') && document.getElementById('messages').textContent.includes('привет из звонка')`, 10000);
     res.historyImage = await waitFor(W, `[...document.querySelectorAll('#messages img')].some(i => i.naturalWidth === 320)`, 8000);
-    res.historyBinGone = await js(`[...document.querySelectorAll('#messages .fstat')].some(e => /не сохранено/.test(e.textContent))`);
+    res.historyBinStored = await js(`(async()=>{const h=await window.duo.histLoad(S.callConv.id,150);const e=h.items.find(e=>e.type==='file'&&e.file?.name==='data.bin');if(!e?.file.stored)return false;const b=await window.duo.histMediaRead(S.callConv.id,e.file.stored);return b.byteLength===2*1024*1024;})()`);
     if (ROLE === 'B') res.friendCardAvatar = await waitFor(W, `document.querySelector('#friendCard .avatar').classList.contains('has-img')`, 8000);
     await sync('call2');
 

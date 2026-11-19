@@ -132,7 +132,7 @@ async function grpManualRead(text, kind) {
   if (!m) throw new Error('Нужен полный код приглашения в группу');
   let d;
   try { d = JSON.parse(await inflate(b64uDec(m[1]))); } catch { throw new Error('Код группы повреждён'); }
-  if (d.v !== 1 || !grpGid(d.gid) || !ID_RE.test(String(d.id || '')) || !/^v=0/.test(String(d.sdp || '')) || Math.abs(Date.now() - d.at) > 5 * 60_000) throw new Error('Код группы повреждён или устарел');
+  if (!Number.isFinite(d.at) || !ID_RE.test(String(d.nonce || '')) || d.v !== 1 || !grpGid(d.gid) || !ID_RE.test(String(d.id || '')) || !/^v=0/.test(String(d.sdp || '')) || Math.abs(Date.now() - d.at) > 5 * 60_000) throw new Error('Код группы повреждён или устарел');
   return d;
 }
 async function grpManualCreate() {
@@ -719,7 +719,7 @@ function grpOnTrack(p, e) {
   // трансивер 2 — звук экрана, иначе голос; громкость у каждого своя (gvol / gsvol)
   const screen = p.pc.getTransceivers().indexOf(e.transceiver) === 2;
   const stream = grpAudioSink(p, e.track, screen ? 'gsvol' : 'gvol');
-  if (!screen) p.stopMeter = makeMeter(stream, (lvl) => G.tiles.get(p.id)?.classList.toggle('speaking', lvl > 0.02 && !S.deafened));
+  if (!screen) p.stopMeter = makeMeter(stream, (lvl) => { const tile = G.tiles.get(p.id); tile?.classList.toggle('speaking', lvl > 0.02 && !S.deafened); window.talkingAvatar?.level(tile, (!S.deafened) ? lvl : 0); });
 }
 // Chromium отдаёт удалённый звук в WebAudio, только если поток привязан к элементу
 function grpAudioSink(p, track, key) {
@@ -800,15 +800,12 @@ async function grpTuneVideo(p, br = G.share ? grpShareBr() : 0) {
   const sender = p.vtx?.sender;
   if (!G.share || !sender?.track) return;
   const view = grpViewOf(p);
-  if (view === 'full') await tuneSender(sender, { video: { ...G.share.q, br }, mode: G.share.mode });
-  const prm = sender.getParameters();
-  if (!prm.encodings?.length) prm.encodings = [{}];
-  const e = prm.encodings[0];
   const h = sender.track.getSettings().height || G.share.q.h;
-  e.active = view !== 'off';
-  e.scaleResolutionDownBy = view === 'thumb' ? Math.max(1, h / GRP_THUMB.h) : 1;
-  if (view === 'thumb') { e.maxBitrate = GRP_THUMB.br; e.maxFramerate = GRP_THUMB.fps; }
-  try { await sender.setParameters(prm); } catch (err) { L('grp', { tuneFailed: err.message }); }
+  await tuneSender(sender, {
+    video: view === 'thumb' ? GRP_THUMB : { ...G.share.q, br },
+    mode: G.share.mode,
+    encoding: { active: view !== 'off', scaleResolutionDownBy: view === 'thumb' ? Math.max(1, h / GRP_THUMB.h) : 1 },
+  });
 }
 async function grpTuneAll() {
   if (!G.share) return;
@@ -968,6 +965,7 @@ function grpAddTools(el, id) {
     if (!ctlOn()) return;
     e.preventDefault();
     if (!CV.perm.mouse || MOUSE_BTN[e.button] == null) return;
+    flushMove();
     if (document.pointerLockElement !== inp) ctlSend(['m', ...pt(e).map(n4)]);
     ctlSend(['b', MOUSE_BTN[e.button], 1]);
   });
@@ -1045,7 +1043,7 @@ function grpUpdateTools() {
   inp.classList.toggle('active', !!GT.mode || controlling);
 }
 function grpCtlMouseUp(id, e) {
-  if (CV.state === 'on' && CV.link?.id === id && CV.perm.mouse && MOUSE_BTN[e.button] != null) ctlSend(['b', MOUSE_BTN[e.button], 0]);
+  if (CV.state === 'on' && CV.link?.id === id && CV.perm.mouse && MOUSE_BTN[e.button] != null) { flushMove(); ctlSend(['b', MOUSE_BTN[e.button], 0]); }
 }
 
 // связь управления с участником (см. CTL_FRIEND в renderer.js)
@@ -1058,6 +1056,7 @@ function grpCtlLink(id) {
     nick: () => grpNick(id),
     focused: () => G.focus === id && !!peer()?.sharing,
     src: () => G.share?.srcId || null,
+    receivers: () => [peer()?.vtx?.receiver, peer()?.satx?.receiver],
     changed: () => grpRender(),
   };
 }
@@ -1194,7 +1193,7 @@ function grpEnterUi() {
   G.tiles.clear();
   $('gGrid').innerHTML = '';
   G.stopMyMeter?.();
-  G.stopMyMeter = makeMeter(S.mic, (lvl) => G.tiles.get(grpMe())?.classList.toggle('speaking', lvl > 0.02 && !S.muted && !S.deafened));
+  G.stopMyMeter = makeMeter(S.mic, (lvl) => { const tile = G.tiles.get(grpMe()); tile?.classList.toggle('speaking', lvl > 0.02 && !S.muted && !S.deafened); window.talkingAvatar?.level(tile, (!S.muted && !S.deafened) ? lvl : 0); });
   updateMyControls();
   updateNsBtn();
   grpUpdateControls();

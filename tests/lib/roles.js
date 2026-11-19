@@ -24,16 +24,19 @@ function prepareApp(T, { src = ROOT, files = {}, main, version, roles = [] }) {
 // запустить роли с интервалом в секунду и дождаться всех; env(роль) — свои переменные
 function runRoles({ APP, SH, UD }, roles, { env = () => ({}), killAfter = 600000 } = {}) {
   const E = require(path.join(ROOT, 'node_modules', 'electron'));
-  return Promise.all(roles.map((r, i) => new Promise((done) => setTimeout(() => {
+  return Promise.all(roles.map((r, i) => new Promise((done, reject) => setTimeout(() => {
+    const childEnv = { ...process.env, ROLE: r, SHARED: SH, ALOCALLS_USERDATA: path.join(UD, r), FAKE_LOG: path.join(SH, 'fake' + r), ...env(r) };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
     const p = spawn(E, ['--no-sandbox', APP], {
-      env: { ...process.env, ROLE: r, SHARED: SH, ALOCALLS_USERDATA: path.join(UD, r), ...env(r) },
+      env: childEnv,
       stdio: ['ignore', fs.openSync(path.join(SH, `out${r}.log`), 'w'), fs.openSync(path.join(SH, `err${r}.log`), 'w')],
     });
-    const kill = setTimeout(() => p.kill(), killAfter);
-    p.on('exit', () => { clearTimeout(kill); done(); });
+    const kill = setTimeout(() => { p.kill(); reject(new Error('Таймаут клиента ' + r)); }, killAfter);
+    p.on('error', e => { clearTimeout(kill); reject(e); });
+    p.on('exit', code => { clearTimeout(kill); if (code !== 0) reject(new Error('Клиент ' + r + ' завершился с кодом ' + code)); else done(); });
   }, i * 1000))));
 }
 
-const readRes = (SH, role) => { try { return JSON.parse(fs.readFileSync(path.join(SH, `res${role}.json`), 'utf-8')); } catch { return {}; } };
+const readRes = (SH, role) => { try { return JSON.parse(fs.readFileSync(path.join(SH, `res${role}.json`), 'utf-8')); } catch (e) { throw new Error('Нет результата тестового клиента ' + role + ': ' + e.message); } };
 
 module.exports = { prepareApp, runRoles, readRes };
