@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.22.11",
+  "version": "1.22.12",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -42,6 +42,7 @@
       "overlay-preload.js",
       "stun-lists.js",
       "clip.js",
+      "watch-together.js",
       "gif-shrink.js",
       "group-bridge.js",
       "camera.js",

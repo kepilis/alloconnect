@@ -205,6 +205,7 @@
     <div class="ctl-group">
       <button id="btnSoundpad" class="ctl" title="Саундпад"><b>🎵</b><span>Саундпад</span></button>
       <button id="btnCam" class="ctl" title="Вебкамера"><b>📷</b><span>Камера</span></button>
+      <button id="btnWatchReplay" class="ctl" title="Выбрать момент из повтора и пригласить друга"><b>▶</b><span>Смотреть вместе</span></button>
       <button id="btnShare" class="ctl share" title="Показать экран"><b>🖥</b><span>Показать экран</span></button>
       <button id="btnLeave" class="ctl danger" title="Выйти из звонка"><b>✕</b><span>Выйти</span></button>
     </div>
@@ -371,10 +372,31 @@
 </div>
 
 <!-- ПОВТОР (КЛИП) -->
+<dialog id="watchDialog" aria-labelledby="watchTitle" style="background:#20232b;color:#fff;border:1px solid #626775;border-radius:14px;max-width:min(90vw,840px);max-height:90dvh;padding:16px">
+  <h2 id="watchTitle">Смотреть вместе</h2>
+  <p id="watchStatus" role="status"></p>
+  <div id="watchPlayer" hidden>
+    <div style="position:relative;width:fit-content;margin:auto">
+      <video id="watchVideo" playsinline preload="auto" style="display:block;width:auto;height:auto;max-width:min(78vw,800px);max-height:52dvh"></video>
+      <canvas id="watchInk" aria-label="Рисовать на паузе" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></canvas>
+    </div>
+    <input id="watchSeek" type="range" min="0" step="any" aria-label="Позиция повтора" style="width:100%">
+    <output id="watchClock"></output>
+    <div><button class="btn" id="watchPrev" aria-label="Предыдущий кадр">◀ Кадр</button>
+      <button class="btn" id="watchPlay">▶ Играть</button>
+      <button class="btn" id="watchNext" aria-label="Следующий кадр">Кадр ▶</button></div>
+    <small>На паузе можно рисовать по видео.</small>
+  </div>
+  <button class="btn primary" id="watchAccept">Открыть</button>
+  <button class="btn" id="watchExit">Отменить</button>
+</dialog>
 <div id="clipModal" class="modal hidden">
   <div class="modal-card clip-card">
     <div class="modal-head"><h2>Повтор</h2><button id="clipClose" class="icon-btn">✕</button></div>
     <video id="clipVideo" controls autoplay loop class="clip-video"></video>
+    <div><button id="clipPrev" class="btn">◀ Кадр</button>
+      <button id="clipNext" class="btn">Кадр ▶</button>
+      <button id="clipWatch" class="btn primary" disabled>Смотреть вместе</button></div>
     <p id="clipInfo" class="muted small"></p>
     <div class="call-actions">
       <button id="clipSend" class="btn primary big">Отправить другу</button>
@@ -581,7 +603,7 @@
     <div class="ringbox">
       <div class="ringbox-head">Повтор последних секунд</div>
       <label class="check"><input type="checkbox" id="optClip" /> <span>Держать повтор стрима <small class="muted">(работает, пока идёт показ экрана; клавиша сохранения — в «Горячих клавишах»)</small></span></label>
-      <label class="field inline ring-vol"><span>Длина</span><input type="range" id="clipSeconds" min="10" max="60" step="5" value="30" /><b id="clipSecondsVal" class="small">30 с</b></label>
+      <label class="field inline ring-vol"><span>Длина</span><input type="range" id="clipSeconds" min="10" max="120" step="5" value="30" /><b id="clipSecondsVal" class="small">30 с</b></label>
       <label class="check"><input type="checkbox" id="optClipAudio" /> <span>Повтор со звуком <small class="muted">(звук экрана и голоса)</small></span></label>
     </div>
     <label class="field">
@@ -748,6 +770,7 @@
 <script src="account-native.js"></script>
 <script src="account-recovery.js"></script>
 <script src="account-boot.js"></script>
+<script src="watch-together.js"></script>
 <script src="renderer.js"></script>
 <script src="account-ui.js"></script>
 <script src="camera.js"></script>

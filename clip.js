@@ -184,6 +184,15 @@
         if (this.video[i].ts > from) break;
       }
       while (start > 0 && !this.video[start].key) start--;
+      if (this.seconds === 120) {
+        // At the maximum duration, include only complete, independently decodable GOPs.
+        const last = this.video.at(-1);
+        const audio = this.audio.at(-1);
+        const end = Math.max(last.ts + (last.chunk.duration || 0),
+          audio ? audio.ts + (audio.chunk.duration || 0) : 0);
+        const earliest = end - this.seconds * 1e6;
+        while (start < this.video.length && (this.video[start].ts < earliest || !this.video[start].key)) start++;
+      }
       const vids = this.video.slice(start);
       if (!vids.length || !vids[0].key) return null;
       const base = vids[0].ts;
@@ -223,7 +232,10 @@
       }
       muxer.finalize();
       log('clip-audio', { saved: this.audio.length, rate: this.aconf?.sampleRate || 0 });
-      return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+      const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+      // Use actual presentation times when stepping through variable-rate recordings.
+      blob.frameTimes = vids.map(v => (v.ts - base) / 1e6);
+      return blob;
     }
 
     stop() {

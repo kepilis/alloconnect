@@ -534,6 +534,7 @@ function rtcConfig(urls = stunPlan()[0].urls) {
 function newPeerConnection(cfg = rtcConfig()) {
   const pc = new RTCPeerConnection(cfg);
   S.pc = pc;
+  watchTogether.attach(pc);
   // Канал данных (чат и служебные сообщения) договорён заранее — одинаковый id у обоих
   const dc = pc.createDataChannel('duo', { negotiated: true, id: 0, ordered: true });
   S.dc = dc;
@@ -1210,6 +1211,7 @@ function attachRemoteVoice(stream) {
 
 // later — закрыть через столько мс (дать уйти «bye»); отвязываем сразу, чтобы не задеть новое соединение
 function closePc(later = 0) {
+  watchTogether.reset();
   const pc = S.pc;
   const dc = S.dc;
   const fdc = S.fdc;
@@ -3271,6 +3273,7 @@ function spBind() {
   $('btnChatFolder').onclick=()=>window.duo.histFolder();
   $('optSaveChatFiles').onchange=()=>window.duo.appSettingsSet({saveChatFiles:$('optSaveChatFiles').checked});
   $('btnSaveReplay').onclick=saveClip;
+  $('btnWatchReplay').onclick=saveClip;
   $('btnSoundpad').onclick = () => {
     const p = $('soundpad');
     p.classList.toggle('hidden');
@@ -6625,10 +6628,11 @@ async function saveClip() {
   const name = `повтор-${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.mp4`;
   const file = new File([blob], name, { type: 'video/mp4' });
   L('clip', { saved: true, seconds: secs, sizeKB: Math.round(blob.size / 1024) });
-  showClipPreview(file, secs);
+  showClipPreview(file, secs, blob.frameTimes);
 }
 
 function closeClipPreview() {
+  for (const id of ['clipWatch', 'clipPrev', 'clipNext']) $(id).onclick = null;
   $('clipModal').classList.add('hidden');
   pauseMediaIn($('clipVideo'), true);
   if (S.clipUrl) URL.revokeObjectURL(S.clipUrl);
@@ -6637,10 +6641,11 @@ function closeClipPreview() {
   $('clipSave').onclick = null;
 }
 
-function showClipPreview(file, secs) {
+function showClipPreview(file, secs, frames) {
   closeClipPreview();
   const url = URL.createObjectURL(file);
   S.clipUrl = url;
+  watchTogether.preview(file, frames);
   $('clipVideo').src = url;
   $('clipInfo').textContent = `Последние ${secs} с · ${fmtSize(file.size)}`;
   $('clipModal').classList.remove('hidden');
