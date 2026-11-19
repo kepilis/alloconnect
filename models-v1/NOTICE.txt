@@ -1,0 +1,8 @@
+Модели и движок для «убрать фон» в alloconnect (скачиваются программой по требованию).
+
+onnxruntime-node 1.31.1 (Windows x64, с DirectML) — © Microsoft Corporation, MIT License.
+  https://github.com/microsoft/onnxruntime
+modnet.onnx — MODNet (портретная маска), © Zhanghan Ke и др., Apache License 2.0.
+  https://github.com/ZHKKKe/MODNet ; ONNX-экспорт: https://huggingface.co/Xenova/modnet
+isnet-general-use.onnx — IS-Net / DIS (выделение предметов), © Xuebin Qin и др., Apache License 2.0.
+  https://github.com/xuebinqin/DIS ; ONNX: https://github.com/danielgatis/rembg
