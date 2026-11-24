@@ -11,7 +11,7 @@
 ```powershell
 & .\android\build-apk.ps1 -BaseApk "$baseApk" -OutputDirectory "$output" `
   -Node "$nodeExe" -JavaDirectory "$javaBin" -BuildTools "$buildTools" `
-  -SigningDirectory "$signingDirectory" -Version 0.16.18 -VersionCode 55 `
+  -SigningDirectory "$signingDirectory" -Version 0.16.19 -VersionCode 56 `
   -Notes 'Описание изменений'
 ```
 

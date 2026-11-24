@@ -22,9 +22,11 @@
   if(desktop)return;
   if(hydrating)return hydrating;
   hydrating=(async()=>{
+   let previous;
    if(!ready){
     const r=await alo.accountLabHistoryRead();
     if(!r.ok)throw Error(r.error||'Не удалось прочитать историю');
+    previous=phoneHistory;
     phoneHistory=r.history||{};phoneSavedSnapshot=copy(phoneHistory);
     const legacy=legacyPhoneHistory();
     phoneHistory=mergeLegacy?mergeLocalHistory({},legacy,phoneHistory):{...legacy,...phoneHistory};
@@ -32,12 +34,32 @@
    }
    await flushPhone();
    for(const key of Object.keys(localStorage))if(key.startsWith(prefix+'hist.'))localStorage.removeItem(key);
+   if(previous)await refresh(changedHistoryIds(previous,phoneHistory));
   })().finally(()=>{hydrating=null});
   return hydrating;
  }
 
  function mergeLocalHistory(base,current,remote){const out=copy(remote);for(const id of new Set([...Object.keys(base),...Object.keys(current)])){const old=new Map((base[id]||[]).map(e=>[AccountData.key(e),e])),now=new Map((current[id]||[]).map(e=>[AccountData.key(e),e])),merged=new Map((out[id]||[]).map(e=>[AccountData.key(e),e]));for(const k of new Set([...old.keys(),...now.keys()]))if(stable(old.get(k)??null)!==stable(now.get(k)??null)){if(now.has(k))merged.set(k,now.get(k));else merged.delete(k)}out[id]=[...merged.values()]}return out}
- function flushPhone(){if(detaching)return Promise.resolve();if(writing)return writing.then(()=>phoneSavedRevision===phoneRevision?undefined:flushPhone());writing=(async()=>{while(!detaching&&phoneSavedRevision!==phoneRevision){const revision=phoneRevision,snapshot=copy(phoneHistory),json=JSON.stringify(snapshot),r=await alo.accountLabHistoryWrite({json,base:JSON.stringify(phoneSavedSnapshot)});if(!r.ok)throw Error(r.error||'Не удалось сохранить историю');const actual=r.history||snapshot;phoneHistory=revision===phoneRevision?copy(actual):mergeLocalHistory(snapshot,phoneHistory,actual);phoneSavedSnapshot=copy(actual);phoneSavedRevision=revision;}})().finally(()=>{writing=null});return writing}
+ function changedHistoryIds(previous,current){
+  return [...new Set([...Object.keys(previous),...Object.keys(current)])].filter(id=>stable(previous[id]||[])!==stable(current[id]||[]));
+ }
+ function flushPhone(){
+  if(detaching)return Promise.resolve();
+  if(writing)return writing.then(()=>phoneSavedRevision===phoneRevision?undefined:flushPhone());
+  writing=(async()=>{
+   while(!detaching&&phoneSavedRevision!==phoneRevision){
+    const revision=phoneRevision,snapshot=copy(phoneHistory);
+    const r=await alo.accountLabHistoryWrite({json:JSON.stringify(snapshot),base:JSON.stringify(phoneSavedSnapshot)});
+    if(!r.ok)throw Error(r.error||'Не удалось сохранить историю');
+    const actual=r.history||snapshot,previous=phoneHistory;
+    phoneHistory=revision===phoneRevision?copy(actual):mergeLocalHistory(snapshot,phoneHistory,actual);
+    phoneSavedSnapshot=copy(actual);
+    phoneSavedRevision=revision;
+    if(r.history)await refresh(changedHistoryIds(previous,phoneHistory));
+   }
+  })().finally(()=>{writing=null});
+  return writing;
+ }
 
  async function preservePhoneHistory(checkpoint, save, reset){
   if(!checkpoint)await hydrate();
@@ -75,7 +97,7 @@
  }
  async function refresh(ids){if(typeof convs==='undefined')return;for(const id of ids){const c=convs.get(id);if(!c)continue;if(desktop)clearConvMedia(c);else{c.box.replaceChildren();c.msgs?.clear()}c.loaded=false;await loadHistory(c);scrollEnd(c)} }
  async function apply(data,restore=false){await hydrate();const desired=AccountData.snapshot(data),before=await snapshot(),old=lab()?.engine.account?.data||{history:{}};const changed=[];
-  if(!desktop){await flushPhone();const r=await alo.accountLabHistoryRead();if(!r.ok)throw Error(r.error||'Не удалось прочитать историю');const oldHistory=phoneHistory;phoneHistory=mergeLocalHistory(phoneSavedSnapshot,phoneHistory,r.history||{});phoneSavedSnapshot=copy(r.history||{});for(const id of new Set([...Object.keys(oldHistory),...Object.keys(phoneHistory)]))if(stable(oldHistory[id]||[])!==stable(phoneHistory[id]||[]))changed.push(id)}
+  if(!desktop){await flushPhone();const r=await alo.accountLabHistoryRead();if(!r.ok)throw Error(r.error||'Не удалось прочитать историю');const oldHistory=phoneHistory;phoneHistory=mergeLocalHistory(phoneSavedSnapshot,phoneHistory,r.history||{});phoneSavedSnapshot=copy(r.history||{});changed.push(...changedHistoryIds(oldHistory,phoneHistory))}
   for(const id of (desktop?new Set([...Object.keys(desired.history),...Object.keys(old.history||{})]):[])){const rows=desired.history[id]||[],current=before.history[id]||[];if(stable(rows)===stable(current))continue;
    // Preserve records written after the manager's capture while native I/O was pending.
    const known=new Map((old.history?.[id]||[]).map(e=>[AccountData.key(e),stable(e)])),wanted=new Map(rows.map(e=>[AccountData.key(e),copy(e)]));if(!restore)for(const e of current){const k=AccountData.key(e);if(known.get(k)!==stable(e))wanted.set(k,e)}

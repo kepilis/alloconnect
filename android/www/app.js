@@ -7,7 +7,7 @@
    те же сообщения в канале друзей (call/answer/decline/busy/cancel/dm/rtc-restart).
    ========================================================= */
 const $ = (id) => document.getElementById(id);
-const VERSION = '0.16.18';
+const VERSION = '0.16.19';
 
 /* ---------- Лог (без IP, переписки и кодов) ---------- */
 function L(tag, data) { alo.log(String(tag).slice(0, 20), typeof data === 'string' ? data : JSON.stringify(data)); }
@@ -720,6 +720,7 @@ function onData(d) {
     case 'chat': {
       const text = String(d.text || '').slice(0, 2000);
       const mid = cleanMid(d.mid) || newMid();
+      if (S.callConv?.msgs?.has(mid) || (S.callConv?.id && histGet(S.callConv.id).some(e => e.mid === mid))) return;
       const re = reIn(d.re);
       chatMsg(S.callConv, S.friendNick, text, false, d.ts, null, { mid, re });
       record(S.callConv, { mid, ts: Number(d.ts) || Date.now(), who: 'peer', nick: S.friendNick, type: 'text', text, re: re || undefined });
@@ -2905,6 +2906,10 @@ function cleanOp(o) {
 async function sendMsgOp(conv, raw) {
   const op = cleanOp({ ...raw, ts: Date.now() });
   if (!op || !conv) return false;
+  if (op.op !== 'react' && window.accountLab?.ownsRelayedDm?.(conv.id, op.ref)) {
+    toast('Сообщение можно изменить или удалить на компьютере, через который оно отправлено');
+    return false;
+  }
   if (!canOps(conv)) { toast(`У ${conv.nick} старая версия alloconnect — это заработает, когда он обновится`); return false; }
   let ok = false;
   const queued=conv.msgs?.get(op.ref)?.el.querySelector('.tick')?.dataset.state==='queued';
@@ -4348,7 +4353,9 @@ function openDm(id) {
 function updateDmHead() {
   if (!dmOpen) return;
   const f = friendsList.find((x) => x.id === dmOpen.id);
-  $('dmSub').textContent = f?.online ? 'в сети' + (f.act?.game ? ` · 🎮 ${f.act.game}` : '') : 'не в сети — сообщение дойдёт, только когда он в сети';
+  $('dmSub').textContent = f?.online ? 'в сети' + (f.act?.game ? ` · 🎮 ${f.act.game}` : '')
+    : window.accountLab?.canRouteDm?.(dmOpen.id) ? 'нет прямой связи — попробуем через привязанный ПК'
+    : 'не в сети — сообщение дойдёт, когда друг будет доступен';
 }
 function closeDm() {
   if (!dmOpen) return;
@@ -4368,9 +4375,17 @@ async function dmSendText() {
   const m = chatMsg(conv, S.nick, text, true, ts, null, { mid, re });
   m.classList.add('sending');
   record(conv, { mid, ts, who: 'me', nick: S.nick, type: 'text', text, re: re || undefined });
-  const r = await alo.friendsSend({ id: conv.id, msg: { t: 'dm', mid, text, ts, nick: S.nick, re: reOut(re) } });
+  const message = { t: 'dm', mid, text, ts, nick: S.nick, re: reOut(re) };
+  const r = await window.accountLab?.routeDm?.(conv.id, message) ?? await alo.friendsSend({ id: conv.id, msg: message });
   m.classList.remove('sending');
-  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); } else {const previous=histGet(conv.id).find(e=>e.mid===mid)?.st;const delivered=previous==='sent'||previous==='read';const state=previous==='read'?'read':r.queued&&!delivered?'queued':'sent';setTickEl(m,state);recordStatus(conv,mid,state);}
+  if (!r.ok) { markUndelivered(m); recordStatus(conv, mid, 'fail'); } else {const previous=foldOps(histGet(conv.id)).find(e=>e.mid===mid)?.st;const delivered=previous==='sent'||previous==='read';const state=previous==='read'?'read':r.queued&&!delivered?'queued':'sent';setTickEl(m,state);recordStatus(conv,mid,state);}
+}
+function applyLinkedDmSent(id, mid) {
+  const conv = getConv(id);
+  if (foldOps(histGet(id)).some(e => e.mid === mid && e.st === 'read')) return;
+  const element = conv.msgs?.get(mid)?.el;
+  if (element) { element.classList.remove('sending'); setTickEl(element, 'sent'); }
+  recordStatus(conv, mid, 'sent');
 }
 function onDmText(id, nick, msg) {
   const conv = getConv(id, nick);

@@ -80,6 +80,83 @@
   async paste(){const r=desktop?await duo.paste():await alo.paste();return typeof r==='string'?r:r.text||''},
   ready:null
  };
+ const dmRouteType='account-dm-route-v1';
+ const dmChecks=new Map();
+ let dmSending=false,lastDmAttempt=null;
+ const dmMid=/^[a-z0-9]{1,24}$/i;
+ function dmLink(target){
+  const account=engine.account;
+  if(lab.restoring||engine.s&&engine.s.phase!=='done'||!account?.friends.some(f=>f.id===target))return null;
+  const peer=account.devices.find(d=>d.kind==='desktop'&&d.id===lab.sync.peer);
+  return peer&&{account:account.id,peer:peer.id};
+ }
+ function dmRequests(){return read('accountLab.dmRequests',[])}
+ function sendDmRoute(link,fields){
+  return Promise.resolve().then(()=>api.send(link.peer,{t:dmRouteType,account:link.account,...fields})).catch(()=>({ok:false}));
+ }
+ async function retryDmRequests(){
+  if(dmSending)return;
+  const pending=dmRequests().filter(r=>{
+   const link=dmLink(r.target);
+   return !r.status&&link?.account===r.account&&link.peer===r.peer;
+  });
+  if(!pending.length)return;
+  const request=pending[(pending.findIndex(r=>r.message.mid===lastDmAttempt)+1)%pending.length];
+  lastDmAttempt=request.message.mid;
+  dmSending=true;
+  try{await sendDmRoute(request,{kind:'send',target:request.target,mid:request.message.mid,message:request.message})}
+  finally{dmSending=false}
+ }
+ async function routeDm(target,message){
+  const link=dmLink(target);
+  if(!link)return null;
+  // The native DM API queues immediately. A harmless reliable packet determines whether to use it.
+  const direct=await new Promise(resolve=>{
+   const timer=setTimeout(()=>resolve(false),1800);
+   Promise.resolve().then(()=>api.send(target,{t:'dm-path-check-v1'})).then(r=>resolve(r?.ok===true),()=>resolve(false)).finally(()=>clearTimeout(timer));
+  });
+  const directResult=direct?await api.send(target,message):null;
+  if(direct&&directResult?.ok!==false)return directResult||{ok:false};
+  const mid=message.mid;
+  const ready=await new Promise(resolve=>{
+   const timer=setTimeout(()=>{dmChecks.delete(mid);resolve(false)},2500);
+   dmChecks.set(mid,{...link,target,resolve:()=>{clearTimeout(timer);dmChecks.delete(mid);resolve(true)}});
+   void sendDmRoute(link,{kind:'check',target,mid});
+  });
+  const current=dmLink(target);
+  if(!ready||current?.account!==link.account||current.peer!==link.peer)return directResult;
+  const requests=dmRequests().filter(r=>r.account===link.account&&(!r.status||Date.now()-r.at<7*86400000));
+  if(requests.length>=1000){
+   const completed=requests.findIndex(r=>r.status);
+   if(completed<0)return directResult;
+   requests.splice(completed,1);
+  }
+  try{write('accountLab.dmRequests',[...requests,{...link,target,message,at:Date.now()}])}
+  catch{return directResult}
+  void retryDmRequests();
+  return {ok:true,queued:true};
+ }
+ function receiveDmRoute(id,msg){
+  if(typeof msg.mid!=='string'||!dmMid.test(msg.mid))return;
+  const link=dmLink(msg.target);
+  if(!link||id!==link.peer||msg.account!==link.account)return;
+  if(msg.kind==='ready'){
+   const check=dmChecks.get(msg.mid);
+   if(check?.target===msg.target&&check.peer===id&&check.account===msg.account)check.resolve();
+  }else if(msg.kind==='result'&&['sent','queued'].includes(msg.status)){
+   const requests=dmRequests(),request=requests.find(r=>r.message.mid===msg.mid&&r.target===msg.target&&r.account===link.account&&r.peer===id);
+   if(!request||request.status)return;
+   if(msg.status==='sent')applyLinkedDmSent(msg.target,msg.mid);
+   write('accountLab.dmRequests',requests.map(r=>r===request?{...r,message:{mid:msg.mid},status:msg.status,at:Date.now()}:r));
+  }
+ }
+ if(!desktop){
+  lab.routeDm=routeDm;
+  lab.canRouteDm=target=>!!dmLink(target);
+  lab.ownsRelayedDm=(target,mid)=>{const link=dmLink(target);return !!link&&dmRequests().some(r=>r.account===link.account&&r.peer===link.peer&&r.target===target&&r.message.mid===mid)};
+  alo.on('friendMsg',({id,msg})=>{if(msg?.t===dmRouteType)void Promise.resolve(lab.ready).then(()=>receiveDmRoute(id,msg)).catch(()=>{})});
+  setInterval(()=>{if(document.visibilityState==='visible')void retryDmRequests()},5000);
+ }
  if(desktop){duo.onFriendMsg(e=>{if(!lab.restoring)engine.receive(e.id,e.msg)});}else{alo.on('friendMsg',e=>{if(!lab.restoring)engine.receive(e.id,e.msg)});}
  const recovery=window.accountRecovery, copyToRestore=localStorage.getItem('alloconnect.account.restore');
  lab.restoring=!!copyToRestore||recovery.unlinkPending();
