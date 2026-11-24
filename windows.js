@@ -110,6 +110,11 @@ function winBindCtx(c) {
 function winBind() {
   winBindCtx(WIN);
   winBindCtx(WING);
+  $('pilotChat').onclick = () => {
+    const detached = WIN.pops.chat?.w;
+    if (detached && !detached.closed) detached.focus();
+    else winSetMin('chat', !WIN.min.chat);
+  };
   window.addEventListener('pointermove', winMove);
   window.addEventListener('pointerup', winUp);
   window.addEventListener('pointercancel', winUp);
@@ -322,6 +327,9 @@ function winRefresh(c) {
   stage.classList.toggle('chat-min', !!c.min[chatId] && !c.pops[chatId]);
   stage.classList.toggle('chat-out', !!c.pops[chatId]);
   if (c === WIN) {
+    const chat = $('pilotChat');
+    chat.setAttribute('aria-pressed', String(!c.min.chat || !!c.pops.chat));
+    chat.title = c.pops.chat ? 'Перейти к окну чата' : (c.min.chat ? 'Открыть чат' : 'Свернуть чат');
     const v = $('remoteScreen');
     if (v) v.muted = S.deafened || !!c.min.screen;
   } else if (typeof grpApplyScreenVols === 'function') grpApplyScreenVols();
@@ -332,6 +340,7 @@ function winRefresh(c) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'wchip';
+      b.dataset.window = id;
       b.title = 'Развернуть';
       b.innerHTML = '<span></span><small>звук выкл</small>';
       b.firstChild.textContent = c.names[id];

@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>alloconnect</title>
+  <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="themes.css">
+<link rel="stylesheet" href="themes-phone.css">
+<link rel="stylesheet" href="account-lab.css">
+<link rel="stylesheet" href="watch-together.css">
+<link rel="stylesheet" href="pilot.css">
+</head>
+<body>
+<!-- ================= Главный экран ================= -->
+<section id="lobby" class="screen active">
+  <header class="top">
+    <div class="brand"><img src="icon.png" alt=""><b>alloconnect</b></div>
+    <details class="pilot-profile"><summary>Профиль</summary><div class="pilot-pop"><label class="field">
+        <span>Твоё имя</span>
+        <input id="nick" maxlength="24" placeholder="Как тебя зовут" autocomplete="off">
+      </label>
+
+      <label class="field"><span>Мой статус</span><select id="presenceMode"><option value="online">🟢 В сети</option><option value="away">🟡 Нет на месте</option><option value="invisible">⚪ Невидимка</option><option value="offline">⚫ Не в сети</option><option value="dnd">🔴 Не беспокоить</option></select></label></div></details>
+    <button id="btnSettings" class="icon-btn settings-button" type="button" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
+  </header>
+
+  <div class="scroll">
+    <!-- старт -->
+    <div id="stepHome" class="step active">
+      <!-- друг ждёт в звонке, из которого я вышел -->
+      <div id="rejoinBar" class="card rejoin-bar hidden">
+        <span id="rejoinText"></span>
+        <div class="row">
+          <button id="btnRejoin" class="btn primary">↩ Вернуться</button>
+          <button id="rejoinClose" class="btn">Скрыть</button>
+        </div>
+      </div>
+      <!-- вышла новая версия (с GitHub) -->
+      <div id="updBar" class="card upd-bar hidden">
+        <div class="card-head" id="updBarTitle"></div>
+        <p id="updBarNotes" class="muted small"></p>
+        <div class="row">
+          <button id="updBarGo" class="btn primary">Обновить</button>
+          <button id="updBarLater" class="btn">Потом</button>
+        </div>
+      </div>
+      
+      <h1 class="pilot-lobby-title">Звонки и сообщения</h1>
+      <div id="friendsBox" class="card hidden">
+        <div class="card-head row-head">Друзья <button id="btnGroup" class="btn small-btn">👥 Группа</button></div>
+        <div id="friendsList"></div>
+      </div>
+      <div id="groupsBox" class="card hidden">
+        <div class="card-head">Группы</div>
+        <div id="groupsList"></div>
+      </div>
+
+      
+      <div class="pilot-connect"><button id="btnAddFriendCode" class="btn wide">➕ Добавить друга</button><details class="pilot-code"><summary>Вставить код</summary><div class="pilot-code-body"><textarea id="entryCode" rows="3" maxlength="120000" placeholder="Вставь код дружбы, звонка или группы" aria-label="Код alloconnect"></textarea><p id="entryCodeHint" class="muted small" aria-live="polite"></p><button id="entryCodeGo" type="button" class="btn primary" disabled>Продолжить</button></div></details><details class="pilot-secondary"><summary>Ещё способы подключения</summary><button id="btnManualGroup" type="button" class="btn wide">👥 Групповой звонок</button><button id="btnInvite" class="btn primary big wide">Пригласить друга</button><button id="btnHaveInvite" class="btn big wide">У меня есть приглашение</button></details></div>
+      <div id="lobbyError" class="error"></div>
+      <div id="bgHint" class="hint hidden"></div>
+    </div>
+
+    <!-- я приглашаю -->
+    <div id="stepHost" class="step">
+      <button class="link back" data-back>← Назад</button>
+      <h2>Приглашение</h2>
+      <p id="hostInfo" class="info">Готовлю приглашение…</p>
+      <textarea id="offerOut" class="code" readonly rows="4"></textarea>
+      <div class="row">
+        <button id="btnShareOffer" class="btn primary" disabled>Отправить…</button>
+        <button id="btnCopyOffer" class="btn" disabled>Скопировать</button>
+      </div>
+      <h3>Ответ друга</h3>
+      <p class="muted small">Скопируй ответ (ALOA.…) и вернись сюда — он вставится сам. Или вставь вручную:</p>
+      <textarea id="answerIn" class="code" rows="3" placeholder="ALOA.…"></textarea>
+      <div class="row">
+        <button id="btnPasteAnswer" class="btn">Вставить</button>
+        <button id="btnApplyAnswer" class="btn primary" disabled>Подключиться</button>
+      </div>
+      <div class="error" data-err></div>
+    </div>
+
+    <!-- меня пригласили -->
+    <div id="stepGuest" class="step">
+      <button class="link back" data-back>← Назад</button>
+      <h2>Ответ на приглашение</h2>
+      <p class="muted small">Вставь приглашение друга (ALOI.…):</p>
+      <textarea id="offerIn" class="code" rows="3" placeholder="ALOI.…"></textarea>
+      <div class="row">
+        <button id="btnPasteOffer" class="btn">Вставить</button>
+        <button id="btnMakeAnswer" class="btn primary">Ответить</button>
+      </div>
+      <p id="guestInfo" class="info"></p>
+      <div id="guestAnswerBlock" class="hidden">
+        <textarea id="answerOut" class="code" readonly rows="4"></textarea>
+        <div class="row">
+          <button id="btnShareAnswer" class="btn primary">Отправить…</button>
+          <button id="btnCopyAnswer" class="btn">Скопировать</button>
+        </div>
+      </div>
+      <div class="error" data-err></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Звонок ================= -->
+<section id="call" class="screen pilot-phone">
+  <header class="top call-top">
+    <div class="who">
+      <b id="friendTop">…</b>
+      <div id="status" class="status waiting"><i></i><span>Соединяемся…</span> <span id="callTimer" class="muted"></span></div>
+    </div>
+    <button id="btnAddFriend" class="btn small-btn hidden">➕ В друзья</button>
+    <button id="btnCallSettings" class="icon-btn settings-button" type="button" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
+    <button id="btnSoundpad" class="icon-btn sp-btn" aria-label="Саундпад">🎵</button>
+  </header>
+
+  <!-- собеседник вышел: ждём, можно позвать снова (как у ПК 1.16) -->
+  <div id="waitBar" class="wait-bar hidden">
+    <span id="waitText"></span>
+    <button id="btnCallAgain" class="btn primary small-btn">📞 Позвонить снова</button>
+  </div>
+  <div id="stage">
+    <div id="people">
+      <div id="friendCard" class="person">
+        <div class="avatar big-av"><span id="friendInitial">…</span></div>
+        <div class="pname"><span id="friendName">…</span> <span id="friendBadges"></span></div>
+      </div>
+      <div id="meCard" class="person me">
+        <div class="avatar"><span id="meInitial">?</span></div>
+        <div class="pname"><span id="meName"></span> <span id="meBadges"></span></div>
+      </div>
+    </div>
+
+    <!-- вебкамера (как у ПК 1.18): друг крупно, своя — в углу; касание — крупнее/меньше -->
+    <div id="camWrap" class="hidden">
+      <video id="camFriend" playsinline autoplay muted></video>
+      <video id="camSelf" playsinline autoplay muted></video>
+      <span id="camFriendName" class="cam-name"></span>
+      <button id="camFlip" class="cam-flip hidden" aria-label="Другая камера">🔄</button>
+    </div>
+
+    <div id="shareBar" class="hidden">
+      <span>📱 Ты показываешь экран</span>
+      <span id="shareMode" class="muted"></span>
+      <span id="shareStats" class="muted"></span>
+      <button id="btnShareStop" class="btn">Остановить</button>
+    </div>
+
+    <div id="remoteScreenWrap" class="hidden">
+      <div id="screenView">
+        <video id="remoteScreen" playsinline autoplay></video>
+        <canvas id="drawLayer"></canvas>
+        <div id="inputLayer"></div>
+        <div id="liveTools">
+          <button id="toolPtr" class="tbtn" aria-label="Указка">👆</button>
+          <button id="toolDraw" class="tbtn" aria-label="Рисовать">✏️</button>
+          <button id="toolColor" class="tbtn swatch hidden" aria-label="Цвет"></button>
+          <button id="toolClear" class="tbtn" aria-label="Стереть рисунки">🧹</button>
+          <button id="toolReact" class="tbtn" aria-label="Реакции">😂</button>
+          <button id="toolImg" class="tbtn" aria-label="Картинка или видео на экран друга">🖼</button>
+          <button id="toolClip" class="tbtn hidden" aria-label="Повтор последних секунд">⏪</button>
+          <button id="toolCtl" class="tbtn" aria-label="Управление">🎮</button>
+          <button id="toolTouchpad" class="tbtn hidden" aria-label="Тачпад (для игр)">🖱</button>
+          <button id="toolVpad" class="tbtn hidden" aria-label="Геймпад на экране">🕹</button>
+          <button id="toolKb" class="tbtn hidden" aria-label="Клавиатура">⌨️</button>
+          <button id="toolKeys" class="tbtn hidden" aria-label="Клавиши">Esc</button>
+        </div>
+        <div id="reactBar" class="tool-row hidden"></div>
+        <div id="drawMenu" class="tool-row draw-menu hidden"></div>
+        <div id="vpad" class="vpad hidden"></div>
+        <div id="keysBar" class="tool-row hidden">
+          <button class="tbtn" data-key="Escape">Esc</button><button class="tbtn" data-key="Tab">Tab</button>
+          <button class="tbtn" data-key="Enter">⏎</button><button class="tbtn" data-key="Backspace">⌫</button>
+          <button class="tbtn" data-key="ArrowLeft">←</button><button class="tbtn" data-key="ArrowUp">↑</button>
+          <button class="tbtn" data-key="ArrowDown">↓</button><button class="tbtn" data-key="ArrowRight">→</button>
+          <button class="tbtn" data-key="Space">␣</button><button class="tbtn" data-key="Delete">Del</button>
+        </div>
+        <input id="toolImgFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,audio/*" class="hidden">
+        <input id="kbInput" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Ввод на ПК друга">
+      </div>
+      <div id="screenBar">
+        <span id="remoteScreenOwner"></span>
+        <span id="remoteStats" class="muted"></span>
+        <button id="btnFull" class="icon-btn" aria-label="На весь экран">⛶</button>
+      </div>
+      <button id="btnWatchReplay" class="btn">Смотреть вместе</button>
+      <div id="remoteReason" class="reason"></div>
+      <div id="fsControls" class="hidden">
+        <button id="btnFsExit" class="fs-btn">✕</button>
+        <button id="btnFsRotate" class="fs-btn">⟳</button>
+        <button id="btnFsMute" class="fs-btn">🎙</button>
+        <label class="fs-vol">🔊<input id="fsVol" type="range" min="0" max="100" value="100"></label>
+      </div>
+    </div>
+  </div>
+
+  <div id="soundpad" class="hidden">
+    <div class="sp-head">
+      <b>Саундпад</b>
+      <button id="spAdd" class="btn primary small-btn">＋ Звук</button>
+      <button id="spStop" class="btn small-btn">■ Стоп</button>
+      <button id="spClose" class="icon-btn" aria-label="Закрыть">✕</button>
+      <input type="file" id="spFile" multiple accept="audio/*,video/*,.mp3,.ogg,.opus,.wav,.m4a,.aac,.flac,.mp4,.mkv,.mov,.webm" class="hidden">
+    </div>
+    <div id="spGrid" class="sp-grid"></div>
+    <div id="spEmpty" class="muted small sp-empty">Нажми «＋ Звук» и выбери mp3/ogg/wav или видео (возьмётся его звук). Нажатие — играть (друг слышит в звонке), долгое нажатие или ⋯ — настроить.</div>
+    <div class="sp-opts">
+      <label class="sp-vol">Другу <input type="range" id="spVolOut" min="0" max="150" value="100"></label>
+      <label class="sp-vol"><input type="checkbox" id="spMonitor"> Слышать себя <input type="range" id="spVolMon" min="0" max="100" value="60"></label>
+      <label class="sp-vol"><input type="checkbox" id="spWhenMuted"> Играть, даже когда микрофон выключен</label>
+    </div>
+    <div id="spEdit" class="sp-edit hidden">
+      <input id="spEditName" maxlength="40" placeholder="Название"><input id="spEditCategory" maxlength="40" placeholder="Категория" aria-label="Категория звука">
+      <label class="sp-vol">Громкость <input type="range" id="spEditVol" min="0" max="200" value="100"></label>
+      <div class="row">
+        <button id="spEditShare" class="btn small-btn">📤 Другу</button>
+        <button id="spEditDel" class="btn small-btn danger">Удалить</button>
+        <button id="spEditDone" class="btn primary small-btn">Готово</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="chatPanel" class="hidden">
+    <div class="chat-tools"><button type="button" id="chatSearchBtn" class="icon-btn" aria-label="Поиск">🔍</button></div>
+    <div id="messages" class="messages"></div>
+    <form id="chatForm" class="chat-form">
+      <button type="button" id="btnAttach" class="icon-btn" aria-label="Файл">📎</button>
+      <textarea id="chatInput" class="msg-input" rows="1" placeholder="Сообщение" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
+      <button class="btn primary" type="submit">➤</button>
+      <input id="fileInput" type="file" multiple class="hidden">
+    </form>
+  </div>
+
+  
+
+  <nav class="controls">
+    <button id="btnMute" class="ctl" aria-label="Микрофон"><b>🎙</b><span>Микр.</span></button>
+    
+    <button id="btnChat" class="ctl"><b>💬</b><span>Чат</span><i id="chatBadge" class="badge hidden"></i></button>
+    <button id="btnScreen" class="ctl"><b>📱</b><span>Экран</span></button>
+    <button id="btnCam" class="ctl"><b>📷</b><span>Камера</span></button>
+    
+    <details class="pilot-tools"><summary><b aria-hidden="true">♪</b><span>Звук</span></summary><div class="pilot-pop"><button id="btnSpeaker" class="ctl" aria-label="Громкая связь"><b>🔊</b><span>Динам.</span></button><button id="btnDeafen" class="ctl"><b>🎧</b><span>Звук</span></button><div id="vols" class="vols">
+    <label>Голос <input id="friendVol" type="range" min="0" max="100" value="100"></label>
+    <label id="screenVolRow" class="hidden">Стрим <input id="screenVol" type="range" min="0" max="100" value="100"></label>
+  </div></div></details>
+    <button id="btnLeave" class="ctl hang"><b>✆</b><span>Выйти</span></button>
+  </nav>
+</section>
+
+<!-- ================= Чат с другом без звонка ================= -->
+<!-- ================= Групповой звонок (как ПК 1.16) ================= -->
+<section id="group" class="screen">
+  <header class="top">
+    <div class="who">
+      <b>Групповой звонок</b>
+      <div id="gStatus" class="status waiting"><i></i><span>Соединяемся…</span></div>
+    </div>
+    <button id="btnGroupSettings" class="icon-btn settings-button" type="button" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
+    <button id="gInviteMore" class="btn small-btn">➕ Позвать</button>
+  </header>
+  <div id="gStage">
+    <div id="gGrid" class="ggrid"></div>
+    <div id="gChatPanel" class="hidden">
+      <div id="gMessages" class="messages"></div>
+      <form id="gChatForm" class="chat-form">
+        <button type="button" id="gAttach" class="icon-btn" aria-label="Файл">📎</button>
+        <textarea id="gChatInput" class="msg-input" rows="1" placeholder="Сообщение всем" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
+        <button class="btn primary" type="submit">➤</button>
+        <input id="gFileInput" type="file" multiple class="hidden">
+      </form>
+    </div>
+  </div>
+  <!-- поверх экрана участника, открытого крупно: указка, рисунки, реакции -->
+  <div id="gTools" class="gtools hidden">
+    <div class="row">
+      <button id="gToolPtr" class="tbtn" data-m="ptr" aria-label="Указка">👆</button>
+      <button id="gToolDraw" class="tbtn" data-m="draw" aria-label="Рисовать">✏️</button>
+      <button id="gToolClear" class="tbtn" aria-label="Стереть рисунки">🧹</button>
+      <button id="gToolReact" class="tbtn" aria-label="Реакции">😂</button>
+      <button id="gToolCtl" class="tbtn" aria-label="Управление">🎮</button>
+      <span id="gToolHint" class="muted small"></span>
+    </div>
+    <div id="gReactBar" class="row hidden"></div>
+  </div>
+  <div id="gScreenVolRow" class="vols hidden"><label>Звук экранов <input id="gScreenVol" type="range" min="0" max="100" value="100"></label></div>
+  <nav class="controls">
+    <button id="gMute" class="ctl" aria-label="Микрофон"><b>🎙</b><span>Микр.</span></button>
+    <button id="gSpeaker" class="ctl" aria-label="Громкая связь"><b>🔊</b><span>Динам.</span></button>
+    <button id="gChatBtn" class="ctl"><b>💬</b><span>Чат</span><i id="gBadge" class="badge hidden"></i></button>
+    <button id="gShare" class="ctl"><b>📱</b><span>Экран</span></button>
+    <button id="gCam" class="ctl"><b>📷</b><span>Камера</span></button>
+    <button id="gDeafen" class="ctl"><b>🎧</b><span>Звук</span></button>
+    <button id="gLeave" class="ctl hang"><b>✆</b><span>Выйти</span></button>
+  </nav>
+</section>
+
+<section id="dm" class="screen">
+  <header class="top">
+    <button id="btnDmBack" class="icon-btn" aria-label="Назад">←</button>
+    <div class="who"><b id="dmTitle"></b><div id="dmSub" class="muted small"></div></div>
+    <button id="dmSearchBtn" class="icon-btn" aria-label="Поиск">🔍</button>
+    <button id="dmClearBtn" class="icon-btn" aria-label="Очистить историю с другом">🗑</button>
+    <button id="btnDmCall" class="btn primary small-btn">Позвонить</button>
+  </header>
+  <div id="dmMessages" class="messages grow"></div>
+  <form id="dmForm" class="chat-form">
+    <button type="button" id="btnDmAttach" class="icon-btn" aria-label="Файл">📎</button>
+    <textarea id="dmInput" class="msg-input" rows="1" placeholder="Сообщение" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
+    <button class="btn primary" type="submit">➤</button>
+    <input id="dmFileInput" type="file" multiple class="hidden">
+  </form>
+</section>
+
+<!-- ================= Входящий / исходящий ================= -->
+<div id="callModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="callTitle" aria-describedby="callSub">
+  <div class="modal-box call-box">
+    <div id="callAvatar" class="avatar huge-av"><span></span></div>
+    <h2 id="callTitle" data-dialog-title tabindex="-1"></h2>
+    <p id="callSub" class="muted"></p>
+    <div class="row center">
+      <button id="btnCallDecline" class="btn bad">Отклонить</button>
+      <button id="btnCallAccept" class="btn ok">Принять</button>
+      <button id="btnCallCancel" class="btn big bad">Отменить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= Настройки ================= -->
+<div id="settings" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <header class="top">
+    <b id="settingsTitle" data-dialog-title tabindex="-1">Настройки</b>
+    <button id="btnCloseSettings" class="icon-btn" aria-label="Закрыть">✕</button>
+  </header>
+  <div class="scroll">
+    <details class="card scat" data-cat="profile"><summary>Профиль</summary><div class="scat-body">
+      
+      <div class="row center-v">
+        <div id="myAvPrev" class="avatar mid-av"><span></span></div>
+        <button id="myAvPick" class="btn">Выбрать аватарку…</button>
+        <button id="myAvClear" class="btn hidden">Убрать</button>
+        <button type="button" id="myAvTalk" class="btn small">Говорящий аватар…</button>
+        <input id="myAvFile" type="file" accept="image/*" class="hidden">
+      </div>
+      <p class="muted small">Квадрат по центру картинки; гифка — как есть (до 1 МБ). Друзья увидят при следующей связи.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="call"><summary>Звонок и микрофон</summary><div class="scat-body">
+      
+      <label class="switch"><input id="optSpeakerStart" type="checkbox"><span>Начинать звонок на громкой связи</span></label>
+      <p class="muted small">Выключено — как обычный звонок: звук в динамике у уха, у уха экран гаснет сам. «Громкая» в звонке переключает. Когда друг показывает экран — включается громкая.</p>
+      <div class="card-head">Звук входящего</div>
+      <div class="row center-v"><span class="grow">Мелодия: <b id="ringName">стандартный</b></span></div>
+      <div class="row">
+        <button id="ringPick" class="btn small-btn">Выбрать…</button>
+        <button id="ringClear" class="btn small-btn hidden">Стандартная</button>
+        <button id="ringTest" class="btn small-btn">▶ Проверить</button>
+        <input id="ringFile" type="file" accept="audio/*" class="hidden">
+      </div>
+      <label class="field"><span>Громкость</span><input id="optRingVol" type="range" min="0" max="100" step="5"></label>
+      <label class="switch"><input id="optRingMute" type="checkbox"><span>Без мелодии (только окно и вибрация)</span></label>
+      <label class="switch"><input id="optSounds" type="checkbox"><span>Звуки входа/выхода и сообщений</span></label>
+      <p class="muted small">Своя мелодия звучит, когда приложение открыто; в фоне Android играет мелодию уведомления.</p>
+      <div class="card-head">Микрофон</div>
+      <label class="switch"><input id="optRnn" type="checkbox"><span>Шумодав (нейросеть RNNoise, как на ПК)</span></label>
+      <label class="switch"><input id="optNoise" type="checkbox"><span>Встроенное шумоподавление телефона</span></label>
+      <label class="switch"><input id="optEcho" type="checkbox"><span>Эхоподавление</span></label>
+      <label class="switch"><input id="optAgc" type="checkbox"><span>Автогромкость микрофона</span></label>
+      <label class="switch"><input id="optPtt" type="checkbox"><span>Рация — говорить, только пока держишь 🎙</span></label>
+      <p class="muted small">В звонке держи кнопку микрофона и говори, отпустил — друг тебя не слышит. Удобно в шумном месте и в играх.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="background"><summary>Связь в фоне</summary><div class="scat-body">
+      
+      <label class="switch"><input id="optOnlineBg" type="checkbox"><span>Быть в сети в фоне</span></label>
+      <p class="muted small">Друзья смогут позвонить, даже когда приложение закрыто или экран выключен. В шторке будет висеть уведомление «alloconnect в сети». Тратит заметно больше батареи. Без этой опции звонить можешь ты сам, а друзья — пока приложение открыто.</p>
+      <div id="bgChecks"></div>
+    </div></details>
+
+    <details class="card scat" data-cat="share"><summary>Демонстрация с телефона</summary><div class="scat-body">
+      
+      <label class="field"><span>Режим демонстрации</span>
+        <select id="optShareFps">
+          <option value="60">Плавный — до 60 кадров/с</option>
+          <option value="30">Обычный — 30 кадров/с</option>
+          <option value="15">Чёткий текст — 15 кадров/с</option>
+        </select></label>
+      <p class="hint">Плавный режим уменьшает разрешение на телефонах с программным кодированием. Изменение применяется при следующем запуске демонстрации.</p>
+      <label class="switch"><input id="optShareAudio" type="checkbox"><span>Передавать звук телефона</span></label>
+      <div class="card-head">Поверх моего экрана</div>
+      <label class="switch"><input id="optOvlDraw" type="checkbox"><span>Рисунки, указка и реакции друга</span></label>
+      <label class="switch"><input id="optOvlReact" type="checkbox"><span>Картинки и видео от друга</span></label>
+      <label class="switch"><input id="optSvidSound" type="checkbox"><span>Звук у видео, которые присылает друг</span></label>
+      <label class="field"><span>Громкость видео</span><input id="optSvidVol" type="range" min="0" max="100" step="5"></label>
+      <p id="ovlState" class="small"></p>
+      <button id="ovlAllow" class="btn hidden">Разрешить «Поверх других приложений»</button>
+      <p class="muted small">Пока показываешь экран, рисунки друга видны поверх любых приложений; касания проходят сквозь них. Друг увидит свои рисунки и в картинке (Android записывает их вместе с экраном).</p>
+      <p class="muted small">Текстовый — чёткая картинка, но мало кадров: для документов, чатов и мобильного интернета. Звук телефона — с Android 10; голос звонка в него не попадает. Некоторые приложения запрещают захват своего звука.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="stream"><summary>Просмотр демонстрации</summary><div class="scat-body">
+      
+      <label class="field"><span>Нижняя планка битрейта стрима, кбит/с</span>
+        <input id="optMinKbps" type="number" min="300" max="8000" step="100"></label>
+      <p class="muted small">Меньше — экономнее для мобильного интернета, больше — чётче картинка при провалах сети. На ПК по умолчанию 2500.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="replay"><summary>Повторы</summary><div class="scat-body">
+      
+      <label class="switch"><input id="optClip" type="checkbox"><span>Держать последние секунды стрима</span></label>
+      <label class="switch"><input id="optClipAudio" type="checkbox"><span>Со звуком</span></label>
+      <label class="field"><span>Длина повтора</span>
+        <input id="optClipSec" type="range" min="5" max="120" step="5" value="30">
+        <output id="optClipSecValue" for="optClipSec">30 с</output></label>
+      <p class="muted small">Пока смотришь стрим друга — ⏪ сохраняет последние секунды в MP4: оставить себе или отправить другу. Тратит немного батареи, пока идёт стрим.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="theme"><summary>Оформление</summary><div class="scat-body">
+      
+      <div id="themeGrid" class="theme-grid" role="radiogroup" aria-label="Тема оформления"></div>
+    </div></details>
+
+    <details class="card scat" data-cat="stickers"><summary>Стикеры</summary><div class="scat-body">
+      
+      <p class="muted small">Свои наборы картинок и гифок — кнопка 🙂 у поля сообщения. Чужой стикер из чата — ＋ на нём (набор «Полученные»).</p>
+      <button type="button" id="stkSetAdd" class="btn">＋ Новый набор из картинок…</button>
+      <div id="stkSettingsList" class="stk-settings"></div>
+    </div></details>
+
+    <details class="card scat" data-cat="youtube" id="youtubeSettings"><summary>YouTube</summary><div class="scat-body">
+      
+      <p id="youtubeStatus" class="muted small">Проверяю сессию…</p>
+      <div class="row wrap">
+        <button id="youtubeLogin" type="button" class="btn">Войти в YouTube</button>
+        <button id="youtubeImport" type="button" class="btn">Импорт сессии…</button>
+        <button id="youtubeLogout" type="button" class="btn">Выйти</button>
+      </div>
+      <p class="hint">Вход выполняется на сайте YouTube. Если Google отклонит его, можно импортировать файл cookies.txt. Сессия хранится только на этом устройстве.</p>
+      <label class="field">Ссылка на ролик<input id="youtubeUrl" type="url" inputmode="url" maxlength="2000" placeholder="https://www.youtube.com/watch?v=…"></label>
+      <div class="row wrap"><button id="youtubeGet" type="button" class="btn primary">Получить видео</button><button id="youtubeCancel" type="button" class="btn hidden">Отменить</button></div>
+      <p id="youtubeProgress" class="muted small"></p>
+    </div></details>
+
+    <details class="card scat" data-cat="network"><summary>Сеть и подключение</summary><div class="scat-body">
+      
+      <label class="switch"><input id="optStunAlt" type="checkbox"><span>Сразу использовать альтернативные STUN</span></label>
+      <label class="switch"><input id="optNoStun" type="checkbox"><span>Выключить STUN (только Tailscale / локальная сеть)</span></label>
+      <label class="field"><span>Свои STUN-серверы (по одному на строку)</span>
+        <textarea id="optStunCustom" rows="2" placeholder="stun.example.com:3478"></textarea></label>
+      <label class="field"><span>Резерв связи — адрес своего сервера (необязательно)</span><input id="optRelayUrl" placeholder="https://адрес-сервера" autocomplete="off"></label>
+      <p class="hint" id="relayStatus"></p>
+      <label class="field"><span>ID этого устройства для доступа к своему серверу</span><input id="relayDeviceId" readonly></label>
+      <p class="hint">Пакеты остаются зашифрованными. Настройки VPN не меняются.</p>
+      <label class="field"><span>TURN-сервер</span><input id="optTurnUrl" placeholder="turn:host:3478" autocomplete="off"></label>
+      <div class="row">
+        <input id="optTurnUser" placeholder="логин" autocomplete="off">
+        <input id="optTurnPass" placeholder="пароль" type="password" autocomplete="off">
+      </div>
+      <label class="switch"><input id="optRelay" type="checkbox"><span>Только через TURN</span></label>
+      <ul id="netInfo" class="kv"></ul>
+    </div></details>
+
+    <details class="card scat" data-cat="updates"><summary>Обновления</summary><div class="scat-body">
+      
+      <label class="switch"><input id="optUpdAuto" type="checkbox"><span>Проверять самому (раз в полдня, с GitHub)</span></label>
+      <p id="updState" class="small"></p>
+      <div class="row">
+        <button id="updGo" class="btn primary hidden">Обновить</button>
+        <button id="updCheck" class="btn">Проверить сейчас</button>
+      </div>
+      <p class="muted small">Новая версия берётся с GitHub и ставится только после проверки подписи. Установку подтверждаешь ты в окне Android; в первый раз Android попросит разрешить alloconnect устанавливать приложения.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="history"><summary>История</summary><div class="scat-body">
+      
+      <button id="btnClearAll" class="btn">🗑 Очистить историю всех чатов</button>
+      <p class="muted small">Удаляется только у тебя. С одним другом — 🗑 в его чате.</p>
+    </div></details>
+
+    <details class="card scat" data-cat="about"><summary>О программе</summary><div class="scat-body">
+      
+      <ul id="appInfo" class="kv"></ul>
+      <div class="row">
+        <button id="btnShareLog" class="btn">Отправить лог</button>
+        <button id="btnAppSettings" class="btn">Разрешения</button>
+      </div>
+    </div></details>
+  </div>
+</div>
+
+<div id="groupManualReply" class="modal hidden"><div class="modal-box fc-box"><h3>Ответ на приглашение в группу</h3><p>Отправь ответ позвавшему. После применения ответа вы соединитесь.</p><textarea id="groupManualReplyCode" readonly></textarea><button id="groupManualReplyCopy" type="button" class="btn primary">Скопировать ответ</button><button id="groupManualReplyClose" type="button" class="btn">Закрыть</button></div></div>
+<!-- групповой звонок: позвать друзей, входящее приглашение -->
+<div id="gPick" class="modal hidden">
+  <div class="modal-box fc-box">
+    <h3>Позвать в групповой звонок</h3>
+    <details class="adv"><summary>Приглашение по коду</summary>
+      <p class="muted small">Можно соединиться без добавления в друзья. Код действует 5 минут.</p>
+      <button id="frGroupManualCreate" type="button" class="btn">Создать приглашение</button>
+      <textarea id="frGroupManualOffer" readonly placeholder="Приглашение в группу"></textarea>
+      <button id="frGroupManualCopy" type="button" class="btn" disabled>Скопировать приглашение</button>
+      <textarea id="frGroupManualAnswer" placeholder="Вставь ответ участника"></textarea>
+      <button id="frGroupManualApply" type="button" class="btn" disabled>Применить ответ</button>
+      <p class="muted small">Тебя пригласили? Вставь приглашение ниже и отправь полученный ответ позвавшему.</p>
+      <textarea id="groupManualInput" placeholder="ALOGI.…"></textarea>
+      <button id="groupManualJoin" type="button" class="btn">Ответить на приглашение</button>
+      </details><div id="gPickList"></div>
+    <p id="gPickNote" class="muted small"></p>
+    <div class="row">
+      <button id="gPickClose" class="btn">Отмена</button>
+      <button id="gPickGo" class="btn primary">Позвать</button>
+    </div>
+  </div>
+</div>
+<div id="gInvModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="avatar huge-av"><span>👥</span></div>
+    <h2 id="gInvTitle"></h2>
+    <p id="gInvSub" class="muted small"></p>
+    <div class="row center">
+      <button id="gInvDecline" class="btn round bad">✕</button>
+      <button id="gInvAccept" class="btn round ok">✆</button>
+    </div>
+  </div>
+</div>
+
+<!-- код дружбы: мой код и код друга (как у ПК 1.16) -->
+<div id="fcModal" class="modal hidden">
+  <div class="modal-box fc-box">
+    <h3>Добавить друга</h3>
+    <p class="muted small">Отправь свой код другу в любом мессенджере — или вставь код, который прислал он. Звонить для этого не нужно.</p>
+    <label class="field"><span>Мой код дружбы (действует сутки)</span>
+      <textarea id="fcMine" class="code" readonly rows="3"></textarea></label>
+    <div class="row">
+      <button id="fcShare" class="btn primary">Отправить…</button>
+      <button id="fcCopy" class="btn">Скопировать</button>
+    </div>
+    <label class="field"><span>Код друга</span>
+      <textarea id="fcIn" class="code" rows="3" placeholder="ALOF.…"></textarea></label>
+    <div class="row">
+      <button id="fcPaste" class="btn">Вставить</button>
+      <button id="fcAdd" class="btn primary" disabled>Добавить</button>
+    </div>
+    <p id="fcStatus" class="small"></p>
+    <div id="fcReplyBlock" class="hidden">
+      <p class="small"><b id="fcReplyNick"></b> пока не отвечает — до него может быть не достучаться напрямую. Отправь ему ответный код: пусть вставит его у себя в «Добавить друга».</p>
+      <textarea id="fcReply" class="code" readonly rows="3"></textarea>
+      <div class="row">
+        <button id="fcReplyShare" class="btn primary">Отправить…</button>
+        <button id="fcReplyCopy" class="btn">Скопировать</button>
+      </div>
+    </div>
+    <button id="fcClose" class="btn wide">Закрыть</button>
+  </div>
+</div>
+<!-- кто-то вставил мой код: «X хочет в друзья» -->
+<div id="fcReqModal" class="modal hidden">
+  <div class="modal-box">
+    <div id="fcReqAvatar" class="avatar huge-av"><span></span></div>
+    <h2 id="fcReqTitle"></h2>
+    <p class="muted small">Он вставил твой код дружбы. Примешь — сможете звонить и писать друг другу из списка друзей.</p>
+    <div class="row">
+      <button id="fcReqDecline" class="btn">Отклонить</button>
+      <button id="fcReqAccept" class="btn primary">Принять</button>
+    </div>
+  </div>
+</div>
+
+<!-- «Поделиться → alloconnect»: кому отправить -->
+<div id="shareIn" class="modal hidden">
+  <div class="modal-box share-in-box">
+    <h3 id="shareInTitle">Отправить</h3>
+    <div id="shareInList"></div>
+    <button id="shareInCancel" class="btn wide">Отмена</button>
+  </div>
+</div>
+
+<!-- повтор: посмотреть, сохранить, отправить -->
+<dialog id="watchDialog" aria-labelledby="watchTitle">
+  <div id="watchShell">
+  <h2 id="watchTitle">Смотреть вместе</h2>
+  <p id="watchStatus" role="status"></p>
+  <div id="watchPlayer" hidden>
+    <div id="watchStage"><div id="watchPicture">
+      <video id="watchVideo" playsinline preload="auto"></video>
+      <canvas id="watchInk" aria-label="Рисовать на паузе"></canvas>
+    </div></div>
+    <input id="watchSeek" type="range" min="0" step="any" aria-label="Позиция повтора" style="width:100%">
+    <output id="watchClock"></output>
+    <div><button class="btn" id="watchPrev" aria-label="Предыдущий кадр">◀ Кадр</button>
+      <button class="btn" id="watchPlay">▶ Играть</button>
+      <button class="btn" id="watchNext" aria-label="Следующий кадр">Кадр ▶</button></div>
+    <small>На паузе можно рисовать по видео.</small>
+  </div>
+  <div class="watch-footer">
+  <button class="btn" id="watchFull" title="Полный экран (F)" aria-keyshortcuts="F" hidden>На весь экран</button>
+  <button class="btn primary" id="watchAccept">Открыть</button>
+  <button class="btn" id="watchExit">Отменить</button>
+  <button class="btn" id="watchResize" aria-label="Изменить размер окна" title="Потяните за угол или используйте клавиши со стрелками" hidden>⤡</button>
+  </div></div>
+</dialog>
+<div id="clipModal" class="modal hidden">
+  <div class="modal-box clip-box">
+    <video id="clipVideo" controls playsinline></video>
+    <div><button id="clipPrev" class="btn">◀ Кадр</button>
+      <button id="clipNext" class="btn">Кадр ▶</button>
+      <button id="clipWatch" class="btn primary" disabled>Смотреть вместе</button></div>
+    <p id="clipInfo" class="muted small"></p>
+    <div class="row center">
+      <button id="clipSave" class="btn">💾 Сохранить</button>
+      <button id="clipSend" class="btn primary">Отправить другу</button>
+      <button id="clipClose" class="btn">✕</button>
+    </div>
+  </div>
+</div>
+
+<!-- долгое нажатие на сообщение -->
+<div id="stickerPicker" class="stk-picker hidden">
+  <div id="stkTabs" class="stk-tabs"></div>
+  <div id="stkGrid" class="stk-grid"></div>
+  <div class="stk-foot">
+    <button type="button" id="stkAddHere" class="btn small-btn">＋ В этот набор</button>
+    <button type="button" id="stkAddNew" class="btn small-btn">＋ Новый набор</button>
+    <button type="button" id="stkClose" class="icon-btn" aria-label="Закрыть">✕</button>
+  </div>
+  <input id="stkFile" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+</div>
+
+<div id="msgActs" class="sheet-back hidden">
+  <div class="ma-box">
+    <div class="ma-preview muted small"></div>
+    <div class="ma-row"></div>
+    <div class="ma-list">
+      <button type="button" class="ma-btn" data-a="reply">↩ Ответить</button>
+      <button type="button" class="ma-btn" data-a="copy">⧉ Скопировать</button>
+      <button type="button" class="ma-btn" data-a="edit">✏ Изменить</button>
+      <button type="button" class="ma-btn danger" data-a="del">🗑 Удалить у обоих</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<audio id="remoteVoice" autoplay></audio>
+
+<script src="capacitor.js"></script>
+<script src="stun-lists.js"></script>
+<script src="bridge.js"></script>
+<script src="core.js"></script>
+<script src="vendor/mp4-muxer.js"></script>
+<script src="clip.js"></script>
+<script src="gif-shrink.js"></script>
+<script src="talking-avatar.js"></script>
+<script src="group.js"></script>
+<script src="group-bridge.js"></script>
+<script src="camera.js"></script>
+<script src="stickers.js"></script>
+<script src="transfer-list.js"></script>
+<script src="history-files.js"></script>
+<script src="ai-web.js"></script>
+<script src="webm-duration.js"></script>
+<script src="youtube.js"></script>
+<script src="screen-clock.js"></script>
+<script src="screen-pacer.js"></script>
+<script src="account-data.js"></script>
+<script src="account-data-browser.js"></script>
+<script src="account-engine.js"></script>
+<script src="account-sync.js"></script>
+<script src="account-native.js"></script>
+<script src="account-recovery.js"></script>
+<script src="account-boot.js"></script>
+<script src="watch-together.js"></script>
+<script src="media-placement.js"></script>
+<script src="app.js"></script>
+<script src="account-ui.js"></script>
+<script src="pilot.js"></script>
+</body>
+</html>

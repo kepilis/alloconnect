@@ -57,6 +57,69 @@ const settings = () => ({ ...DEFAULTS, ...store.get('settings', {}) });
 window.duo.uiScale(settings().uiScale||1);
 
 /* ---------- Темы оформления (стили — themes.css) ---------- */
+const dialogOpeners = new WeakMap();
+const focusableInDialog = 'button, input, select, textarea, summary, a[href], [tabindex]';
+
+function topDialog() {
+  let top = null;
+  let level = -Infinity;
+  for (const dialog of document.querySelectorAll('.modal, .sheet, .sheet-back')) {
+    if (!dialog.getClientRects().length || getComputedStyle(dialog).visibility === 'hidden') continue;
+    const z = Number(getComputedStyle(dialog).zIndex) || 0;
+    if (z >= level) { top = dialog; level = z; }
+  }
+  return top;
+}
+
+function focusOpenedDialog(dialog) {
+  if (!dialogOpeners.has(dialog)) dialogOpeners.set(dialog, document.activeElement);
+  dialog.querySelector('[data-dialog-title]').focus();
+}
+
+function restoreDialogFocus(dialog) {
+  const opener = dialogOpeners.get(dialog);
+  dialogOpeners.delete(dialog);
+  const top = topDialog();
+  if (opener?.getClientRects().length && (!top || top.contains(opener))) {
+    opener.focus({ preventScroll: true });
+  } else {
+    top?.querySelector('[data-dialog-title]')?.focus({ preventScroll: true });
+  }
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab' || event.defaultPrevented) return;
+  const dialog = topDialog();
+  if (!dialog?.matches('#settings, #callModal')) return;
+  const items = [...dialog.querySelectorAll(focusableInDialog)].filter(element =>
+    element.tabIndex >= 0 && !element.matches(':disabled') &&
+    element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+  const focused = document.activeElement;
+  const first = items[0];
+  const last = items.at(-1);
+  if (items.includes(focused) && focused !== (event.shiftKey ? first : last)) return;
+  event.preventDefault();
+  (event.shiftKey ? last : first)?.focus();
+});
+
+function moveThemeSelection(event) {
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  const buttons = [...event.currentTarget.querySelectorAll('.theme-card')];
+  const current = buttons.indexOf(event.target);
+  if (current < 0) return;
+  let next;
+  switch (event.key) {
+    case 'ArrowRight': case 'ArrowDown': next = (current + 1) % buttons.length; break;
+    case 'ArrowLeft': case 'ArrowUp': next = (current - 1 + buttons.length) % buttons.length; break;
+    case 'Home': next = 0; break;
+    case 'End': next = buttons.length - 1; break;
+    default: return;
+  }
+  event.preventDefault();
+  buttons[next].click();
+  buttons[next].focus();
+}
+
 const THEMES = [
   { id: '', name: 'Стандартная', sw: ['#111216', '#20222a', '#7c5cff', '#3ddc84'] },
   { id: 'neon', name: 'Неоновая ночь', sw: ['#07060f', '#161331', '#ff2bd6', '#00f0ff'] },
@@ -191,20 +254,40 @@ function bindChatSplit() {
 function applyTheme(id) {
   const t = THEMES.some((x) => x.id === id) ? id : '';
   if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
-  document.querySelectorAll('#themeGrid .theme-card').forEach((b) => b.classList.toggle('selected', b.dataset.id === t));
+  for (const button of document.querySelectorAll('#themeGrid .theme-card')) {
+    const selected = button.dataset.id === t;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-checked', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
 }
 function buildThemeGrid() {
   const g = $('themeGrid');
   if (!g || g.childElementCount) return;
+  g.addEventListener('keydown', moveThemeSelection);
   for (const t of THEMES) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'theme-card';
+    b.setAttribute('role', 'radio');
     b.dataset.id = t.id;
     const sw = document.createElement('span');
     sw.className = 'theme-sw';
-    sw.style.background = `linear-gradient(135deg, ${t.sw[0]} 0 40%, ${t.sw[1]} 40% 60%, ${t.sw[2]} 60% 80%, ${t.sw[3]} 80%)`;
+    sw.setAttribute('aria-hidden', 'true');
+    const [bg, panel, accent, trim] = t.sw;
+    const ink = /^(manga|notebook|linen|kiln|newspaper)$/.test(t.id) ? '#211d1b' : '#fff';
+    sw.style.setProperty('--sample-bg', bg);
+    sw.style.setProperty('--sample-panel', panel);
+    sw.style.setProperty('--sample-accent', accent);
+    sw.style.setProperty('--sample-trim', trim);
+    sw.style.setProperty('--sample-ink', ink);
+    for (const kind of ['person', 'person', 'mic', 'off', 'end']) {
+      const mark = document.createElement('span');
+      mark.className = 'pilot-sample-' + kind;
+      sw.append(mark);
+    }
     const n = document.createElement('span');
+    n.className = 'theme-name';
     n.textContent = t.name;
     b.append(sw, n);
     b.onclick = () => { applyTheme(t.id); store.set('settings', { ...settings(), theme: t.id }); L('settings', { theme: t.id || 'standard' }); };
@@ -952,6 +1035,7 @@ async function makeAnswer(text) {
     if (S.friendCall) {
       const fc = S.friendCall;
       const r = await window.duo.friendsSend(fc.id, callEnvelope(fc, { t: 'answer', code: $('answerOut').value }));
+      if (S.callSetup !== setup || S.pc !== pc || S.friendCall !== fc) return;
       if (!r.ok) { endFriendCall(`Не удалось ответить ${fc.nick}: ${r.error}`); return; }
     } else {
       $('guestAnswerBlock').classList.remove('hidden');
@@ -1446,8 +1530,9 @@ async function beginShare() {
     $('localScreen').srcObject = stream;
     $('localScreenWrap').classList.remove('hidden');
     $('btnShare').classList.add('on');
-    $('btnShare').querySelector('span').textContent = 'Остановить показ';
-    $('btnShare').title = 'Остановить показ';
+    $('btnShare').querySelector('span').textContent = 'Остановить демонстрацию';
+    $('btnShare').title = 'Остановить демонстрацию';
+    $('btnShare').setAttribute('aria-label', 'Остановить демонстрацию');
     layout();
     startSendStats();
     sound('stream');
@@ -1715,8 +1800,9 @@ function stopShare(silent) {
   $('localScreen').srcObject = null;
   $('localScreenWrap').classList.add('hidden');
   $('btnShare').classList.remove('on');
-  $('btnShare').querySelector('span').textContent = 'Показать экран';
-  $('btnShare').title = 'Показать экран';
+  $('btnShare').querySelector('span').textContent = 'Демонстрация экрана';
+  $('btnShare').title = 'Демонстрация экрана';
+  $('btnShare').setAttribute('aria-label', 'Демонстрация экрана');
   layout();
   S.localShareName = '';
   refreshClip();
@@ -1775,7 +1861,7 @@ function hideRemoteScreen() {
 function layout() {
   const remote = !$('remoteScreenWrap').classList.contains('hidden');
   const local = !!S.localScreen;
-  $('people').classList.toggle('hidden', remote || local);
+  $('people').classList.toggle('hidden', local && !remote);
   $('localScreenWrap').classList.toggle('solo', local && !remote);
 }
 
@@ -1829,12 +1915,21 @@ function setDeafened(v) {
 function updateMyControls() {
   if (typeof pushTrayState === 'function') setTimeout(pushTrayState, 0);
   const micOff = S.muted || S.deafened;
-  for (const [mute, deaf] of [['btnMute', 'btnDeafen'], ['gMute', 'gDeafen']]) {
-    $(mute).classList.toggle('off', micOff);
-    $(mute).querySelector('span').textContent = micOff ? 'Микрофон выкл' : 'Микрофон';
-    $(deaf).classList.toggle('off', S.deafened);
-    $(deaf).querySelector('span').textContent = S.deafened ? 'Звук выкл' : 'Звук';
-  }
+  const mic = $('btnMute');
+  mic.classList.toggle('off', micOff);
+  mic.setAttribute('aria-pressed', String(!micOff));
+  mic.title = (micOff ? 'Включить микрофон' : 'Выключить микрофон') + ' (Ctrl+Shift+M)';
+  const deafen = $('btnDeafen');
+  const deafenText = S.deafened ? 'Вернуть звук' : 'Замутить все';
+  deafen.classList.toggle('off', S.deafened);
+  deafen.setAttribute('aria-pressed', String(S.deafened));
+  deafen.querySelector('span').textContent = deafenText;
+  deafen.title = deafenText + ' (Ctrl+Shift+D)';
+  $('gMute').classList.toggle('off', micOff);
+  $('gMute').classList.toggle('mic-muted', micOff);
+  $('gMute').querySelector('span').textContent = micOff ? 'Микрофон выкл' : 'Микрофон';
+  $('gDeafen').classList.toggle('off', S.deafened);
+  $('gDeafen').querySelector('span').textContent = S.deafened ? 'Звук выкл' : 'Звук';
   $('meBadges').textContent = (S.deafened ? '🔇' : '') + (micOff ? '🎙̸' : '');
   if (micOff) $('meCard').classList.remove('speaking');
   if (G.active) grpRender();
@@ -2146,10 +2241,12 @@ function renderHistEntry(conv, e, into) {
     const ui = fileBubble(conv, who, meta, mine, { ts: e.ts, into, ...opt });
     if (e.file.stored) {
       ui.loading();
-      window.duo.histMediaRead(conv.id, e.file.stored).then((b) => {
-        const url = URL.createObjectURL(new Blob([b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)], { type: meta.mime }));
-        conv.blobs.push(url);
-        ui.done(url, { fromHistory: true });
+      const stored = e.file.stored;
+      window.duo.histMediaInfo(conv.id, stored).then(({ url }) => {
+        ui.done(url, {
+          fromHistory: true,
+          readBlob: async () => new Blob([await window.duo.histMediaRead(conv.id, stored)], { type: meta.mime }),
+        });
       }).catch(() => ui.gone());
     } else ui.gone();
   }
@@ -2619,13 +2716,14 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
       stat.firstChild.textContent = `${Math.min(100,Math.floor(100*done/Math.max(1,meta.size)))}% · ${fmtSize(done)} / ${fmtSize(meta.size)}`;
     },
     loading() { prog.remove(); stat.firstChild.textContent = 'загрузка…'; },
-    done(url) {
+    done(url, { fromHistory = false, readBlob = () => fetch(url).then((r) => r.blob()) } = {}) {
       if (m.classList.contains('deleted')) return;
       pauseMediaIn(view, true);
       prog.remove();
       stat.firstChild.textContent = fmtSize(meta.size);
       if (meta.kind === 'image') {
         const img = document.createElement('img');
+        if (fromHistory) img.loading = 'lazy';
         img.src = url;
         img.alt = meta.name;
         img.onload = () => {
@@ -2644,9 +2742,11 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
           add.textContent = '＋';
           add.onclick = async (e) => {
             e.stopPropagation();
-            const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
-            if (await window.duo.stickersAddBytes(bytes, meta.name.replace(/\.[^.]+$/, ''))) { add.textContent = '✓'; add.disabled = true; stkInvalidate?.(); toast('Стикер добавлен в набор «Полученные»'); }
-            else toast('Не получилось добавить стикер');
+            try {
+              const bytes = new Uint8Array(await (await readBlob()).arrayBuffer());
+              if (await window.duo.stickersAddBytes(bytes, meta.name.replace(/\.[^.]+$/, ''))) { add.textContent = '✓'; add.disabled = true; stkInvalidate?.(); toast('Стикер добавлен в набор «Полученные»'); return; }
+            } catch { /* вложение могло быть удалено */ }
+            toast('Не получилось добавить стикер');
           };
           view.appendChild(add);
         }
@@ -2654,7 +2754,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
         const el = document.createElement(meta.kind);
         el.src = url;
         el.controls = true;
-        el.preload = 'metadata';
+        el.preload = fromHistory ? 'none' : 'metadata';
         view.replaceChildren(el);
         stat.firstChild.textContent = `${meta.name} · ${fmtSize(meta.size)}`;
       }
@@ -2664,7 +2764,7 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
         add.textContent = '➕ В саундпад';
         add.onclick = async () => {
           add.disabled = true;
-          const blob = await fetch(url).then((r) => r.blob()).catch(() => null);
+          const blob = await readBlob().catch(() => null);
           const before = spList.length;
           if (blob) await spAddFiles([new File([blob], meta.name, { type: meta.mime })]);
           if (spList.length > before) add.textContent = 'Добавлено ✓';
@@ -3273,13 +3373,19 @@ function spBind() {
   $('btnChatFolder').onclick=()=>window.duo.histFolder();
   $('optSaveChatFiles').onchange=()=>window.duo.appSettingsSet({saveChatFiles:$('optSaveChatFiles').checked});
   $('btnSaveReplay').onclick=saveClip;
-  $('btnWatchReplay').onclick=saveClip;
   $('btnSoundpad').onclick = () => {
     const p = $('soundpad');
     p.classList.toggle('hidden');
     $('btnSoundpad').classList.toggle('on-pad', !p.classList.contains('hidden'));
     if (!p.classList.contains('hidden')) spLoadList();
   };
+  const callFooters = [...document.querySelectorAll('#call .controls, #group .controls')];
+  const soundpadPosition = new ResizeObserver(() => {
+    const activeFooter = callFooters.find(footer => footer.closest('.screen').classList.contains('active'));
+    const height = activeFooter?.getBoundingClientRect().height || 0;
+    $('soundpad').style.setProperty('--soundpad-bottom', Math.max(76, Math.ceil(height) + 12) + 'px');
+  });
+  for (const footer of callFooters) soundpadPosition.observe(footer);
   $('spClose').onclick = () => { $('soundpad').classList.add('hidden'); $('btnSoundpad').classList.remove('on-pad'); spSetManaging(false); };
   $('spAdd').onclick = () => $('spFile').click();
   $('spFile').onchange = (e) => { spAddFiles([...e.target.files]); e.target.value = ''; };
@@ -3377,7 +3483,9 @@ async function openSettings() {
   $('uiScale').value=String(o.uiScale||1);
   $('optAnimations').checked = o.animations !== false;
   $('optDownloadsAuto').checked = o.downloadsAuto !== false;
-  $('downloadsDuration').value = String(Number.isInteger(Number(o.downloadsDuration)) && Number(o.downloadsDuration) >= 0 && Number(o.downloadsDuration) <= 10 ? Number(o.downloadsDuration) : 3);
+  const downloadsDuration = Number(o.downloadsDuration ?? 3);
+  $('downloadsDuration').value = o.downloadsDuration === 'on-complete' ? 'on-complete'
+    : String(Number.isInteger(downloadsDuration) && downloadsDuration >= 0 && downloadsDuration <= 10 ? downloadsDuration : 3);
   $('optMicSystemCapture').checked = o.micSystemCapture;
   const updateMicFields = () => {
     for (const id of ['micSelect', 'optNoise', 'optEcho', 'optAgc']) $(id).disabled = $('optMicSystemCapture').checked;
@@ -3423,7 +3531,9 @@ async function openSettings() {
   fillCameras();
   renderHotkeys();
   $('clipSeconds').value = String(o.clipSeconds || 30);
-  $('clipSecondsVal').textContent = (o.clipSeconds || 30) + ' с';
+  const showClipSeconds = () => { $('clipSecondsVal').textContent = `${$('clipSeconds').value} с`; };
+  $('clipSeconds').oninput = showClipSeconds;
+  showClipSeconds();
   $('optPtt').checked = !!o.ptt;
   $('pttKey').textContent = o.pttVk ? 'Клавиша рации: ' + (o.pttName || ('VK' + o.pttVk)) : 'Клавиша рации: не задана';
   $('optActivity').checked = !!o.activity;
@@ -3441,6 +3551,7 @@ async function openSettings() {
   $('turnPass').value = o.turnPass;
   $('optRelay').checked = o.relay;
   $('settings').classList.remove('hidden');
+  focusOpenedDialog($('settings'));
 
   let meterStream = S.mic;
   if (!meterStream) {
@@ -3488,6 +3599,7 @@ function syncAppChecks() {
 
 function closeSettings() {
   $('settings').classList.add('hidden');
+  restoreDialogFocus($('settings'));
   if (!S.friendCall) stopRing();
   stopSettingsMeter?.(); stopSettingsMeter = null;
   settingsMicStream?.getTracks().forEach((t) => t.stop());
@@ -3498,6 +3610,7 @@ function closeSettings() {
 
 async function saveSettings() {
   const before = settings();
+  const downloadsDuration = $('downloadsDuration').value;
   const after = {
     ...before,
     micSystemCapture: $('optMicSystemCapture').checked,
@@ -3510,7 +3623,7 @@ async function saveSettings() {
     sounds: $('optSounds').checked,
     animations: $('optAnimations').checked,
     downloadsAuto: $('optDownloadsAuto').checked,
-    downloadsDuration: Number($('downloadsDuration').value),
+    downloadsDuration: downloadsDuration === 'on-complete' ? downloadsDuration : Number(downloadsDuration),
     ringVol: Number($('ringVol').value),
     ringMute: $('optRingMute').checked,
     noStun: $('optNoStun').checked,
@@ -3697,16 +3810,28 @@ function bind() {
     const v = Number(e.target.value);
     if (friendGain) friendGain.gain.value = v / 100;
     $('friendVolVal').textContent = v + '%';
+    e.target.setAttribute('aria-valuetext', v + '%');
     store.set('friendVol', v);
   };
-  const fv = store.get('friendVol', 100);
-  $('friendVol').value = fv;
-  $('friendVolVal').textContent = fv + '%';
+  const friendVolume = $('friendVol');
+  friendVolume.value = store.get('friendVol', 100);
+  $('friendVolVal').textContent = friendVolume.value + '%';
+  friendVolume.setAttribute('aria-valuetext', friendVolume.value + '%');
 
+  const screenVolume = $('screenVol');
+  const screenVolumeOverlay = $('screenVolOverlay');
+  const syncScreenVolume = (value) => {
+    screenVolume.value = value;
+    screenVolumeOverlay.value = value;
+    $('screenVolVal').textContent = screenVolume.value + '%';
+    screenVolume.setAttribute('aria-valuetext', screenVolume.value + '%');
+    screenVolumeOverlay.setAttribute('aria-valuetext', screenVolume.value + '%');
+  };
   const savedScreenVol = Number(store.get('screenVol', 100));
-  $('screenVol').value = Number.isFinite(savedScreenVol) ? Math.max(0, Math.min(100, savedScreenVol)) : 100;
-  $('screenVol').oninput = (e) => {
+  syncScreenVolume(Number.isFinite(savedScreenVol) ? Math.max(0, Math.min(100, savedScreenVol)) : 100);
+  screenVolume.oninput = screenVolumeOverlay.oninput = (e) => {
     const value = Number(e.target.value);
+    syncScreenVolume(value);
     $('remoteScreen').volume = value / 100;
     store.set('screenVol', value);
   };
@@ -3719,7 +3844,7 @@ function bind() {
     e.preventDefault();$('btnFull').click();
   });
   $('btnFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $('remoteScreenWrap').requestFullscreen()).catch(() => {});
-  document.addEventListener('fullscreenchange', () => { $('btnFull').textContent = document.fullscreenElement === $('remoteScreenWrap') ? '⛶ Свернуть' : '⛶ На весь экран'; });
+  document.addEventListener('fullscreenchange', () => { $('btnFull').textContent = document.fullscreenElement === $('remoteScreenWrap') ? '⛶ Выйти из полного экрана' : '⛶ На весь экран'; });
   // как в видеоплеере: в полноэкранном режиме прячем плашку и курсор через 2.5 с без движения
   let idleT = null;
   const wrap = $('remoteScreenWrap');
@@ -3897,7 +4022,7 @@ function bind() {
     };
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
+    if (e.key !== 'Escape' || topDialog() === $('callModal')) return;
     if (!$('clipModal').classList.contains('hidden')) { closeClipPreview(); return; }
     if (!$('settings').classList.contains('hidden')) closeSettings();
     $('picker').classList.add('hidden');
@@ -4297,9 +4422,11 @@ function showCallModal(dir, nick) {
   $('btnCallAccept').classList.toggle('hidden', dir !== 'in');
   $('btnCallDecline').classList.toggle('hidden', dir !== 'in');
   $('btnCallCancel').classList.toggle('hidden', dir === 'in');
+  focusOpenedDialog($('callModal'));
 }
 function hideCallModal() {
   $('callModal').classList.add('hidden');
+  if (dialogOpeners.has($('callModal'))) restoreDialogFocus($('callModal'));
   stopRing();
   if (S.friendCall?.timer) clearTimeout(S.friendCall.timer);
   if (S.friendCall?.setupTimer) clearTimeout(S.friendCall.setupTimer);
@@ -4712,8 +4839,9 @@ async function addPeerFriend() {
 /* ---------- Диагностика сети ---------- */
 const VERDICT = {
   checking: ['wait', 'Проверяю сеть…'],
-  'ok-confirmed': ['ok', 'Друг уже достучался до тебя напрямую — звонки работают в обе стороны'],
-  'tailscale-confirmed': ['ok', 'Звонки работают через Tailscale'],
+  'ok-confirmed': ['ok', 'Канал друзей прошёл проверку в обе стороны'],
+  'tailscale-confirmed': ['ok', 'Проба через Tailscale дошла до друга, ответ получен'],
+  'inbound-only': ['warn', 'Проба от друга получена. Ответ на твою пробу пока не получен'],
   'likely-ok': ['ok', 'Скорее всего, друзья смогут звонить тебе напрямую. Точно станет ясно, когда друг будет в сети'],
   'tailscale-only': ['warn', 'Напрямую до тебя не достучаться (серый IP), но есть Tailscale — через него работает'],
   cgnat: ['bad', 'У тебя серый IP (CGNAT): первым тебе не позвонить. Звонить другу ты сможешь, если у него с сетью всё в порядке. Иначе — Tailscale или коды'],
@@ -5761,16 +5889,13 @@ function layoutPlacer() {
   if (!placer) return;
   const r = videoRect();
   const wr = $('remoteScreenWrap').getBoundingClientRect();
-  let wpx = placer.w * r.w;
-  let hpx = wpx * placer.aspect;
-  if (hpx > 0.9 * r.h) { hpx = 0.9 * r.h; wpx = hpx / placer.aspect; placer.w = wpx / r.w; }
-  // картинка целиком на экране друга
-  const hx = wpx / 2 / r.w, hy = hpx / 2 / r.h;
-  placer.x = Math.max(hx, Math.min(1 - hx, placer.x));
-  placer.y = Math.max(hy, Math.min(1 - hy, placer.y));
+  if (!r.w || !r.h) return;
+  const { width: wpx, height: hpx, x, y } = mediaPlacement(r, placer, placer.aspect);
+  placer.x = x / r.w;
+  placer.y = y / r.h;
   const box = placer.el.querySelector('.placer-box');
-  box.style.left = (r.x - wr.left + placer.x * r.w - wpx / 2) + 'px';
-  box.style.top = (r.y - wr.top + placer.y * r.h - hpx / 2) + 'px';
+  box.style.left = (r.x - wr.left + x - wpx / 2) + 'px';
+  box.style.top = (r.y - wr.top + y - hpx / 2) + 'px';
   box.style.width = wpx + 'px';
   box.style.height = hpx + 'px';
   box.style.rotate = placer.r ? placer.r + 'deg' : '';
@@ -5788,7 +5913,16 @@ function bindPlacer(el) {
     e.preventDefault();
     e.stopPropagation();
     box.setPointerCapture(e.pointerId);
-    drag = { mode: e.target === handle ? 'size' : 'move', sx: e.clientX, sy: e.clientY, x: placer.x, y: placer.y };
+    drag = { mode: 'move', sx: e.clientX, sy: e.clientY, x: placer.x, y: placer.y };
+    if (e.target === handle) {
+      const r = videoRect();
+      const { width } = mediaPlacement(r, placer, placer.aspect);
+      const angle = placer.r * Math.PI / 180;
+      drag.mode = 'size';
+      drag.width = width;
+      drag.dx = Math.cos(angle) - placer.aspect * Math.sin(angle);
+      drag.dy = Math.sin(angle) + placer.aspect * Math.cos(angle);
+    }
   });
   box.addEventListener('pointermove', (e) => {
     if (!drag || !placer) return;
@@ -5797,13 +5931,16 @@ function bindPlacer(el) {
       placer.x = drag.x + (e.clientX - drag.sx) / r.w;
       placer.y = drag.y + (e.clientY - drag.sy) / r.h;
     } else {
-      // уголок: центр на месте, ширина — по расстоянию до курсора
-      const cx = r.x + placer.x * r.w;
-      placer.w = Math.max(0.05, Math.min(0.9, (2 * Math.abs(e.clientX - cx)) / r.w));
+      // Изменяем ширину вдоль диагонали повёрнутого элемента.
+      const delta = (e.clientX - drag.sx) * drag.dx + (e.clientY - drag.sy) * drag.dy;
+      const width = drag.width + 2 * delta / (drag.dx ** 2 + drag.dy ** 2);
+      placer.w = Math.max(0.05, Math.min(0.9, width / r.w));
     }
     layoutPlacer();
   });
-  box.addEventListener('pointerup', () => { drag = null; });
+  const endDrag = () => { drag = null; };
+  box.addEventListener('pointerup', endDrag);
+  box.addEventListener('pointercancel', endDrag);
   box.addEventListener('dblclick', (e) => { e.stopPropagation(); commitPlacement(); });
   el.addEventListener('wheel', (e) => {
     if (e.target.closest('.placer-bar')) return;
@@ -5888,10 +6025,8 @@ function cancelPlacement() {
 function placeEcho(box, pl, aspect) {
   const r = videoRect();
   const wr = $('remoteScreenWrap').getBoundingClientRect();
-  let wpx = pl.w * r.w;
-  let hpx = wpx * aspect;
-  if (hpx > 0.9 * r.h) { hpx = 0.9 * r.h; wpx = hpx / aspect; }
-  Object.assign(box.style, { left: (r.x - wr.left + pl.x * r.w - wpx / 2) + 'px', top: (r.y - wr.top + pl.y * r.h - hpx / 2) + 'px', width: wpx + 'px', height: hpx + 'px', rotate: pl.r ? pl.r + 'deg' : '' });
+  const { width: wpx, height: hpx, x, y } = mediaPlacement(r, pl, aspect);
+  Object.assign(box.style, { left: (r.x - wr.left + x - wpx / 2) + 'px', top: (r.y - wr.top + y - hpx / 2) + 'px', width: wpx + 'px', height: hpx + 'px', rotate: pl.r ? pl.r + 'deg' : '' });
 }
 
 function commitPlacement() {
@@ -6354,7 +6489,10 @@ function bindLiveTools() {
   $('dmFriends').onclick = () => { closeDm(); $('friendsDrawer').classList.remove('hidden'); renderFriendsDrawer(); };
   $('dmReturnCall').onclick = closeDm;
   document.addEventListener('mousedown', (e) => { const d = $('friendsDrawer'); if (!d.classList.contains('hidden') && !d.contains(e.target) && !e.target.closest?.('.fr-btn')) d.classList.add('hidden'); });
-  $('btnScreenMin').onclick = () => winSetMin('screen', true);
+  $('btnScreenMin').onclick = () => {
+    if (WIN.pops.screen) winUnpop(WIN, 'screen');
+    winSetMin('screen', true);
+  };
   $('btnWinReset').onclick = () => { winReset(); toast('Окна расставлены как было'); };
   // в полноэкранном режиме видно только содержимое полноэкранного элемента — саундпад и подсказки переносим туда
   document.addEventListener('fullscreenchange', () => {
@@ -6628,6 +6766,10 @@ async function saveClip() {
   const name = `повтор-${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.mp4`;
   const file = new File([blob], name, { type: 'video/mp4' });
   L('clip', { saved: true, seconds: secs, sizeKB: Math.round(blob.size / 1024) });
+  const screen = $('remoteScreenWrap');
+  const screenDoc = screen.ownerDocument;
+  if (screenDoc.fullscreenElement === screen) await screenDoc.exitFullscreen().catch(() => {});
+  if (screenDoc !== document) window.focus();
   showClipPreview(file, secs, blob.frameTimes);
 }
 

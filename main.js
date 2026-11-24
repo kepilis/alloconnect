@@ -5,6 +5,7 @@ const {
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { pathToFileURL } = require('node:url');
 const { spawn, execFile } = require('child_process');
 const { FriendsNet, ipKind } = require('./net-friends.js');
 const { Upnp } = require('./upnp.js');
@@ -622,9 +623,10 @@ let stunIp = null;
 function sendWin(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
 
 function computeVerdict() {
-  const inb = net.inboundConfirmed;
-  if (inb.some((k) => k === 'upnp' || k === 'public' || k === 'stun')) net.verdict = 'ok-confirmed';
-  else if (inb.includes('tailscale')) net.verdict = 'tailscale-confirmed';
+  const { inboundConfirmed, outboundConfirmed } = net;
+  if (outboundConfirmed.includes('tailscale')) net.verdict = 'tailscale-confirmed';
+  else if (outboundConfirmed.length) net.verdict = 'ok-confirmed';
+  else if (inboundConfirmed.length) net.verdict = 'inbound-only';
   else if (net.ifacePublic) net.verdict = 'likely-ok';
   else if (net.upnp === 'ok' && net.externalKind === 'public' && net.stun !== 'mismatch') net.verdict = 'likely-ok';
   else if (net.stunMapped && net.natType === 'cone') net.verdict = 'punch-likely';
@@ -1280,9 +1282,22 @@ ipcMain.handle('hist-media-save', (_e, id, bytes, name) => {
   fs.writeFileSync(path.join(histDir(id), rel), buf);
   return rel;
 });
-ipcMain.handle('hist-media-read', (_e, id, rel) => {
+function histMediaPath(id, rel) {
   if (!/^media\/[a-f0-9]{16}\.[a-z0-9]{1,5}$/.test(String(rel))) throw new Error('bad path');
-  return fs.readFileSync(path.join(histDir(id), rel));
+  return path.join(histDir(id), rel);
+}
+ipcMain.handle('hist-media-read', (_e, id, rel) => fs.promises.readFile(histMediaPath(id, rel)));
+ipcMain.handle('hist-media-info', async (_e, id, rel, withHash) => {
+  const file = histMediaPath(id, rel);
+  const stat = await fs.promises.stat(file);
+  if (!stat.isFile()) throw new Error('not a file');
+  const info = { url: pathToFileURL(file).href, size: stat.size };
+  if (withHash) {
+    const hash = require('node:crypto').createHash('sha256');
+    for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+    info.hash = hash.digest('hex');
+  }
+  return info;
 });
 ipcMain.handle('hist-clear', (_e, id) => {
   const dir = id ? histDir(id) : path.join(app.getPath('userData'), 'history');

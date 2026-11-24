@@ -1,7 +1,7 @@
 {
   "name": "alloconnect",
   "productName": "alloconnect",
-  "version": "1.22.12",
+  "version": "1.22.27",
   "description": "Звонки, демонстрация экрана и чат с друзьями напрямую, без серверов",
   "main": "main.js",
   "author": "alloconnect",
@@ -83,7 +83,10 @@
       "vendor/openpgp/openpgp.min.cjs",
       "vendor/openpgp/LICENSE",
       "vendor/openpgp/NOTICE.txt",
-      "package-bytes.cjs"
+      "package-bytes.cjs",
+      "media-placement.js",
+      "pilot.css",
+      "pilot.js"
     ],
     "win": {
       "target": "zip",

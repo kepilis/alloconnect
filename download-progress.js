@@ -23,8 +23,20 @@
   window.addEventListener('resize',placePanel);
   placeToggle();
   const autoShow=()=>{try{return JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsAuto!==false}catch{return true}};
-  const duration=()=>{try{const raw=JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsDuration,n=raw==null?3:Number(raw);return Number.isInteger(n)&&n>=0&&n<=10?n:3}catch{return 3}};
-  const peek=()=>{if(manual||!autoShow())return;panel.classList.remove('hidden');placePanel();clearTimeout(hideTimer);const seconds=duration();if(seconds)hideTimer=setTimeout(()=>panel.classList.add('hidden'),seconds*1000)};
+  const duration=()=>{
+    try {
+      const raw=JSON.parse(localStorage.getItem('duo.settings')||'{}').downloadsDuration;
+      if(raw==='on-complete')return raw;
+      const seconds=Number(raw??3);
+      return Number.isInteger(seconds)&&seconds>=0&&seconds<=10?seconds:3;
+    } catch { return 3 }
+  };
+  const peek=()=>{
+    if(manual||!autoShow())return;
+    panel.classList.remove('hidden');placePanel();clearTimeout(hideTimer);
+    const seconds=duration();
+    if(typeof seconds==='number'&&seconds>0)hideTimer=setTimeout(()=>panel.classList.add('hidden'),seconds*1000);
+  };
   const rows=new Map(),terminal=new Set(['ready','error','cancelled']);
   const mb=n=>(Math.max(0,Number(n)||0)/1048576).toFixed(1)+' МБ';
   const labels={starting:'Подготовка…',checking:'Проверка установленных файлов…',download:'Скачивание…',verify:'Проверка целостности…',install:'Установка…',loading:'Запуск нейросети…',processing:'Обработка…',retry:'Повторная попытка…',ready:'Готово — можно использовать',error:'Загрузка не завершена',cancelled:'Загрузка отменена'};
@@ -39,9 +51,16 @@
     else if(row.stage==='download'&&total>0){const pct=Math.min(100,Math.floor(got/total*100));row.bar.value=pct;row.amount.textContent=pct+'% · '+mb(got)+' / '+mb(total)}
     else {row.bar.removeAttribute('value');row.amount.textContent=row.stage==='download'&&!total?mb(got)+' · общий объём неизвестен':total>0?mb(got)+' / '+mb(total):''}
     if(row.stage==='error'||row.stage==='cancelled'){row.bar.hidden=true;row.status.setAttribute('role','alert')}else{row.bar.hidden=false;row.status.removeAttribute('role')}
-    const active=[...rows.values()].filter(r=>!terminal.has(r.stage)).length;
+    row.background=!!d.background;
+    const activeRows=[...rows.values()].filter(r=>!terminal.has(r.stage));
+    const active=activeRows.length;
     toggle.textContent=active?'⬇ Загрузки: '+active:'⬇ Загрузки';toggle.classList.remove('hidden');toggle.classList.toggle('busy',!!active);
     if(!d.background&&((isNew||wasTerminal)&&!terminal.has(row.stage)||row.stage==='error'))peek();
+    if(row.stage==='ready'&&!isNew&&!wasTerminal&&!row.background&&!manual
+      &&duration()==='on-complete'&&!activeRows.some(r=>!r.background)){
+      clearTimeout(hideTimer);
+      panel.classList.add('hidden');
+    }
   }
   toggle.onclick=()=>{clearTimeout(hideTimer);manual=panel.classList.contains('hidden');panel.classList.toggle('hidden');placePanel()};document.getElementById('downloadsHide').onclick=()=>{clearTimeout(hideTimer);manual=false;panel.classList.add('hidden')};
   document.getElementById('downloadsClear').onclick=()=>{for(const [id,row] of rows)if(terminal.has(row.stage)){row.el.remove();rows.delete(id)}if(!rows.size){panel.classList.add('hidden');toggle.classList.add('hidden');manual=false}};

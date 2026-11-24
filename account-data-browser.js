@@ -4,10 +4,11 @@
  const read=(k,d)=>{const v=localStorage.getItem(prefix+k);return v===null?d:(JSON.parse(v)??d)};
  const excluded=new Set(['turnPass','turnUser','turnUrl','relayUrl','stunCustom','mic','out','cam','camera','speaker','micId','camId','speakerId']);
  let opening,hydrating,phoneHistory={},phoneSavedSnapshot={},phoneRevision=0,phoneSavedRevision=-1,writing=null,ready=false,busy=false,assetError='',waiting=null,lastRequest=0,pending=0,call=null;
- const mediaCache=new Map();
+ let mediaIndex=new Map();
  function db(){return opening||=new Promise((resolve,reject)=>{const r=indexedDB.open('account-lab-assets',1);r.onupgradeneeded=()=>{r.result.createObjectStore('assets');r.result.createObjectStore('chunks')};r.onsuccess=()=>resolve(r.result);r.onerror=()=>{opening=null;reject(r.error)}})}
  async function storage(table,mode,fn){const d=await db();return new Promise((resolve,reject)=>{const tx=d.transaction(table,mode);let r;try{r=fn(tx.objectStore(table))}catch(e){tx.abort();reject(e);return}tx.oncomplete=()=>resolve(r?.result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||Error('Не удалось сохранить вложение'))})}
  const get=async hash=>{if(desktop)return storage('assets','readonly',s=>s.get(hash));const info=await alo.accountLabAssetInfo({hash});if(!info.ok)throw Error(info.error||'Не удалось прочитать вложение');if(!info.exists)return undefined;const response=await fetch('/_alo/account-assets/'+hash);if(!response.ok)throw Error('Не удалось прочитать вложение');return new Blob([await response.arrayBuffer()],{type:info.mime})};
+ const hasDesktopAsset=async hash=>(await storage('assets','readonly',s=>s.getKey(hash)))!==undefined;
  const put=async(hash,blob)=>{if(desktop)return storage('assets','readwrite',s=>s.put(blob,hash));for(let offset=0;offset<Math.max(blob.size,1);offset+=49152){const bytes=new Uint8Array(await blob.slice(offset,offset+49152).arrayBuffer());let text='';for(const b of bytes)text+=String.fromCharCode(b);const r=await alo.accountLabAssetWrite({hash,offset,size:blob.size,b64:btoa(text)});if(!r.ok)throw Error(r.error||'Не удалось сохранить вложение')}return true};
  const lab=()=>window.accountLab;
  const appKeys=['tray','closeToTray','minToTray','startHidden','bossKey','notify','ownNotify','saveChatFiles'];
@@ -35,15 +36,39 @@
 
  function setHistory(id,rows){phoneHistory[id]=rows;phoneRevision++;flushPhone().catch(e=>{assetError=e.message;lab()?.engine.fail(e)});return true}
 
- async function source(id,e,dry=false){if(e.type!=='file')return e;const f=e.file?{...e.file}:{name:e.name||'файл',size:0,mime:'application/octet-stream',kind:'file',p:'chat',...(e.st===1?{st:1}:{})};let saved=null,cacheKey;
-  if(desktop&&f.stored){cacheKey=id+'|'+f.stored;saved=mediaCache.get(cacheKey);if(!saved){try{saved={blob:new Blob([await duo.histMediaRead(id,f.stored)],{type:f.mime})}}catch{}}}
-  else if(!desktop){const raw=await historyFiles.get(id,e.mid);if(raw){saved={blob:raw.blob};Object.assign(f,raw.meta);delete f.fid}}
-  if(saved?.blob&&dry){f.asset='0'.repeat(64);f.size=saved.blob.size;}else if(saved?.blob){if(!saved.hash)saved.hash=await hashBlob(saved.blob);f.asset=saved.hash;f.size=saved.blob.size;if(!await get(f.asset))await put(f.asset,saved.blob);if(cacheKey)mediaCache.set(cacheKey,saved)}
+ async function source(id,e,dry,nextMedia){
+  if(e.type!=='file')return e;
+  const f=e.file?{...e.file}:{name:e.name||'файл',size:0,mime:'application/octet-stream',kind:'file',p:'chat',...(e.st===1?{st:1}:{})};
+  if(desktop&&f.stored){
+   const key=id+'|'+f.stored;
+   const cached=nextMedia.get(key)||mediaIndex.get(key);
+   let info=cached||await duo.histMediaInfo(id,f.stored,!dry).catch(()=>null);
+   if(info){
+    if(!dry&&!cached&&!await hasDesktopAsset(info.hash)){
+     const bytes=await duo.histMediaRead(id,f.stored).catch(()=>null);
+     if(bytes)await put(info.hash,new Blob([bytes],{type:f.mime}));
+     else info=null;
+    }
+   }
+   if(info){
+    if(!dry)nextMedia.set(key,{hash:info.hash,size:info.size});
+    f.asset=dry?'0'.repeat(64):info.hash;
+    f.size=info.size;
+   }
+  }else if(!desktop){
+   const raw=await historyFiles.get(id,e.mid);
+   if(raw){
+    Object.assign(f,raw.meta);delete f.fid;
+    f.asset=dry?'0'.repeat(64):await hashBlob(raw.blob);
+    f.size=raw.blob.size;
+    if(!dry&&!await get(f.asset))await put(f.asset,raw.blob);
+   }
+  }
   delete f.stored;return {...e,file:f,name:undefined,st:e.st===1?undefined:e.st};
  }
- async function snapshot(dry=false){if(!dry){await hydrate();if(!desktop)await flushPhone()}const raw=desktop?await duo.accountLabHistoryRead():dry?await alo.accountLabHistoryRead():{ok:true,history:phoneHistory};if(dry&&!desktop){raw.history=copy(raw.history||{});for(const key of Object.keys(localStorage))if(key.startsWith(prefix+'hist.')){const id=key.slice((prefix+'hist.').length);if(!raw.history[id])raw.history[id]=read('hist.'+id,[])}}if(!raw.ok)throw Error(raw.error||'Не удалось прочитать историю');const history={};for(const [id,rows] of Object.entries(raw.history||{})){if(lab()?.ownDeviceIds().includes(id))continue;history[id]=[];for(const rawEntry of rows){const e=copy(rawEntry);if(!['text','file','op','status'].includes(e.type))continue;if(e.type==='status'){history[id].push({type:'status',ref:e.ref,st:e.st});continue}if(typeof e.st==='string'){history[id].push({type:'status',ref:e.mid,st:e.st});delete e.st;}const normalized=await source(id,e,dry);if((e.type==='text'||e.type==='file')&&!normalized.mid)normalized.mid='legacy-'+(await lab().api.hash(stable(normalized))).slice(0,24);history[id].push(AccountData.snapshot({history:{[id]:[normalized]}}).history[id][0])}history[id]=[...new Map(history[id].map(e=>[AccountData.key(e),e])).values()]}
+ async function snapshot(dry=false){if(!dry){await hydrate();if(!desktop)await flushPhone()}const raw=desktop?await duo.accountLabHistoryRead():dry?await alo.accountLabHistoryRead():{ok:true,history:phoneHistory};if(dry&&!desktop){raw.history=copy(raw.history||{});for(const key of Object.keys(localStorage))if(key.startsWith(prefix+'hist.')){const id=key.slice((prefix+'hist.').length);if(!raw.history[id])raw.history[id]=read('hist.'+id,[])}}if(!raw.ok)throw Error(raw.error||'Не удалось прочитать историю');const history={},nextMedia=new Map();for(const [id,rows] of Object.entries(raw.history||{})){if(lab()?.ownDeviceIds().includes(id))continue;history[id]=[];for(const rawEntry of rows){const e=copy(rawEntry);if(!['text','file','op','status'].includes(e.type))continue;if(e.type==='status'){history[id].push({type:'status',ref:e.ref,st:e.st});continue}if(typeof e.st==='string'){history[id].push({type:'status',ref:e.mid,st:e.st});delete e.st;}const normalized=await source(id,e,dry,nextMedia);if((e.type==='text'||e.type==='file')&&!normalized.mid)normalized.mid='legacy-'+(await lab().api.hash(stable(normalized))).slice(0,24);history[id].push(AccountData.snapshot({history:{[id]:[normalized]}}).history[id][0])}history[id]=[...new Map(history[id].map(e=>[AccountData.key(e),e])).values()]}
   const settings=copy(lab()?.engine.account?.data?.settings||{desktop:{},phone:{}});settings[kind]={};for(const [k,v] of Object.entries(read('settings',{})))if(!excluded.has(k)&&!/(pass|token|secret|deviceId)/i.test(k)&&['string','number','boolean'].includes(typeof v))settings[kind][k]=v;
-  Object.assign(settings[kind],await nativeSettings());return {history,calls:read('accountLab.calls',[]),settings};
+  Object.assign(settings[kind],await nativeSettings());if(desktop&&!dry)mediaIndex=nextMedia;return {history,calls:read('accountLab.calls',[]),settings};
  }
  async function refresh(ids){if(typeof convs==='undefined')return;for(const id of ids){const c=convs.get(id);if(!c)continue;if(desktop)clearConvMedia(c);else{c.box.replaceChildren();c.msgs?.clear()}c.loaded=false;await loadHistory(c);scrollEnd(c)} }
  async function apply(data,restore=false){await hydrate();const desired=AccountData.snapshot(data),before=await snapshot(),old=lab()?.engine.account?.data||{history:{}};const changed=[];
@@ -65,7 +90,69 @@
   if(m.kind!=='part'||!waiting||waiting.hash!==m.hash||waiting.offset!==m.offset||m.size!==f.size||typeof m.b64!=='string'||m.b64.length>65536||!/^[A-Za-z0-9+/]*={0,2}$/.test(m.b64))return;
   const bytes=Uint8Array.from(atob(m.b64),c=>c.charCodeAt(0));if(bytes.length!==Math.min(49152,f.size-m.offset))return;await storage('chunks','readwrite',s=>s.put(new Blob([bytes]),m.hash+':'+m.offset));waiting=null;lastRequest=0;await tick();
  }catch(e){assetError=e.message;lab().sync.updateStatus()}}
- async function tick(){if(!desktop)return;if(lab()?.restoring||busy||!lab()?.engine.account||!lab()?.sync.peer)return;busy=true;try{pending=0;for(const [hash,f] of files()){const present=await get(hash);if(present){await installFile(hash,present);continue}pending++;let missing=-1;const chunks=[];for(let offset=0;offset<f.size;offset+=49152){const part=await storage('chunks','readonly',s=>s.get(hash+':'+offset));if(!part){missing=offset;break}chunks.push(part)}if(missing<0){const blob=new Blob(chunks,{type:f.mime});if(await hashBlob(blob)!==hash){for(let o=0;o<f.size;o+=49152)await storage('chunks','readwrite',s=>s.delete(hash+':'+o));throw Error('Контрольная сумма вложения не совпала')}await put(hash,blob);for(let o=0;o<f.size;o+=49152)await storage('chunks','readwrite',s=>s.delete(hash+':'+o));await installFile(hash,blob);pending--;continue}if(Date.now()-lastRequest>=3000||!waiting){waiting={hash,offset:missing};lastRequest=Date.now();await send({kind:'get',hash,offset:missing})}break}assetError='';lab().sync.updateStatus()}catch(e){assetError=e.message;lab().sync.updateStatus()}finally{busy=false}}
+ async function missingNativeAssets(){
+  const raw=await duo.accountLabHistoryRead();
+  if(!raw.ok)throw Error(raw.error||'Не удалось прочитать историю');
+  const missing=new Set();
+  for(const [id,rows] of Object.entries(lab().engine.account?.data?.history||{})){
+   const local=new Map();
+   for(const e of raw.history[id]||[]){if(!local.has(e.mid))local.set(e.mid,e)}
+   for(const e of rows){
+    const entry=local.get(e.mid);
+    if(e.type==='file'&&e.file?.asset&&entry&&!entry.file?.stored)missing.add(e.file.asset);
+   }
+  }
+  return missing;
+ }
+ async function tick(){
+  if(!desktop||lab()?.restoring||busy||!lab()?.engine.account||!lab()?.sync.peer)return;
+  busy=true;
+  try{
+   pending=0;
+   const assets=files();
+   const missingNative=assets.size?await missingNativeAssets():new Set();
+   for(const [hash,f] of assets){
+    if(await hasDesktopAsset(hash)){
+     if(missingNative.has(hash)){
+      const blob=await get(hash);
+      if(blob)await installFile(hash,blob);
+     }
+     continue;
+    }
+    pending++;
+    let missing=-1;
+    const chunks=[];
+    for(let offset=0;offset<f.size;offset+=49152){
+     const part=await storage('chunks','readonly',s=>s.get(hash+':'+offset));
+     if(!part){missing=offset;break}
+     chunks.push(part);
+    }
+    if(missing<0){
+     const blob=new Blob(chunks,{type:f.mime});
+     if(await hashBlob(blob)!==hash){
+      for(let o=0;o<f.size;o+=49152)await storage('chunks','readwrite',s=>s.delete(hash+':'+o));
+      throw Error('Контрольная сумма вложения не совпала');
+     }
+     await put(hash,blob);
+     for(let o=0;o<f.size;o+=49152)await storage('chunks','readwrite',s=>s.delete(hash+':'+o));
+     await installFile(hash,blob);
+     pending--;
+     continue;
+    }
+    if(Date.now()-lastRequest>=3000||!waiting){
+     waiting={hash,offset:missing};
+     lastRequest=Date.now();
+     await send({kind:'get',hash,offset:missing});
+    }
+    break;
+   }
+   assetError='';
+   lab().sync.updateStatus();
+  }catch(e){
+   assetError=e.message;
+   lab().sync.updateStatus();
+  }finally{busy=false}
+ }
  async function installFile(hash,blob){const data=lab().engine.account.data;for(const [id,rows] of Object.entries(data.history||{}))for(const e of rows)if(e.type==='file'&&e.file?.asset===hash){if(desktop){const raw=await duo.accountLabHistoryRead(),list=raw.history[id]||[],native=list.find(x=>x.mid===e.mid);if(!native||native.file?.stored)continue;if(native&&!native.file?.stored){native.file={...e.file,stored:await duo.histMediaSave(id,new Uint8Array(await blob.arrayBuffer()),e.file.name)};const r=await duo.accountLabHistoryWrite(id,list);if(!r.ok)throw Error('Не удалось сохранить файл')}}else{const native=await historyFiles.get(id,e.mid);if(native?.meta?.asset===hash&&native.blob?.size===blob.size)continue;await historyFiles.restore(id,e.mid,e.file,blob)}await refresh([id])}}
  function observeCall(){if(typeof S==='undefined'||!lab()?.engine.account)return;const attempt=S.friendCall,active=!!S.connected;
   if((attempt||active)&&!call){call={type:'call',mid:attempt?.cid||lab().api.random(),ts:Date.now(),peer:attempt?.id||S.callConv?.id||null,nick:attempt?.nick||S.friendNick||'Звонок',direction:attempt?.dir||'manual',device:lab().platform,outcome:active?'connected':'pending'};saveCall(call)}

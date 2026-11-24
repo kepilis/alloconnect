@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.android-signing/
 *.pem
 !build/update-public.pem
 *.log

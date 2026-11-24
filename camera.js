@@ -230,7 +230,13 @@ function camRender() {
   $('camFriendName').textContent = CAM.peerOn ? (S.friendNick || 'Друг') : 'Ты';
   const fv = $('camFriend');
   if (CAM.peerOn) fv.play?.().catch(() => {});
-  for (const b of [$('btnCam'), $('gCam')]) if (b) { b.classList.toggle('on', CAM.on); b.querySelector('span').textContent = CAM.on ? 'Камера вкл' : 'Камера'; }
+  const cam = $('btnCam');
+  cam.classList.toggle('on', CAM.on);
+  cam.setAttribute('aria-pressed', String(CAM.on));
+  cam.title = CAM.on ? 'Выключить камеру' : 'Включить камеру';
+  const groupCam = $('gCam');
+  groupCam.classList.toggle('on', CAM.on);
+  groupCam.querySelector('span').textContent = CAM.on ? 'Камера вкл' : 'Камера';
   window.winLayoutChanged?.();
 }
 

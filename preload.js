@@ -1,5 +1,31 @@
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
+async function logRendererMemory() {
+  try {
+    const memory = await process.getProcessMemoryInfo();
+    const heap = process.getHeapStatistics();
+    const blink = process.getBlinkMemoryInfo();
+    const { images } = webFrame.getResourceUsage();
+    ipcRenderer.send('log', 'renderer-memory', {
+      pid: process.pid,
+      privateKiB: memory.private,
+      residentKiB: memory.residentSet,
+      jsUsedKiB: heap.usedHeapSize,
+      jsAllocatedKiB: heap.totalHeapSize,
+      blinkUsedKiB: blink.allocated,
+      blinkAllocatedKiB: blink.total,
+      imageCacheBytes: images.size,
+      imageCacheCount: images.count,
+    });
+  } catch {
+    ipcRenderer.send('log', 'renderer-memory', { pid: process.pid, unavailable: true });
+    return;
+  }
+  setTimeout(logRendererMemory, 30000);
+}
+
+if (process.isMainFrame) setTimeout(logRendererMemory, 2500);
+
 contextBridge.exposeInMainWorld('duo', {
   uiScale: n => webFrame.setZoomFactor([1,1.1,1.25].includes(Number(n))?Number(n):1),
   getSources: () => ipcRenderer.invoke('get-sources'),
@@ -124,6 +150,7 @@ contextBridge.exposeInMainWorld('duo', {
   histAppend: (id, e) => ipcRenderer.invoke('hist-append', id, e),
   histMediaSave: (id, bytes, name) => ipcRenderer.invoke('hist-media-save', id, bytes, name),
   histMediaRead: (id, rel) => ipcRenderer.invoke('hist-media-read', id, rel),
+  histMediaInfo: (id, rel, withHash = false) => ipcRenderer.invoke('hist-media-info', id, rel, withHash),
   histClear: (id) => ipcRenderer.invoke('hist-clear', id),
   // аватарки
   avatarMine: () => ipcRenderer.invoke('avatar-mine'),

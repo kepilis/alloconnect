@@ -91,10 +91,7 @@ function showImage(bytes, mime, nick, pl) {
     im.onload = () => {
       const W = innerWidth, H = innerHeight;
       const aspect = im.naturalHeight / Math.max(1, im.naturalWidth);
-      let w = pl.w * W, h = w * aspect;
-      if (h > 0.9 * H) { h = 0.9 * H; w = h / aspect; }
-      const x = Math.max(w / 2, Math.min(W - w / 2, pl.x * W));
-      const y = Math.max(h / 2, Math.min(H - h / 2, pl.y * H));
+      const { width: w, height: h, x, y } = mediaPlacement({ w: W, h: H }, pl, aspect);
       Object.assign(im.style, { width: w + 'px', height: h + 'px', maxWidth: 'none', maxHeight: 'none' });
       Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', visibility: 'visible', rotate: pl.r ? pl.r + 'deg' : '' });
     };
@@ -139,10 +136,7 @@ function showVideo(bytes, mime, nick, pl, vol, sink, fid=null) {
     const W = innerWidth, H = innerHeight;
     const p = pl || { x: 0.5, y: 0.3, w: 0.35 };
     const aspect = /^audio\//.test(mime) ? 0.2 : v.videoHeight / Math.max(1, v.videoWidth);
-    let w = p.w * W, h = w * aspect;
-    if (h > 0.9 * H) { h = 0.9 * H; w = h / aspect; }
-    const x = Math.max(w / 2, Math.min(W - w / 2, p.x * W));
-    const y = Math.max(h / 2, Math.min(H - h / 2, p.y * H));
+    const { width: w, height: h, x, y } = mediaPlacement({ w: W, h: H }, p, aspect);
     Object.assign(box.style, { left: (x - w / 2) + 'px', top: (y - h / 2) + 'px', width: w + 'px', height: h + 'px', visibility: 'visible', rotate: p.r ? p.r + 'deg' : '' });
   };
   v.ontimeupdate = () => { if (v.currentTime > 6 * 60 * 60) kill(); };

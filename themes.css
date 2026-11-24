@@ -435,3 +435,192 @@ html[data-theme="newspaper"] {
 [data-theme="kiln"] :is(.btn.primary,.ctl.share) { background:#80422c; color:white; border-radius:999px; }
 [data-theme="kiln"] .msg.me .bubble { background:#c9ded5; color:#223e37; border:1px solid #7b9e91; }
 [data-theme="kiln"] :is(.avatar,.favatar,.call-avatar) { background-color:#d4e1d7; color:#274b46; border:3px double #377576; }
+
+/* The sample uses the theme's palette, surface and control shapes. */
+.theme-card .theme-sw {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  height: 54px;
+  min-height: 54px;
+  padding: 5px 8px;
+  background: var(--sample-bg);
+  color: var(--sample-ink);
+  border: 1px solid color-mix(in srgb, var(--sample-ink) 35%, var(--sample-bg));
+  font: 700 10px/1 system-ui, sans-serif;
+}
+.theme-sw::before { content: "AlloConnect"; }
+.theme-sw::after {
+  content: "";
+  height: 8px;
+  width: 45%;
+  background: var(--sample-accent);
+  border-radius: var(--sample-radius, 4px);
+}
+.theme-sample-field {
+  height: 9px;
+  background: var(--sample-panel);
+  border: 1px solid color-mix(in srgb, var(--sample-ink) 30%, var(--sample-panel));
+  border-radius: var(--sample-radius, 4px);
+}
+.theme-name {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  font: 500 13px/1.25 system-ui, sans-serif;
+}
+.theme-name::after { content: "✓"; visibility: hidden; font-weight: 700; }
+.theme-card.selected .theme-name::after { visibility: visible; }
+.theme-card:is([data-id="terminal"], [data-id="blueprint"], [data-id="reel"]) .theme-sw { font-family: JBMono, monospace; }
+.theme-card[data-id="pixel"] .theme-sw { font: 8px/1 PressStart, monospace; }
+.theme-card[data-id="notebook"] .theme-sw { font: 700 14px/1 Caveat, cursive; }
+.theme-card:is([data-id="vitrail"], [data-id="kiln"], [data-id="newspaper"]) .theme-sw { font-family: Georgia, serif; }
+.theme-card:is([data-id="pixel"], [data-id="terminal"], [data-id="manga"], [data-id="retro98"], [data-id="blueprint"], [data-id="newspaper"]) .theme-sw {
+  --sample-radius: 0px;
+  border-radius: 0;
+}
+.theme-card[data-id="glass"] .theme-sw { background: linear-gradient(135deg, var(--sample-bg), var(--sample-panel)); }
+.theme-card[data-id="retro98"] .theme-sample-field { border: 2px inset var(--sample-panel); }
+.theme-card[data-id="reel"] .theme-sw { border-top: 3px dashed var(--sample-ink); }
+.theme-card[data-id="vitrail"] .theme-sw {
+  border-top: 3px solid var(--sample-trim);
+  border-radius: 9px 2px 9px 2px;
+}
+.theme-card[data-id="kiln"] .theme-sw { --sample-radius: 9px; border-bottom: 3px solid var(--sample-trim); }
+
+/* Call state has the same meaning and contrast in every theme. */
+.controls :is(#btnMute, #gMute).mic-muted {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: currentColor;
+  text-shadow: none;
+  box-shadow: none;
+}
+.controls :is(#btnMute, #gMute).mic-muted b { position: relative; }
+.controls :is(#btnMute, #gMute).mic-muted b::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 0 0 1px var(--panel-2);
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+.controls :is(#btnLeave, #gLeave).danger {
+  background: #aa2537;
+  color: #fff;
+  border-color: #aa2537;
+  text-shadow: none;
+}
+.controls :is(#btnLeave, #gLeave).danger:hover { background: #861e2c; }
+.controls :is(#btnLeave, #gLeave).danger span::before,
+.controls :is(#btnLeave, #gLeave).danger span::after { color: inherit; }
+
+[data-theme="vitrail"] #lobby {
+  background-image: linear-gradient(#151423d9, #151423ef), var(--leaded);
+}
+
+/* Shared call actions and readable long-form content. */
+#callModal #callTitle {
+  font: 700 18px/1.3 system-ui, sans-serif;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: none;
+  overflow-wrap: anywhere;
+}
+#callModal #callSub { font: 400 13px/1.4 system-ui, sans-serif; text-shadow: none; }
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel) {
+  min-height: 44px;
+  font: 650 14px/1.2 system-ui, sans-serif;
+  color: white;
+  background: #aa2537;
+  border-color: #aa2537;
+  text-transform: none;
+  text-shadow: none;
+}
+#callModal #btnCallAccept { background: #18704b; border-color: #18704b; }
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel):hover { filter: brightness(.85); }
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel)::before,
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel)::after { content: none; }
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel):focus-visible,
+#themeGrid .theme-card:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+[data-theme="kiln"] :is(.avatar, .favatar, .call-avatar):not(.has-img),
+[data-theme="kiln"] #callAvatar { background: #d4e1d7; color: #274b46; }
+[data-theme="retro98"] :is(#call, #group) .pname {
+  background: var(--panel);
+  color: var(--text);
+  padding: 2px 5px;
+}
+[data-theme="retro98"] #btnInvite {
+  background: #000080;
+  color: white;
+}
+[data-theme="terminal"] body::after { opacity: .35; }
+[data-theme="terminal"] body { text-shadow: none; }
+
+:is([data-theme="pixel"], [data-theme="notebook"], [data-theme="terminal"])
+  :is(.msg .bubble, .chat-form input, .chat-form textarea) {
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  text-shadow: none;
+}
+:is([data-theme="pixel"], [data-theme="notebook"], [data-theme="terminal"])
+  :is(.ctl > span, .pname, .status) {
+  font-family: system-ui, sans-serif;
+  letter-spacing: normal;
+  text-shadow: none;
+}
+.chat-form :is(input, textarea)::placeholder { color: var(--muted); opacity: 1; }
+[data-theme="glass"] :is(#chatPanel, #gChatPanel, .chat, #dm .dm-card, #dm.screen) {
+  background: #151b30eb;
+}
+[data-theme="glass"] .chat-form :is(input, textarea) { background: #20243c; }
+[data-theme="glass"] .msg.me .bubble { background: #334a75; }
+
+/* Give the conversation identity its own row and allow actions to wrap. */
+#dm .dm-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
+#dm .dm-who { min-width: 0; }
+#dm :is(#dmTitle, #dmSub) { display: block; overflow-wrap: anywhere; }
+#dm .dm-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+body > #soundpad:not(.managing) {
+  bottom: var(--soundpad-bottom, 76px);
+  max-height: min(70vh, calc(100vh - var(--soundpad-bottom, 76px) - 16px));
+}
+
+
+/* Let accessibility text scaling reflow theme names and call actions. */
+#themeGrid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); }
+#themeGrid .theme-card { min-width: 0; }
+#themeGrid .theme-name { font-size: .875rem; overflow-wrap: anywhere; }
+#themeGrid .theme-name::after { flex: none; }
+#settingsTitle:focus, #callTitle:focus { outline: none; }
+#settings :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+#callModal :is(.call-card, .call-box) { max-height: 100%; overflow-y: auto; }
+#callModal #callTitle { font-size: 1.125rem; }
+#callModal #callSub { font-size: .875rem; }
+#callModal :is(.call-actions, .call-box > .row) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#callModal :is(#btnCallAccept, #btnCallDecline, #btnCallCancel) {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: .875rem;
+  min-height: max(44px, 2.75rem);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#callModal { z-index: 110; padding: 12px; }

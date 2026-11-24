@@ -1,0 +1,394 @@
+.pilot-lobby-title { margin: 0 0 12px; font: 680 clamp(22px, 3vw, 30px)/1.15 system-ui, sans-serif; letter-spacing: -.035em; }
+#lobby .lobby-card { width: min(860px, 100%); border-radius: 18px; padding: clamp(18px, 3vw, 32px); }
+#lobby .lobby-card-head { align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 15px; margin-bottom: 22px; }
+#lobby .lobby-card-head .logo { font-size: 21px; }
+#lobby .lobby-card-head .logo-img { width: 30px; height: 30px; }
+#stepHome.active { display: grid; align-content: start; gap: 14px; }
+#stepHome .pilot-lobby-title { margin-bottom: 0; }
+#stepHome > :is(#friendsBox, #groupsBox) { margin: 0; border: 0; padding: 0; box-shadow: none; background: transparent; }
+#friendsList .friend { padding: 11px 0; }
+#friendsList .friend:first-child { border-top: 0; }
+#friendsList .friend :is(.fcall, .fchat) { box-shadow: none; }
+.pilot-connect { display: grid; gap: 9px; align-content: start; }
+.pilot-connect .btn { margin: 0; }
+.pilot-connect > #btnAddFriendCode { background: var(--accent); color: #fff; font: 650 14px/1.25 system-ui, sans-serif; min-height: 44px; }
+[data-theme="reel"] .pilot-connect > #btnAddFriendCode { color: #251808; }
+[data-theme="kiln"] .pilot-connect > #btnAddFriendCode { background: #80422c; }
+.pilot-code, .pilot-secondary { border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.pilot-secondary { border-color: transparent; }
+.pilot-connect summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 12px; font-weight: 600; }
+.pilot-connect summary::after { content: '+'; color: var(--muted); }
+.pilot-connect details[open] > summary::after { content: '−'; }
+.pilot-code-body { padding: 0 12px 12px; min-width: 0; }
+.pilot-code-body textarea { display: block; width: 100%; min-height: 62px; }
+.pilot-secondary[open] { border-color: var(--line); }
+.pilot-secondary > button { display: block; width: calc(100% - 24px); margin: 5px 12px 10px !important; }
+#lobby:has(.lobby-card) { padding: 56px 24px 68px; }
+#lobby:has(.lobby-card) #stepHome.active { grid-template-columns: minmax(0, 1fr) minmax(190px, 240px); column-gap: 30px; }
+#lobby:has(.lobby-card) #stepHome > :is(.pilot-lobby-title, #rejoinBar) { grid-column: 1 / -1; }
+#lobby:has(.lobby-card) #stepHome > #friendsBox { grid-column: 1; }
+#lobby:has(.lobby-card) #stepHome > .pilot-connect { grid-column: 2; grid-row: 2; }
+#lobby:has(.lobby-card) #stepHome > #rejoinBar:not(.hidden) ~ .pilot-connect { grid-row: 3; }
+#lobby:has(.lobby-card) #stepHome:not(:has(#friendsBox:not(.hidden))) > .pilot-connect { grid-column: 1 / -1; grid-row: auto; max-width: 440px; }
+@media (max-width: 640px) {
+  #lobby:has(.lobby-card) #stepHome.active { grid-template-columns: minmax(0, 1fr); }
+  #lobby:has(.lobby-card) #stepHome > .pilot-connect,
+  #lobby:has(.lobby-card) #stepHome > #rejoinBar:not(.hidden) ~ .pilot-connect { grid-column: 1; grid-row: auto; }
+}
+.pilot-profile { position: relative; }
+.pilot-profile > summary {
+  cursor: pointer; list-style: none; display: grid; place-items: center;
+  padding: 0 12px; min-height: 40px; border: 1px solid var(--line);
+  border-radius: 10px; font: 600 13px/1 system-ui, sans-serif; background: var(--panel-2);
+}
+.pilot-profile[open] > summary { border-color: var(--accent); }
+.pilot-pop {
+  position: absolute; inset: auto 0 auto auto; margin-top: 8px; z-index: 14;
+  display: grid; gap: 8px; width: min(260px, calc(100vw - 36px));
+  padding: 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); box-shadow: 0 16px 40px #0005;
+}
+.pilot-profile .field { margin: 0; }
+#call .pilot-controls {
+  min-height: 64px; padding: 10px 14px; background: var(--panel);
+}
+#call .pilot-controls .ctl-group > .ctl { min-height: 42px; }
+#call .call-main-controls > .danger { margin-inline-start: 5px; }
+#call .wdock [data-window="chat"] { display: none; }
+.pilot-pop > .ctl { width: 100%; justify-content: flex-start; box-shadow: none; }
+#call.pilot-phone > .controls { align-items: stretch; gap: 3px; padding-inline: 6px; }
+#lobby > .top { position: relative; z-index: 2; }
+#lobby > .scroll > #stepHome.active { padding-top: 18px; }
+#call:has(#remoteScreenWrap:not(.hidden)) #people {
+  flex: 0 0 auto; flex-direction: row; gap: 14px; align-items: center; justify-content: center;
+  padding: 6px 10px; min-width: 0;
+}
+#call:has(#remoteScreenWrap:not(.hidden)) #people .person { flex-direction: row; gap: 6px; min-width: 0; }
+#call:has(#remoteScreenWrap:not(.hidden)) #people .avatar { flex: none; width: 32px; height: 32px; font-size: 15px; }
+#call:has(#remoteScreenWrap:not(.hidden)) #people .pname { min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#call .stage:not(.free) > .view:has(#remoteScreenWrap:not(.hidden)) #people { position: absolute; inset: 5px 14px auto; }
+#call .stage:not(.free) > .view #remoteScreenWrap:not(.hidden) { top: 54px; }
+#call.pilot-phone:has(#remoteScreenWrap:not(.hidden)) #chatPanel { height: clamp(150px, 33%, 270px); }
+
+/* Put the theme's signature on the portrait and keep the working area calm. */
+:root:not([data-theme]) #call .person .avatar { background: color-mix(in srgb, var(--accent), var(--panel) 65%); }
+[data-theme="reel"] #lobby .lobby-card,
+[data-theme="kiln"] #lobby .lobby-card { background: var(--panel); }
+[data-theme="reel"] #call .person .avatar:not(.has-img) {
+  border-radius: 12px; border: 1px solid #76624a;
+  background: repeating-linear-gradient(to bottom, #d1ad79 0 5px, transparent 5px 13px) left 5px center / 4px 100% no-repeat,
+    repeating-linear-gradient(to bottom, #d1ad79 0 5px, transparent 5px 13px) right 5px center / 4px 100% no-repeat,
+    #382d22;
+  color: #fff5df;
+}
+[data-theme="kiln"] #call .person .avatar:not(.has-img) {
+  border: 2px solid #4b8c82; background: #d4e1d7; color: #274b46;
+  box-shadow: inset 0 0 0 4px #f4f2e8;
+}
+[data-theme="kiln"] #call .person.speaking .avatar { outline: 3px solid #377576; outline-offset: 3px; }
+[data-theme="reel"] #call .person.speaking .avatar { outline: 3px solid #f2b572; outline-offset: 3px; }
+
+#themeGrid .theme-card .theme-sw {
+  display: grid; place-items: center; justify-content: center; gap: 4px 6px;
+  grid-template-columns: repeat(6, minmax(0, 17px)); grid-template-rows: 29px 16px;
+  height: 66px; padding: 5px; min-height: 66px;
+}
+#themeGrid .theme-sw::before, #themeGrid .theme-sw::after { content: none; }
+.pilot-sample-person {
+  grid-column: span 3; border-radius: 50%; width: 23px; height: 23px;
+  background: color-mix(in srgb, var(--sample-accent), var(--sample-panel) 48%);
+  border: 1px solid var(--sample-ink);
+}
+.theme-card[data-id="reel"] .pilot-sample-person { border-radius: 3px; }
+.theme-card[data-id="kiln"] .pilot-sample-person { background: #d4e1d7; border: 2px solid #377576; }
+.pilot-sample-mic, .pilot-sample-off, .pilot-sample-end {
+  grid-column: span 2; width: 100%; height: 16px; display: grid; place-items: center;
+  background: var(--sample-panel); color: var(--sample-ink); border-radius: 4px;
+}
+.pilot-sample-mic::after { content: '●'; }
+.pilot-sample-off::after { content: '╱'; }
+.pilot-sample-end { background: #aa2537; color: white; }
+.pilot-sample-end::after { content: '×'; }
+
+/* Vitrail */
+[data-theme="vitrail"] {
+  --facet-glass: conic-gradient(from 30deg at 43% 62%, #67516f 0 49deg, #376b71 49deg 123deg, #222945 123deg 176deg, #625074 176deg 246deg, #7c5a47 246deg 296deg, #413955 296deg);
+  --facet-foil: #c7a888;
+}
+[data-theme="vitrail"] #lobby {
+  background: radial-gradient(ellipse at 50% 12%, #362d48 0%, #1f1b30 48%, #151423 82%);
+}
+[data-theme="vitrail"] #lobby .lobby-card {
+  background: var(--panel);
+  border-color: #615674;
+  border-radius: 18px 4px 18px 4px;
+}
+[data-theme="vitrail"] #lobby .lobby-card-head { position: relative; }
+[data-theme="vitrail"] :is(#lobby .lobby-card-head, #lobby > .top)::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 3px;
+  background: var(--facet-glass) 0 0 / 128px 44px;
+  pointer-events: none;
+}
+[data-theme="vitrail"] :is(#call, #group) .avatar {
+  border: 2px solid var(--facet-foil);
+  border-radius: 26% 4%;
+  box-shadow: 0 0 0 2px #27203a;
+  color: #fff1dc;
+}
+[data-theme="vitrail"] :is(#call, #group) .avatar:not(.has-img) {
+  background: linear-gradient(139deg, transparent 52%, #211b2e 52% 53%, transparent 53%),
+    linear-gradient(40deg, transparent 48%, #211b2e 48% 49%, transparent 49%), var(--facet-glass);
+  text-shadow: 0 1px 4px #151423;
+}
+[data-theme="vitrail"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #92dfbf; outline-offset: 4px; }
+[data-theme="vitrail"] .pilot-connect > #btnAddFriendCode { background: #784261; }
+
+/* Retro Pixel */
+[data-theme="pixel"] body { font: 14px/1.45 system-ui, sans-serif; image-rendering: auto; }
+[data-theme="pixel"] :is(.logo, .brand b, .avatar:not(.has-img), .favatar:not(.has-img)) { font-family: PressStart, monospace; }
+[data-theme="pixel"] #lobby {
+  background: repeating-conic-gradient(#1a1c3a 0 25%, #1d2041 0 50%) 0 0 / 32px 32px;
+}
+[data-theme="pixel"] #lobby .lobby-card,
+[data-theme="pixel"] .call-card { border-width: 2px; box-shadow: 5px 5px 0 #0b0b1a; }
+[data-theme="pixel"] :is(#call, #group) .avatar {
+  border: 2px solid #848dd1;
+  box-shadow: 4px 4px 0 #0b0b1a;
+}
+[data-theme="pixel"] :is(#call, #group) .avatar:not(.has-img) {
+  background: linear-gradient(#6573be, #6573be) top / 100% 4px no-repeat,
+    linear-gradient(#2a305e, #2a305e) bottom / 100% 6px no-repeat, #444f95;
+  color: #fff4d6;
+}
+[data-theme="pixel"] :is(.person, .gtile).speaking .avatar { border-color: var(--ok); outline: 2px solid var(--ok); outline-offset: 2px; }
+[data-theme="pixel"] :is(.pilot-connect, .pilot-controls, #call.pilot-phone > .controls) :is(.btn, .ctl) {
+  border-width: 2px; box-shadow: 2px 2px 0 #0b0b1a;
+}
+[data-theme="pixel"] .pilot-connect > #btnAddFriendCode { color: #2b1a00; }
+[data-theme="pixel"] #call.pilot-phone #chatPanel .msg-input { font-size: 14px; }
+[data-theme="pixel"] :is(#screenBar, .screenmeta .tag) { font-size: 11px; }
+[data-theme="pixel"] .msg.sys { font-size: 12px; }
+@media (max-width: 440px) {
+  [data-theme="pixel"] #lobby > .top { gap: 7px; padding-inline: 10px; }
+  [data-theme="pixel"] #lobby .brand { min-width: 0; gap: 6px; }
+  [data-theme="pixel"] #lobby .brand img { width: 24px; height: 24px; flex: none; }
+  [data-theme="pixel"] #lobby .brand b { font-size: clamp(9px, 3vw, 12px); white-space: nowrap; }
+  [data-theme="pixel"] #lobby .pilot-profile > summary { padding-inline: 8px; }
+  [data-theme="pixel"] #lobby > .top > .icon-btn { flex: none; }
+}
+
+/* Space */
+[data-theme="space"] {
+  --orbit-line: #8cbfe6;
+  --orbit-night: #11192e;
+}
+[data-theme="space"] #lobby {
+  background: radial-gradient(ellipse at 58% 28%, #222649 0%, #13192c 51%, #090f1d 100%);
+}
+[data-theme="space"] #lobby .lobby-card { background: #151c31; border-color: #364565; box-shadow: 0 24px 60px #060b17a8; }
+[data-theme="space"] .pilot-connect > #btnAddFriendCode { background: #b9caff; color: #151d35; }
+[data-theme="space"] :is(.btn.primary, .ctl.share) { color: #101527; }
+[data-theme="space"] :is(#call, #group) .avatar:not(.has-img) {
+  background: radial-gradient(circle at 34% 24%, #8b95e6, #40568e 54%, #182843 88%);
+  border: 1px solid #7c91cb;
+  box-shadow: 0 0 24px #7d99ff46, inset -7px -10px 18px #101a3b70;
+}
+[data-theme="space"] #friendCard .avatar:not(.has-img) { background: radial-gradient(circle at 34% 24%, #83ccd2, #396c97 54%, #11233e 88%); }
+[data-theme="space"] #call .people::before { content: none; }
+[data-theme="space"] :is(#call, #group) .avatar.has-img::after { content: none; }
+[data-theme="space"] :is(#call, #group) .avatar::after {
+  border: 1px solid var(--orbit-line); left: -10%; right: -10%; opacity: .75;
+}
+[data-theme="space"] :is(.person, .gtile).speaking .avatar {
+  outline: 2px solid #83f7d5; outline-offset: 4px;
+  box-shadow: 0 0 24px #83f7d557;
+}
+[data-theme="space"] #call:has(#remoteScreenWrap:not(.hidden)) #people { background: var(--orbit-night); }
+[data-theme="space"] #call:has(#remoteScreenWrap:not(.hidden)) #people .avatar::after { content: none; }
+[data-theme="space"] :is(#chatPanel, #callChat, #gChat, #dm .dm-card, #dm.screen) { background: #11192e; }
+
+.theme-card[data-id="vitrail"] .pilot-sample-person {
+  border-radius: 30% 3%; border-color: #c7a888;
+  background: conic-gradient(from 30deg, #67516f, #376b71, #222945, #7c5a47, #67516f);
+}
+.theme-card[data-id="pixel"] .pilot-sample-person { background: #444f95; border: 2px solid #848dd1; box-shadow: 2px 2px 0 #0b0b1a; }
+.theme-card[data-id="space"] .pilot-sample-person { position: relative; background: radial-gradient(circle at 32% 22%, #8b95e6, #40568e 54%, #182843 88%); }
+.theme-card[data-id="space"] .pilot-sample-person::after {
+  content: ""; position: absolute; inset: 40% -15%; border: 1px solid #8cbfe6; border-radius: 50%; transform: rotate(-16deg);
+}
+
+/* Keep the mobile header controls in view with any display font. */
+#lobby > .top { gap: 8px; }
+#lobby > .top > :is(.icon-btn, .pilot-profile) { flex: none; }
+#lobby > .top .brand { min-width: 0; }
+#lobby > .top .brand img { flex: none; }
+#lobby > .top .brand b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 360px) {
+  #lobby > .top { padding-inline: 10px; gap: 6px; }
+  #lobby > .top .brand { gap: 6px; }
+  #lobby > .top .brand img { width: 24px; height: 24px; }
+}
+
+/* Neon Night: paired light strips around a darker face plate. */
+[data-theme="neon"] #lobby {
+  background: radial-gradient(ellipse at 14% 3%, #382039, transparent 57%),
+    radial-gradient(ellipse at 96% 96%, #102d39, transparent 48%), #0a0a15;
+}
+[data-theme="neon"] #lobby .lobby-card { background: #151426; border-color: #65435f; box-shadow: 0 18px 64px #070712a8; }
+[data-theme="neon"] :is(#call, #group) .avatar {
+  border: 2px solid #ff2bd6; border-inline-end-color: #00f0ff;
+  border-radius: 18% 38%; box-shadow: 0 0 16px #ff2bd647;
+}
+[data-theme="neon"] :is(#call, #group) .avatar:not(.has-img) {
+  background: radial-gradient(ellipse at 0 0, #562b69, transparent 65%), #17132d;
+}
+[data-theme="neon"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #75f8cf; outline-offset: 3px; }
+[data-theme="neon"] :is(.btn.primary, .ctl.share, #btnAddFriendCode) {
+  color: #120818; background: linear-gradient(135deg, #ff2bd6, #a74aff); text-shadow: none;
+}
+[data-theme="neon"] :is(#chatPanel, #callChat, #gChat, #dm.screen, #dm .dm-card) { background: #151328; }
+[data-theme="neon"] .pilot-profile[open] > summary,
+[data-theme="neon"] :is(button, summary):focus-visible { outline: 2px solid #00f0ff; outline-offset: 2px; }
+[data-theme="neon"] #call #btnChat.on b { box-shadow: 0 0 0 2px #00f0ff; }
+
+/* Terminal: scan lines live inside the readout, with green for emphasis. */
+html[data-theme="terminal"] { --text: #bfe5ca; --muted: #8cb59a; }
+[data-theme="terminal"] body::after { opacity: 0; }
+[data-theme="terminal"] #lobby .lobby-card { background: #101912; box-shadow: 0 16px 48px #0009; }
+[data-theme="terminal"] :is(#call, #group) .avatar {
+  border: 1px solid #65c680; outline: 1px solid #2c6740; outline-offset: 4px;
+}
+[data-theme="terminal"] :is(#call, #group) .avatar:not(.has-img) {
+  background: repeating-linear-gradient(#172c1d 0 3px, #122419 3px 5px);
+  color: #b4ffd0; text-shadow: 0 0 8px #51d07b80;
+}
+[data-theme="terminal"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #7effa5; }
+[data-theme="terminal"] .pilot-connect > #btnAddFriendCode { color: #031103; }
+[data-theme="terminal"] #lobby .brand b { color: #76ff9b; }
+
+/* Glass: a translucent rim with a solid surface behind text. */
+[data-theme="glass"] #lobby {
+  background: radial-gradient(ellipse at 15% 0%, #40539c, transparent 55%),
+    radial-gradient(ellipse at 85% 80%, #285f71, transparent 61%), #151c36;
+}
+[data-theme="glass"] #lobby .lobby-card {
+  background: #272f50e8; border-color: #8a9ac47a; box-shadow: 0 24px 70px #0c173273;
+}
+[data-theme="glass"] :is(#call, #group) .avatar {
+  border: 1px solid #e3edff86; border-radius: 32%;
+  box-shadow: inset 0 1px 1px #ffffffe6, 0 8px 22px #0d142e55;
+}
+[data-theme="glass"] :is(#call, #group) .avatar:not(.has-img) {
+  background: linear-gradient(150deg, #7189b5, #3f557f 46%, #303d67);
+  color: #f9fbff; text-shadow: 0 1px 3px #263450;
+}
+[data-theme="glass"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #9ff4da; outline-offset: 3px; }
+[data-theme="glass"] :is(.btn.primary, .ctl.share, #btnAddFriendCode) { background: #9acbff; color: #14253e; }
+[data-theme="glass"] :is(#call, #group) :is(.top, .topbar, .controls) { background: #242f4ddf; }
+[data-theme="glass"] #call:has(#remoteScreenWrap:not(.hidden)) #people { background: #202c46d9; }
+
+/* Manga: printed dots inside the portrait, with a single offset ink edge. */
+[data-theme="manga"] #lobby {
+  background: radial-gradient(circle, #2222220d 1px, transparent 1.3px) 0 0 / 10px 10px, #f4efe4;
+}
+[data-theme="manga"] #lobby .lobby-card { background: #fffdf7; border: 2px solid #231f20; box-shadow: 5px 5px 0 #231f20; }
+[data-theme="manga"] :is(#call .view, #group .view) { background: #f4efe4; }
+[data-theme="manga"] :is(#call, #group) .avatar { border: 2px solid #231f20; border-radius: 24% 48% 24% 48%; box-shadow: 4px 4px 0 #231f20; }
+[data-theme="manga"] :is(#call, #group) .avatar:not(.has-img) {
+  background: radial-gradient(ellipse at center, #fffdf8 24%, transparent 67%),
+    radial-gradient(circle, #241e2633 1px, transparent 1.4px) 0 0 / 7px 7px, #f7e1d9;
+  color: #211b20;
+}
+[data-theme="manga"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #a72b42; outline-offset: 4px; }
+[data-theme="manga"] :is(.btn.primary, .ctl.share, #btnAddFriendCode) { background: #ad2c41; color: #fff; }
+[data-theme="manga"] #lobby > .top .brand b { font-size: clamp(11px, 3vw, 14px); }
+
+/* Blueprint: the drawing grid stays on the drafting surface. */
+[data-theme="blueprint"] #lobby .lobby-card { background: #123763; border-color: #799bc2; box-shadow: 0 16px 44px #0923418f; }
+[data-theme="blueprint"] .lobby-card::after { content: none; }
+[data-theme="blueprint"] :is(#call, #group) .avatar {
+  border: 1px solid #a8c9ed; border-radius: 4px; outline: 1px dashed #80a8d4; outline-offset: 3px;
+}
+[data-theme="blueprint"] :is(#call, #group) .avatar:not(.has-img) {
+  background: linear-gradient(#aac8e124 1px, transparent 1px) 0 0 / 12px 12px,
+    linear-gradient(90deg, #aac8e124 1px, transparent 1px) 0 0 / 12px 12px, #1a487b;
+}
+[data-theme="blueprint"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #ffd34d; }
+[data-theme="blueprint"] .pilot-connect > #btnAddFriendCode { color: #0d2a4d; }
+[data-theme="blueprint"] :is(#chatPanel, #gChatPanel, #callChat, #gChat, #dm.screen, #dm .dm-card) { background: #12345a; }
+
+/* Retro OS: desktop teal, beveled portraits and a navy action. */
+[data-theme="retro98"] #lobby { background: #086b70; }
+[data-theme="retro98"] #lobby .lobby-card { background: #d1d1cb; }
+[data-theme="retro98"] #lobby .lobby-card-head { border-bottom-color: #6d7776; }
+[data-theme="retro98"] #lobby > .scroll {
+  margin: 10px; padding: 12px;
+  background: #d1d1cb; border: 2px solid; border-color: #f2f3ec #233b3b #233b3b #f2f3ec;
+}
+[data-theme="retro98"] #lobby .friend .fname small { color: #404040; }
+[data-theme="retro98"] :is(#call .view, #group .view) { background: #086b70; }
+[data-theme="retro98"] :is(#call, #group) .avatar {
+  border: 3px solid; border-color: #e6efed #18373a #18373a #e6efed;
+  box-shadow: 3px 3px 0 #00474c;
+}
+[data-theme="retro98"] :is(#call, #group) .avatar:not(.has-img) { background: linear-gradient(135deg, #144499, #142763); color: #fff; }
+[data-theme="retro98"] :is(.btn.primary, .ctl.share, #btnAddFriendCode) { background: #202e70; color: #fff; outline-color: #dfecff; }
+
+/* Notebook: keep the handwritten touch on titles and paper marks. */
+[data-theme="notebook"] body { font: 14px/1.45 system-ui, sans-serif; }
+[data-theme="notebook"] :is(.logo, .brand b, #lobby .pilot-lobby-title, .chat-head .wtitle) {
+  font-family: Caveat, "Segoe Print", cursive;
+}
+[data-theme="notebook"] :is(.pilot-connect, .pilot-profile, .pilot-controls)
+  :is(button, input, select, textarea) { font: 600 13px/1.35 system-ui, sans-serif; }
+[data-theme="notebook"] #lobby .lobby-card { background: #fffdf4; border: 1px solid #778caf; box-shadow: 4px 5px 0 #223d722b; }
+[data-theme="notebook"] :is(#call, #group) .avatar {
+  border: 2px solid #365686; border-radius: 28% 38%; box-shadow: 3px 3px 0 #bbcae5;
+}
+[data-theme="notebook"] :is(#call, #group) .avatar:not(.has-img) {
+  background: repeating-linear-gradient(#fffdf3 0 17px, #cadaeb 17px 18px); color: #253f6d;
+}
+[data-theme="notebook"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #298060; outline-offset: 3px; }
+[data-theme="notebook"] .pilot-connect > #btnAddFriendCode { background: #284779; color: #fff; }
+
+/* Nord: quiet blue-gray with a thin sea-green rim. */
+[data-theme="nord"] #lobby { background: radial-gradient(ellipse at 28% 8%, #324952, #172830 67%); }
+[data-theme="nord"] #lobby .lobby-card { background: #203641; border-color: #4f6d77; }
+[data-theme="nord"] :is(#call, #group) .avatar { border: 2px solid #719c9a; border-radius: 42% 42% 35% 35%; }
+[data-theme="nord"] :is(#call, #group) .avatar:not(.has-img) { background: linear-gradient(150deg, #376667, #2a4252); color: #ecf8f3; }
+[data-theme="nord"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #a6e9cf; outline-offset: 3px; }
+[data-theme="nord"] :is(.btn.primary, .ctl.share, #btnAddFriendCode) { background: #79bcac; color: #152f2d; }
+
+/* Linen: warm uncoated paper and green ink. */
+[data-theme="linen"] #lobby { background: radial-gradient(ellipse at 72% 6%, #d9e1d4, #eae3d8 68%); }
+[data-theme="linen"] #lobby .lobby-card { background: #fcf8ef; border-color: #cec5b5; box-shadow: 0 18px 50px #65553c20; }
+[data-theme="linen"] :is(#call, #group) .avatar { border: 1px solid #9faa95; border-radius: 40%; box-shadow: inset 0 0 0 4px #ffffff5e; }
+[data-theme="linen"] :is(#call, #group) .avatar:not(.has-img) { background: #e0e5d6; color: #2b4b3d; }
+[data-theme="linen"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #436d58; outline-offset: 3px; }
+
+/* Newspaper: ink rules delimit columns and portrait captions. */
+[data-theme="newspaper"] #lobby .lobby-card { background: #faf6ec; border: 1px solid #47413a; box-shadow: 0 10px 25px #51483724; }
+[data-theme="newspaper"] :is(#lobby .lobby-card-head, #lobby > .top) { border-bottom: 3px double #302920; }
+[data-theme="newspaper"] :is(#lobby .pilot-lobby-title, #call .pname, #group .pname) { font-family: PTSerif, Georgia, serif; }
+[data-theme="newspaper"] :is(#call, #group) .avatar {
+  border: 1px solid #403830; box-shadow: 0 0 0 3px #f1eadd, 0 0 0 4px #817568;
+}
+[data-theme="newspaper"] :is(#call, #group) .avatar:not(.has-img) {
+  background: radial-gradient(circle, #261a1620 1px, transparent 1.4px) 0 0 / 5px 5px, #ede4d3; color: #231d18;
+}
+[data-theme="newspaper"] :is(.person, .gtile).speaking .avatar { outline: 2px solid #8b3227; outline-offset: 5px; }
+[data-theme="newspaper"] .pilot-connect > #btnAddFriendCode { background: #8e2a23; }
+
+.theme-card[data-id="neon"] .pilot-sample-person { border-color: #ff2bd6 #00f0ff #ff2bd6 #ff2bd6; border-radius: 18% 38%; }
+.theme-card[data-id="terminal"] .pilot-sample-person { background: repeating-linear-gradient(#172c1d 0 3px, #122419 3px 5px); }
+.theme-card[data-id="glass"] .pilot-sample-person { background: linear-gradient(150deg, #7189b5, #303d67); border-radius: 32%; }
+.theme-card[data-id="manga"] .pilot-sample-person { background: #f7e1d9; border: 2px solid #231f20; border-radius: 24% 48% 24% 48%; }
+.theme-card[data-id="blueprint"] .pilot-sample-person { border-style: dashed; background: #1a487b; outline: 1px solid #a8c9ed; outline-offset: 1px; }
+.theme-card[data-id="retro98"] .pilot-sample-person { background: #202e70; border-width: 2px; border-color: #e6efed #18373a #18373a #e6efed; }
+.theme-card[data-id="notebook"] .pilot-sample-person { background: repeating-linear-gradient(#fffdf3 0 6px, #cadaeb 6px 7px); border: 1px solid #365686; border-radius: 28% 38%; }
+.theme-card[data-id="nord"] .pilot-sample-person { background: #376667; border-color: #90c6b8; border-radius: 42% 42% 35% 35%; }
+.theme-card[data-id="linen"] .pilot-sample-person { background: #e0e5d6; border-color: #718d78; border-radius: 40%; }
+.theme-card[data-id="newspaper"] .pilot-sample-person { background: #ede4d3; border-color: #403830; box-shadow: 0 0 0 1px #aaa097; }

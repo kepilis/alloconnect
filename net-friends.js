@@ -25,12 +25,17 @@ const PUNCH_FOR = 30000;
 const STUN_MAGIC = 0x2112a442;
 const ONLINE_WINDOW = 65000;
 const OBSERVED_FRESH = 120000;
+const PREVIOUS_OBSERVED_LIMIT = 3;
 const TS_SKEW = 180000;
 
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
 const INVITE_FOR = 24 * 3600 * 1000; // код дружбы действует сутки
 const INVITE_KEEP = 5;
 const STRANGER_LIMIT = 60;           // расшифровок пакетов от незнакомцев за 10 с (только пока есть код дружбы)
+
+function networkCounters() {
+  return { sent: 0, recvOk: 0, recvBad: 0, recvUnknown: 0, ackReplies: 0, ackReceived: 0, ackMatched: 0, deliveryTimeouts: 0 };
+}
 
 /* ---------- Код дружбы: ALOF.<base64url> ----------
    1 байт версии, 32 байта ID, 12 байт секрета, ник (длина + UTF-8), адреса (число, по 7 байт: вид, IPv4, порт),
@@ -114,7 +119,7 @@ class FriendsNet extends EventEmitter {
     this.stunPlan = [{ name: 'primary', urls: STUN_LISTS.primary }, { name: 'alt', urls: STUN_LISTS.alt }];
     this.stunUsed = null; // { list, first }
     this.punchUntil = 0;
-    this.cnt = { sent: 0, recvOk: 0, recvBad: 0, recvUnknown: 0 };
+    this.cnt = networkCounters();
     this.sock = null;
     this.port = 0;
     this.nick = '';
@@ -238,7 +243,7 @@ class FriendsNet extends EventEmitter {
     setTimeout(() => this.pingAll(), 500);
     this.cntTimer = setInterval(() => {
       if (this.friends.size) this.log('friends-net', { ...this.cnt, online: [...this.friends.values()].filter((f) => f.online).length });
-      this.cnt = { sent: 0, recvOk: 0, recvBad: 0, recvUnknown: 0 };
+      this.cnt = networkCounters();
     }, 60000);
     this.log('friends', { started: true, port: this.port, friends: this.friends.size });
     return { id: this.id, port: this.port };
@@ -407,7 +412,11 @@ class FriendsNet extends EventEmitter {
       seen.add(k);
       out.push({ ...a, kind: kind || a.kind });
     };
-    if (f.observed && Date.now() - f.observed.ts < OBSERVED_FRESH) push(f.observed, 'observed');
+    const freshSince = Date.now() - OBSERVED_FRESH;
+    if (f.observed?.ts > freshSince) push(f.observed, 'observed');
+    for (const a of f.previousObserved || []) {
+      if (a.ts > freshSince) push(a, 'observed');
+    }
     for (const a of f.hints || []) push(a);
     for (const a of f.addrs) push(a);
     if (f.observed) push(f.observed, 'observed-old');
@@ -528,7 +537,12 @@ class FriendsNet extends EventEmitter {
       const rid = crypto.randomBytes(6).toString('hex');
       let n = 0;
       const attempt = () => {
-        if (n++ >= tries) { this.pending.delete(rid); reject(new Error('друг не ответил')); return; }
+        if (n++ >= tries) {
+          this.cnt.deliveryTimeouts++;
+          this.pending.delete(rid);
+          reject(new Error('друг не ответил'));
+          return;
+        }
         const sent = this.sendAll(id, { ...obj, rid });
         if (!sent) { this.pending.delete(rid); reject(new Error('нет адресов друга')); return; }
         p.timer = setTimeout(attempt, every);
@@ -850,6 +864,7 @@ class FriendsNet extends EventEmitter {
   }
   async networkChanged() {
     this.relayClient?.reconnect();
+    for (const f of this.friends.values()) f.lastRoundTrip = 0;
     this.stunGeneration++;
     this.stun = null; this.stunAddrs = []; this.stunUsed = null; this.natType = 'unknown';
     this.punch(); this.pingAll();
@@ -885,6 +900,12 @@ class FriendsNet extends EventEmitter {
     f.online = !['offline','invisible'].includes(f.presence);
     if(prevPresence!==f.presence)this.emitList();
     const obsChanged = !viaRelay && (!f.observed || f.observed.ip !== src.ip || f.observed.port !== src.port);
+    if (obsChanged && f.observed) {
+      // A newer packet can arrive on a route that drops replies. Keep recent alternatives.
+      f.previousObserved = [f.observed, ...(f.previousObserved || [])]
+        .filter((a) => src.ts - a.ts < OBSERVED_FRESH && (a.ip !== src.ip || a.port !== src.port))
+        .slice(0, PREVIOUS_OBSERVED_LIMIT);
+    }
     if (!viaRelay) f.observed = src;
     f.via = viaRelay ? 'relay' : ipKind(src.ip);
     if (Array.isArray(msg.addrs)) {
@@ -903,10 +924,15 @@ class FriendsNet extends EventEmitter {
     }
     if (prevOnline!==f.online) { this.log('friends', { presence: id.slice(0, 8), online: f.online, via: f.via }); this.emitList(); }
 
-    const reply = (o) => this.sendReply(id, o, src);
+    const reply = (o) => {
+      if (o.t === 'ack') this.cnt.ackReplies++;
+      this.sendReply(id, o, src);
+    };
     switch (msg.t) {
       case 'ping': reply({ t: 'pong', addrs: this.localAddrs(), ver: this.appVersion, act: this.activity, ...(this.nick ? { nick: this.nick } : {}) }); return;
-      case 'pong': return;
+      case 'pong':
+        f.lastRoundTrip = f.lastSeen;
+        return;
       case 'probe':
         if (viaRelay) return; // HTTPS delivery is not evidence of UDP reachability/MTU.
         this.log('net-check', { inboundFromFriend: id.slice(0, 8), viaMyAddr: msg.kind, srcKind: ipKind(src.ip) });
@@ -933,8 +959,15 @@ class FriendsNet extends EventEmitter {
         if (msg.rid) reply({ t: 'ack', rid: msg.rid });
         return;
       case 'ack': {
+        this.cnt.ackReceived++;
         const p = this.pending.get(msg.rid);
-        if (p && p.id === id) { clearTimeout(p.timer); this.pending.delete(msg.rid); p.resolve(); }
+        if (p && p.id === id) {
+          this.cnt.ackMatched++;
+          f.lastRoundTrip = f.lastSeen;
+          clearTimeout(p.timer);
+          this.pending.delete(msg.rid);
+          p.resolve();
+        }
         return;
       }
       default:

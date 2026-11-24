@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="themes.css" />
 <link rel="stylesheet" href="account-lab.css">
+<link rel="stylesheet" href="pilot.css">
 </head>
 <body>
 
@@ -20,23 +21,24 @@
   <div class="lobby-card">
     <div class="lobby-card-head">
       <div class="logo"><img src="icon.png" alt="" class="logo-img" /><span class="logo-name">alloconnect</span></div>
-    <button id="btnSettingsLobby" class="icon-btn settings-button" type="button" title="Настройки" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
-    </div>
-    <p class="muted">Звонки, демонстрация экрана, чат и файлы с друзьями. Напрямую, без серверов. Первый раз — короткий код дружбы через любой мессенджер, дальше — из списка друзей в один клик.</p>
-
-    <label class="field">
+    <details class="pilot-profile"><summary>Профиль</summary><div class="pilot-pop"><label class="field">
       <span>Твой ник</span>
       <input id="nick" maxlength="24" placeholder="Твой ник" />
     </label>
 
+    <label class="field presence-field"><span>Мой статус <span id="presenceHint" class="help-i" tabindex="0" title="В сети: автоматически станет «Нет на месте» через 5 минут бездействия.">i</span></span><select id="presenceMode"><option value="online">🟢 В сети</option><option value="away">🟡 Нет на месте</option><option value="invisible">⚪ Невидимка</option><option value="offline">⚫ Не в сети</option><option value="dnd">🔴 Не беспокоить</option></select></label></div></details>
+    <button id="btnSettingsLobby" class="icon-btn settings-button" type="button" title="Настройки" aria-label="Настройки"><span class="settings-gear" aria-hidden="true"></span></button>
+    </div>
+
     <!-- Шаг 0: выбор -->
-    <label class="field presence-field"><span>Мой статус <span id="presenceHint" class="help-i" tabindex="0" title="В сети: автоматически станет «Нет на месте» через 5 минут бездействия.">i</span></span><select id="presenceMode"><option value="online">🟢 В сети</option><option value="away">🟡 Нет на месте</option><option value="invisible">⚪ Невидимка</option><option value="offline">⚫ Не в сети</option><option value="dnd">🔴 Не беспокоить</option></select></label>
+    
     <div id="stepHome" class="step active">
       <div id="rejoinBar" class="rejoin-bar hidden">
         <span id="rejoinText"></span>
         <button id="btnRejoin" class="btn primary small">↩ Вернуться</button>
         <button id="rejoinClose" class="icon-btn" title="Скрыть">✕</button>
       </div>
+      <h1 class="pilot-lobby-title">Звонки и сообщения</h1>
       <div id="friendsBox" class="friends hidden">
         <div class="friends-head">Друзья <button id="btnGroup" class="btn small grp-btn" title="Групповой звонок — до 6 человек">👥 Группа</button></div>
         <div id="friendsList"></div>
@@ -46,15 +48,10 @@
         </div>
         <div id="netVerdictLobby" class="net-verdict wait small"></div>
       </div>
-      <div class="stepnum">Получил код от друга?</div>
-      <textarea id="codeEntry" class="code-entry" placeholder="Вставь код дружбы или приглашение" spellcheck="false" aria-label="Код друга"></textarea>
+      <div class="pilot-connect"><button id="btnAddFriendCode" class="btn big">Добавить друга</button><details class="pilot-code"><summary>Вставить код</summary><div class="pilot-code-body"><textarea id="codeEntry" class="code-entry" placeholder="Вставь код дружбы или приглашение" spellcheck="false" aria-label="Код друга"></textarea>
       <p id="codeEntryPreview" class="muted small info" role="status">Приложение определит тип кода перед действием.</p>
       <button id="codeEntryGo" class="btn primary big" disabled>Продолжить</button>
-      <details class="adv code-create"><summary>Создать свой код или приглашение</summary>
-        <div class="help-row"><button id="btnAddFriendCode" class="btn big">➕ Код дружбы</button><button type="button" class="help-i" title="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей." aria-label="Отправь свой код другу. После подтверждения можно звонить и писать из списка друзей.">i</button></div>
-        <div class="help-row"><button id="btnInvite" class="btn big">Приглашение на звонок</button><button type="button" class="help-i" title="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране." aria-label="Создай приглашение на один звонок и отправь другу. Его ответ вставь на следующем экране.">ⓘ</button></div>
-        <button id="btnHaveInvite" class="link" type="button">Ввести приглашение вручную</button>
-      </details>
+      </div></details><details class="pilot-secondary"><summary>Ещё способы подключения</summary><button id="btnInvite" class="btn big">Приглашение на звонок</button><button id="btnHaveInvite" class="link" type="button">Ввести приглашение вручную</button></details></div>
     </div>
 
     <!-- Ты приглашаешь -->
@@ -150,14 +147,16 @@
           <span class="tsep"></span>
           <button class="tbtn wide" id="toolCtl">🎮 Управление</button>
           <button class="tbtn wide hidden" id="toolLock" title="Для игр, где мышь крутит камеру">🖱 Захват мыши</button>
+          <div class="stream-actions">
+            <button class="tbtn" type="button" id="btnScreenMin" title="Свернуть демонстрацию и выключить её звук"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg><span>Свернуть</span></button>
+            <button class="tbtn" type="button" id="btnSaveReplay" title="Сохранить последние секунды демонстрации"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v6h6m-6 0a8 8 0 1 1 1.5 6.5M12 8v4l3 2"/></svg><span>Сохранить повтор</span></button>
+          </div>
         </div>
         <div class="overlay">
           <span class="tag">Экран: <b id="remoteScreenOwner">друг</b> <span id="remoteScreenTitle" class="muted"></span></span>
           <span class="tag" id="remoteStats"></span>
           <span class="tag warn" id="remoteReason"></span>
-          <label class="tag vol">🔊 <input type="range" id="screenVol" min="0" max="100" value="100" /></label>
-          <button class="tag btn-tag" id="btnScreenMin" title="Свернуть демонстрацию — звук стрима выключится">— Свернуть</button>
-          <button class="tag btn-tag" id="btnSaveReplay" title="Сохранить последние секунды демонстрации">⏺ Сохранить повтор</button>
+          <label class="tag vol screen-volume-overlay" title="Громкость звука демонстрации"><span aria-hidden="true">🖥</span> <input type="range" id="screenVolOverlay" min="0" max="100" value="100" aria-label="Громкость звука демонстрации" /></label>
           <button class="tag btn-tag" id="btnFull">⛶ На весь экран</button>
         </div>
       </div>
@@ -193,21 +192,30 @@
     </aside>
   </main>
 
-  <footer class="controls">
-    <div class="ctl-group">
-      <button id="btnMute" class="ctl" title="Микрофон (Ctrl+Shift+M)"><b>🎙</b><span>Микрофон</span></button>
-      <button id="btnDeafen" class="ctl" title="Звук (Ctrl+Shift+D)"><b>🎧</b><span>Звук</span></button>
-      <button id="btnNs" class="ctl ns" title="Шумодав (Ctrl+Shift+N)"><b>✨</b><span>Шумодав</span></button>
-      <label class="ctl vol-ctl" title="Громкость друга">
-        <b>🔈</b><input type="range" id="friendVol" min="0" max="200" value="100" /><span id="friendVolVal">100%</span>
+  <footer class="controls call-controls pilot-controls">
+    <div class="ctl-group call-volume-controls">
+      <label class="call-volume" title="Громкость звука демонстрации">
+        <span class="call-volume-name"><span aria-hidden="true">🖥</span> Демонстрация</span>
+        <input type="range" id="screenVol" min="0" max="100" value="100" aria-label="Громкость звука демонстрации" />
+        <span id="screenVolVal" class="call-volume-value" aria-hidden="true">100%</span>
+      </label>
+      <label class="call-volume" title="Громкость голоса собеседника">
+        <span class="call-volume-name"><span aria-hidden="true">🎙</span> Голос собеседника</span>
+        <input type="range" id="friendVol" min="0" max="200" value="100" aria-label="Громкость голоса собеседника" />
+        <span id="friendVolVal" class="call-volume-value" aria-hidden="true">100%</span>
       </label>
     </div>
-    <div class="ctl-group">
-      <button id="btnSoundpad" class="ctl" title="Саундпад"><b>🎵</b><span>Саундпад</span></button>
-      <button id="btnCam" class="ctl" title="Вебкамера"><b>📷</b><span>Камера</span></button>
-      <button id="btnWatchReplay" class="ctl" title="Выбрать момент из повтора и пригласить друга"><b>▶</b><span>Смотреть вместе</span></button>
-      <button id="btnShare" class="ctl share" title="Показать экран"><b>🖥</b><span>Показать экран</span></button>
+    <div class="ctl-group call-main-controls">
+      <button id="btnMute" class="ctl call-icon-button" type="button" title="Выключить микрофон (Ctrl+Shift+M)" aria-label="Микрофон" aria-pressed="true"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11v1a6.5 6.5 0 0 0 13 0v-1M12 18.5V22m-3 0h6"/><path class="call-icon-slash" d="M3 3l18 18"/></svg></button>
+      <button id="btnCam" class="ctl call-icon-button" type="button" title="Включить камеру" aria-label="Камера" aria-pressed="false"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 5-3v10l-5-3"/><path class="call-icon-slash" d="M3 3l18 18"/></svg></button>
+      <button id="btnShare" class="ctl share" type="button" title="Демонстрация экрана" aria-label="Демонстрация экрана"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M12 17v4m-4 0h8"/></svg><span>Демонстрация экрана</span></button>
+      <button id="pilotChat" class="ctl call-icon-button" type="button" title="Свернуть чат" aria-label="Чат" aria-controls="callChat" aria-pressed="true"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a6.5 6.5 0 0 1-6.5 6.5H9l-4.5 3v-4.6a6.5 6.5 0 0 1 4.4-11.4H14a6.5 6.5 0 0 1 6.5 6.5ZM8 10.5h8"/></svg></button>
+      <button id="btnDeafen" class="ctl call-mute-all" type="button" title="Замутить все (Ctrl+Shift+D)" aria-label="Замутить все" aria-pressed="false"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h4l5-4v14l-5-4H3z"/><path class="call-icon-mute" d="m16 9 5 6m0-6-5 6"/><path class="call-icon-unmute" d="M16 9a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10"/></svg><span>Замутить все</span></button>
+      <button id="btnNs" class="ctl ns" title="Шумодав (Ctrl+Shift+N)"><b>✨</b><span>Шумодав</span></button>
       <button id="btnLeave" class="ctl danger" title="Выйти из звонка"><b>✕</b><span>Выйти</span></button>
+    </div>
+    <div class="ctl-group call-media-controls">
+      <button id="btnSoundpad" class="ctl" title="Саундпад" aria-label="Саундпад"><b>🎵</b><span>Саундпад</span></button>
     </div>
   </footer>
 </section>
@@ -317,10 +325,10 @@
 </div>
 
 <!-- ВЫЗОВ ДРУГА / ВХОДЯЩИЙ -->
-<div id="callModal" class="modal hidden">
+<div id="callModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="callTitle" aria-describedby="callSub">
   <div class="modal-card call-card">
     <div class="call-avatar" id="callAvatar">?</div>
-    <h2 id="callTitle">Звоним</h2>
+    <h2 id="callTitle" data-dialog-title tabindex="-1">Звоним</h2>
     <p id="callSub" class="muted">…</p>
     <div class="call-actions">
       <button id="btnCallAccept" class="btn primary big">Принять</button>
@@ -463,12 +471,14 @@
     <div class="dm-head">
       <div class="favatar big" id="dmAvatar"><span>?</span></div>
       <div class="dm-who"><b id="dmTitle">Друг</b><small id="dmSub" class="muted"></small></div>
-      <button id="dmCall" class="btn primary small">📞 Позвонить</button>
-      <button id="dmSearchBtn" class="icon-btn" title="Поиск по переписке">🔍</button>
-      <button id="dmClear" class="icon-btn" title="Очистить историю с этим другом">🗑</button>
-      <button type="button" id="dmFriends" class="btn small">☰ Сообщения</button>
-      <button type="button" id="dmReturnCall" class="btn small">↩ В звонок</button>
       <button id="dmClose" class="icon-btn" title="Закрыть">✕</button>
+      <div class="dm-actions">
+        <button id="dmCall" class="btn primary small">📞 Позвонить</button>
+        <button id="dmSearchBtn" class="icon-btn" title="Поиск по переписке">🔍</button>
+        <button id="dmClear" class="icon-btn" title="Очистить историю с этим другом">🗑</button>
+        <button type="button" id="dmFriends" class="btn small">☰ Сообщения</button>
+        <button type="button" id="dmReturnCall" class="btn small">↩ В звонок</button>
+      </div>
     </div>
     <div id="dmMessages" class="messages dm-messages"></div>
     <form id="dmForm" class="chat-form">
@@ -481,11 +491,11 @@
 </div>
 
 <!-- НАСТРОЙКИ -->
-<div id="settings" class="modal hidden">
+<div id="settings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal-card">
     <div class="modal-head">
-      <h2>Настройки</h2>
-      <button class="icon-btn" data-close>✕</button>
+      <h2 id="settingsTitle" data-dialog-title tabindex="-1">Настройки</h2>
+      <button class="icon-btn" data-close aria-label="Закрыть настройки">✕</button>
     </div>
 
     <div class="avatar-row">
@@ -505,14 +515,18 @@
       <div class="scat-body">
       <label class="field"><span>Масштаб интерфейса</span><select id="uiScale"><option value="1">100%</option><option value="1.1">110%</option><option value="1.25">125%</option></select><small class="muted">Увеличивает текст и кнопки вместе, сохраняя пропорции. Применяется сразу.</small></label>
       <label class="check"><input type="checkbox" id="optAnimations" checked /><span>Плавные анимации интерфейса</span></label>
-      <div id="themeGrid" class="theme-grid"></div>
+      <div id="themeGrid" class="theme-grid" role="radiogroup" aria-label="Тема оформления"></div>
       <small class="muted">Тема только у тебя — у друга остаётся его собственная.</small>
       </div>
     </details>
 
     <details class="scat" data-cat="downloads"><summary><span class="scat-icon" aria-hidden="true">⬇</span>Загрузки и файлы</summary><div class="scat-body">
       <label class="check"><input type="checkbox" id="optDownloadsAuto" checked /><span>Автоматически показывать загрузки</span></label>
-      <label class="field"><span>Через сколько скрывать панель</span><select id="downloadsDuration"><option value="1">1 секунда</option><option value="2">2 секунды</option><option value="3">3 секунды</option><option value="4">4 секунды</option><option value="5">5 секунд</option><option value="6">6 секунд</option><option value="7">7 секунд</option><option value="8">8 секунд</option><option value="9">9 секунд</option><option value="10">10 секунд</option><option value="0">Не скрывать</option></select></label>
+      <label class="field"><span>Когда скрывать панель</span><select id="downloadsDuration">
+        <option value="1">1 секунда</option><option value="2">2 секунды</option><option value="3">3 секунды</option><option value="4">4 секунды</option><option value="5">5 секунд</option><option value="6">6 секунд</option><option value="7">7 секунд</option><option value="8">8 секунд</option><option value="9">9 секунд</option><option value="10">10 секунд</option>
+        <option value="on-complete">Скрыть в конце загрузки</option>
+        <option value="0">Не скрывать</option>
+      </select></label>
       <label class="check"><input type="checkbox" id="optSaveChatFiles" checked /><span>Сохранять файлы чатов на этом ПК</span></label>
       <button id="btnChatFolder" class="btn small" type="button">Папка файлов чатов</button>
       <small class="muted">Отключение действует на новые файлы. Уже сохранённые файлы остаются на диске.</small>
@@ -771,10 +785,12 @@
 <script src="account-recovery.js"></script>
 <script src="account-boot.js"></script>
 <script src="watch-together.js"></script>
+<script src="media-placement.js"></script>
 <script src="renderer.js"></script>
 <script src="account-ui.js"></script>
 <script src="camera.js"></script>
 <script src="windows.js"></script>
 <script src="stickers.js"></script>
+<script src="pilot.js"></script>
 </body>
 </html>
