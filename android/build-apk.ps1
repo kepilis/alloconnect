@@ -5,16 +5,15 @@ param(
     [Parameter(Mandatory)][string]$JavaDirectory,
     [Parameter(Mandatory)][string]$BuildTools,
     [Parameter(Mandatory)][string]$SigningDirectory,
-    [string]$Version = '0.16.17',
-    [int]$VersionCode = 54,
-    [switch]$InitializeSigning
+    [string]$Version = '0.16.18',
+    [int]$VersionCode = 55,
+    [Parameter(Mandatory)][string]$Notes
 )
 
 $ErrorActionPreference = 'Stop'
-$pinnedBaseHash = 'AD63B47E2B49E9C61A9DD366B4F6539A2F5E5EDCF42A692A8AEE609E287B4ADE'
+$pinnedBaseHash = '43DD96CCB592E68B3707783B5D827D88505BA98213D02D162D01AC6631FC1DFA'
 $alias = 'alloconnect-android'
 $java = Join-Path $JavaDirectory 'java.exe'
-$keytool = Join-Path $JavaDirectory 'keytool.exe'
 $apksigner = Join-Path $BuildTools 'lib\apksigner.jar'
 $zipalign = Join-Path $BuildTools 'zipalign.exe'
 $aapt = Join-Path $BuildTools 'aapt.exe'
@@ -22,39 +21,25 @@ $prepare = Join-Path $PSScriptRoot 'prepare-apk.cjs'
 
 function Invoke-BuildTool {
     param([string]$Program, [string[]]$Arguments)
-    & $Program @Arguments
+    $output = & $Program @Arguments | Out-String -Stream
     if ($LASTEXITCODE -ne 0) {
         throw "Build tool failed ($LASTEXITCODE): $Program"
     }
+    $output
 }
 
 if ((Get-FileHash -LiteralPath $BaseApk -Algorithm SHA256).Hash -ne $pinnedBaseHash) {
     throw 'Unexpected base APK SHA-256'
 }
-Invoke-BuildTool $java @('-jar', $apksigner, 'verify', $BaseApk)
+$baseCert = Invoke-BuildTool $java @('-jar', $apksigner, 'verify', '--print-certs', $BaseApk) |
+    Select-String '^Signer #1 certificate SHA-256 digest:' | Select-Object -ExpandProperty Line
+if (!$baseCert) { throw 'Base APK certificate fingerprint is missing' }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $keyStore = Join-Path $SigningDirectory 'android-release.p12'
 $passwordFile = Join-Path $SigningDirectory 'android-release.password'
 $updateKey = Join-Path $SigningDirectory 'update-private.pem'
 $signingFiles = @($keyStore, $passwordFile, $updateKey)
 
-if ($InitializeSigning) {
-    if (@($signingFiles | Where-Object { Test-Path -LiteralPath $_ }).Count) {
-        throw 'Signing files already exist'
-    }
-    New-Item -ItemType Directory -Path $SigningDirectory -Force | Out-Null
-    $env:ALLOCONNECT_APK_PASSWORD = (& $Node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")
-    if ($LASTEXITCODE -ne 0 -or !$env:ALLOCONNECT_APK_PASSWORD) { throw 'Password generation failed' }
-    try {
-        Invoke-BuildTool $keytool @('-genkeypair', '-keystore', $keyStore, '-storetype', 'PKCS12', '-alias', $alias,
-            '-keyalg', 'RSA', '-keysize', '3072', '-validity', '10000', '-dname', 'CN=AlloConnect Android',
-            '-storepass:env', 'ALLOCONNECT_APK_PASSWORD')
-        [IO.File]::WriteAllText($passwordFile, $env:ALLOCONNECT_APK_PASSWORD)
-    } finally {
-        Remove-Item Env:ALLOCONNECT_APK_PASSWORD
-    }
-    Invoke-BuildTool $Node @('-e', "const c=require('node:crypto'); require('node:fs').writeFileSync(process.argv[1],c.generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}),{flag:'wx'})", $updateKey)
-}
 if (@($signingFiles | Where-Object { !(Test-Path -LiteralPath $_) }).Count) {
     throw 'Signing files are missing'
 }
@@ -63,9 +48,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression
 $replacements = [ordered]@{
     'AndroidManifest.xml' = 'AndroidManifest.xml'
-    'resources.arsc' = 'resources.arsc'
-    'assets/capacitor.config.json' = 'capacitor.config.json'
-    'assets/public/app.js' = 'app.js'
+    'assets/public/app.js' = 'base-app.js'
 }
 $aligned = Join-Path $OutputDirectory 'aligned.apk'
 $signed = Join-Path $OutputDirectory ("alloconnect_android-$Version-arm64-v8a.apk")
@@ -86,12 +69,14 @@ try {
 } finally {
     Remove-Item Env:ALLOCONNECT_APK_PASSWORD
 }
-Invoke-BuildTool $java @('-jar', $apksigner, 'verify', '--verbose', $signed)
+$signedCert = Invoke-BuildTool $java @('-jar', $apksigner, 'verify', '--print-certs', $signed) |
+    Select-String '^Signer #1 certificate SHA-256 digest:' | Select-Object -ExpandProperty Line
+if ($signedCert -ne $baseCert) { throw 'APK certificate does not match the published Android package' }
 Invoke-BuildTool $zipalign @('-c', '-P', '16', '4', $signed)
 $badging = Invoke-BuildTool $aapt @('dump', 'badging', $signed)
 if (!($badging -match "^package: name='com\.alloconnect\.alo' versionCode='$VersionCode' versionName='$([regex]::Escape($Version))'")) {
     throw 'Unexpected signed package identity or version'
 }
 if (!($badging -match "^native-code: 'arm64-v8a'\s*$")) { throw 'Unexpected APK architecture' }
-Invoke-BuildTool $Node @($prepare, 'describe', $OutputDirectory, $Version, "$VersionCode", $updateKey)
+Invoke-BuildTool $Node @($prepare, 'describe', $OutputDirectory, $Version, "$VersionCode", $updateKey, $Notes)
 Write-Output $signed

@@ -6,9 +6,8 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
 
-const oldId = 'com.alloconnect.app';
-const applicationId = 'com.alloconnect.alo';
-const updateBranch = 'android-updates-next';
+const baseVersion = '0.16.17';
+const baseCode = 54;
 
 function patchManifest(bytes, version, code) {
   assert.equal(bytes.readUInt16LE(0), 3);
@@ -19,12 +18,7 @@ function patchManifest(bytes, version, code) {
   const offsets = pool + bytes.readUInt16LE(pool + 2);
   const stringStart = pool + bytes.readUInt32LE(pool + 20);
   const strings = [];
-  const replaced = new Set();
-  const replacements = new Map([
-    ['0.16.16', version],
-    ...['', '.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION', '.fileprovider', '.androidx-startup']
-      .map(suffix => [oldId + suffix, applicationId + suffix]),
-  ]);
+  let versionReplaced = false;
 
   for (let i = 0; i < count; i++) {
     const offset = stringStart + bytes.readUInt32LE(offsets + 4 * i);
@@ -32,13 +26,12 @@ function patchManifest(bytes, version, code) {
     assert.ok(length < 32768);
     const value = bytes.toString('utf16le', offset + 2, offset + 2 + 2 * length);
     strings.push(value);
-    const replacement = replacements.get(value);
-    if (replacement === undefined) continue;
-    assert.equal(replacement.length, length, 'Manifest strings must stay the same size');
-    bytes.write(replacement, offset + 2, 2 * length, 'utf16le');
-    replaced.add(value);
+    if (value !== baseVersion) continue;
+    assert.equal(version.length, length, 'Manifest strings must stay the same size');
+    bytes.write(version, offset + 2, 2 * length, 'utf16le');
+    versionReplaced = true;
   }
-  assert.equal(replaced.size, replacements.size);
+  assert.ok(versionReplaced, 'Missing base version in Android manifest');
 
   for (let chunk = pool; chunk < bytes.length; chunk += bytes.readUInt32LE(chunk + 4)) {
     assert.ok(bytes.readUInt32LE(chunk + 4) >= 8);
@@ -49,7 +42,7 @@ function patchManifest(bytes, version, code) {
       const attr = first + i * stride;
       if (strings[bytes.readUInt32LE(attr + 4)] !== 'versionCode') continue;
       assert.equal(bytes[attr + 15], 0x10);
-      assert.equal(bytes.readUInt32LE(attr + 16), 53);
+      assert.equal(bytes.readUInt32LE(attr + 16), baseCode);
       bytes.writeUInt32LE(code, attr + 16);
       return;
     }
@@ -57,79 +50,50 @@ function patchManifest(bytes, version, code) {
   throw Error('Missing Android versionCode');
 }
 
-function patchResourcePackage(bytes) {
-  assert.equal(bytes.readUInt16LE(0), 2);
-  for (let chunk = bytes.readUInt16LE(2); chunk < bytes.length; chunk += bytes.readUInt32LE(chunk + 4)) {
-    assert.ok(bytes.readUInt32LE(chunk + 4) >= 8);
-    if (bytes.readUInt16LE(chunk) !== 0x200) continue;
-    const offset = chunk + 12;
-    if (bytes.toString('utf16le', offset, offset + 256).split('\0')[0] !== oldId) continue;
-    bytes.write(applicationId, offset, applicationId.length * 2, 'utf16le');
-    return;
-  }
-  throw Error('Missing compiled resource package');
-}
-
-function patchApp(source, version, publicKey) {
-  const replaceOnce = (before, after) => {
-    assert.equal(source.split(before).length, 2, `Expected one occurrence of ${before}`);
-    source = source.replace(before, after);
-  };
-  replaceOnce("const VERSION = '0.16.16';", `const VERSION = '${version}';`);
-  replaceOnce('android-updates/`;', `${updateBranch}/\`;`);
-  replaceOnce('commits/android-updates`', `commits/${updateBranch}\``);
-  assert.equal((source.match(/const UPD_PUBKEY = '[^']+';/g) || []).length, 1);
-  source = source.replace(/const UPD_PUBKEY = '[^']+';/, `const UPD_PUBKEY = '${publicKey}';`);
-  return source.replace('своя ветка телефона (android-updates)', `своя ветка телефона (${updateBranch})`)
-    .replace(/тем же ключом Ed25519, что обновления ПК \(здесь — открытая половина\)/, 'ключом Ed25519 нового Android-канала')
-    .replace(/\/\/ открытый ключ обновлений ПК[^\r\n]+/, '// Открытый ключ Ed25519 нового Android-канала');
-}
-
-const [action, directory, version, codeArg, privateKeyPath, notes = 'Отвязка старого устройства в настройках аккаунта.'] = process.argv.slice(2);
-assert.ok(directory && /^0\.16\.\d{2}$/.test(version) && Number(codeArg) > 53 && privateKeyPath);
+const [action, directory, version, codeArg, privateKeyPath, extra] = process.argv.slice(2);
 const code = Number(codeArg);
+assert.ok(directory && /^0\.16\.\d{2}$/.test(version) && version > baseVersion && Number.isInteger(code) && code > baseCode && privateKeyPath);
 const key = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
 assert.equal(key.asymmetricKeyType, 'ed25519');
 const publicKey = crypto.createPublicKey(key);
 const file = name => path.join(directory, name);
+const web = path.join(__dirname, 'www');
 
 if (action === 'prepare') {
   const manifest = fs.readFileSync(file('AndroidManifest.xml'));
   patchManifest(manifest, version, code);
   fs.writeFileSync(file('AndroidManifest.xml'), manifest);
-  const resources = fs.readFileSync(file('resources.arsc'));
-  patchResourcePackage(resources);
-  fs.writeFileSync(file('resources.arsc'), resources);
-  const config = JSON.parse(fs.readFileSync(file('capacitor.config.json'), 'utf8'));
-  assert.equal(config.appId, oldId);
-  config.appId = applicationId;
-  fs.writeFileSync(file('capacitor.config.json'), JSON.stringify(config, null, 2) + '\n');
   const updaterKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64');
-  fs.writeFileSync(file('app.js'), patchApp(fs.readFileSync(file('app.js'), 'utf8'), version, updaterKey));
+  const source = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
+  const base = fs.readFileSync(file('base-app.js'), 'utf8');
+  for (const app of [base, source]) {
+    assert.ok(app.includes(`const UPD_PUBKEY = '${updaterKey}';`), 'Update key does not match the Android updater');
+    assert.ok(app.includes('commits/android-updates-next`'), 'Unexpected Android update channel');
+  }
+  const versionLine = /^const VERSION = '0\.16\.\d{2}';$/m;
+  assert.ok(versionLine.test(source), 'Missing Android web version');
+  fs.writeFileSync(file('app.js'), source.replace(versionLine, `const VERSION = '${version}';`));
 } else if (action === 'describe') {
+  assert.ok(extra?.trim(), 'Missing Android release notes');
   const name = `alloconnect_android-${version}-arm64-v8a.apk`;
   const apk = fs.readFileSync(file(name));
   const m = JSON.stringify({
     app: 'alloconnect-android', v: version, code,
     apk: { n: name, size: apk.length, sha256: crypto.createHash('sha256').update(apk).digest('hex') },
-    notes, abi: 'arm64-v8a',
+    notes: extra, abi: 'arm64-v8a',
   });
   const signature = crypto.sign(null, Buffer.from(m), key);
   assert.ok(crypto.verify(null, Buffer.from(m), publicKey, signature));
   fs.writeFileSync(file('update-android.json'), JSON.stringify({ m, sig: signature.toString('base64') }) + '\n');
 } else if (action === 'archive') {
-  const source = notes;
   const replacements = new Map([
     ['AndroidManifest.xml', file('AndroidManifest.xml')],
-    ['resources.arsc', file('resources.arsc')],
-    ['assets/capacitor.config.json', file('capacitor.config.json')],
     ['assets/public/app.js', file('app.js')],
   ]);
-  const web = path.join(__dirname, 'www');
-  for (const name of fs.readdirSync(web).filter(name => name.endsWith('.js'))) {
+  for (const name of fs.readdirSync(web).filter(name => name !== 'app.js' && /\.(js|html|css)$/.test(name))) {
     replacements.set('assets/public/' + name, path.join(web, name));
   }
-  writeAlignedArchive(fs.readFileSync(source), file('aligned.apk'), replacements);
+  writeAlignedArchive(fs.readFileSync(extra), file('aligned.apk'), replacements);
 } else {
   throw Error('Expected prepare, archive or describe');
 }
