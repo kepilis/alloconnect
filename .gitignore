@@ -1,0 +1,5 @@
+.android-signing/
+dist/
+*.pem
+*.p12
+*.password
