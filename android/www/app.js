@@ -7,7 +7,7 @@
    те же сообщения в канале друзей (call/answer/decline/busy/cancel/dm/rtc-restart).
    ========================================================= */
 const $ = (id) => document.getElementById(id);
-const VERSION = '0.16.19';
+const VERSION = '0.16.20';
 
 /* ---------- Лог (без IP, переписки и кодов) ---------- */
 function L(tag, data) { alo.log(String(tag).slice(0, 20), typeof data === 'string' ? data : JSON.stringify(data)); }

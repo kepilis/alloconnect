@@ -47,13 +47,14 @@
   else if(s.phase==='expired')h='<h2>Время подключения истекло</h2><p>Данные аккаунтов не объединены. Отмените подключение и создайте новый код.</p>';
   if(s&&!s.localApproved&&!['committing','done'].includes(s.phase))h+='<div class="lab-actions"><button id="lab-cancel">Отменить подключение</button></div>';
   if(!s&&!unlinkPending){
-   if(lab.platform==='phone'&&e.account)h+='<div class="lab-actions"><button id="lab-unlink">Отвязать устройство</button></div>';
+   if(e.account)h+='<div class="lab-actions"><button id="lab-unlink">Отвязать устройство</button></div>';
    h+='<details class="lab-card"><summary>Восстановление до объединения</summary><p>Вернуть локальный профиль, контакты, переписку и настройки из копии на этом устройстве. Изменения после объединения будут заменены. Второе устройство сохраняет свои данные.</p><button id="account-restore">Выбрать копию</button><div id="account-backups"></div></details>';
   }
   $('lab-view').innerHTML=h;
   bind('account-restore',()=>recovery.choose($('account-backups')));
   bind('lab-unlink',()=>{
-   if(unlinkPending||confirm('Отвязать второе устройство? Синхронизация прекратится. Профиль, контакты, переписка и настройки сохранятся на телефоне.'))return recovery.unlink();
+   const device=lab.platform==='desktop'?'этом ПК':'этом телефоне';
+   if(unlinkPending||confirm('Отвязать второе устройство? Синхронизация прекратится. Профиль, контакты, переписка и настройки сохранятся на '+device+'. Второе устройство сохранит свои данные.'))return recovery.unlink();
   });
   bind('lab-sync-now',async()=>{await lab.sync.tick();await window.accountLabData.tick()});bind('lab-create',()=>e.create());bind('lab-save-name',()=>lab.setName($('lab-name').value));bind('lab-paste',async()=>{$('lab-join-code').value=await lab.paste()});bind('lab-join',()=>e.join($('lab-join-code').value));bind('lab-copy',()=>lab.copy(s.code));
   panel.querySelectorAll('[data-accept]').forEach(b=>b.onclick=()=>action(()=>e.acceptDevice(b.dataset.accept)));
@@ -65,5 +66,5 @@
  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&lab.closePanel()){event.preventDefault();event.stopImmediatePropagation()}},true);
  window.addEventListener('account-lab-change',render);
  setInterval(async()=>{if(e.s?.phase!=='invite')return;try{const result=await lab.api.pending();pending=result.incoming||[];render()}catch{}},1500);
- lab.ready.then(()=>{if(e.s)panel.hidden=false;render()});render();
+ lab.ready.then(render);render();
 })();
