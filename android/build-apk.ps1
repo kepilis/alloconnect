@@ -5,8 +5,8 @@ param(
     [Parameter(Mandatory)][string]$JavaDirectory,
     [Parameter(Mandatory)][string]$BuildTools,
     [Parameter(Mandatory)][string]$SigningDirectory,
-    [string]$Version = '0.16.19',
-    [int]$VersionCode = 56,
+    [string]$Version = '0.16.21',
+    [int]$VersionCode = 58,
     [Parameter(Mandatory)][string]$Notes
 )
 

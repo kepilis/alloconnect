@@ -95,7 +95,7 @@
   const settings=copy(lab()?.engine.account?.data?.settings||{desktop:{},phone:{}});settings[kind]={};for(const [k,v] of Object.entries(read('settings',{})))if(!excluded.has(k)&&!/(pass|token|secret|deviceId)/i.test(k)&&['string','number','boolean'].includes(typeof v))settings[kind][k]=v;
   Object.assign(settings[kind],await nativeSettings());return {history,calls:read('accountLab.calls',[]),settings};
  }
- async function refresh(ids){if(typeof convs==='undefined')return;for(const id of ids){const c=convs.get(id);if(!c)continue;if(desktop)clearConvMedia(c);else{c.box.replaceChildren();c.msgs?.clear()}c.loaded=false;await loadHistory(c);scrollEnd(c)} }
+ async function refresh(ids){if(typeof convs==='undefined')return;for(const id of ids){const c=convs.get(id);if(!c)continue;if(!desktop&&typeof refreshConvHistory==='function'){await refreshConvHistory(c);continue}if(desktop)clearConvMedia(c);else{c.box.replaceChildren();c.msgs?.clear()}c.loaded=false;await loadHistory(c);scrollEnd(c)} }
  async function apply(data,restore=false){await hydrate();const desired=AccountData.snapshot(data),before=await snapshot(),old=lab()?.engine.account?.data||{history:{}};const changed=[];
   if(!desktop){await flushPhone();const r=await alo.accountLabHistoryRead();if(!r.ok)throw Error(r.error||'Не удалось прочитать историю');const oldHistory=phoneHistory;phoneHistory=mergeLocalHistory(phoneSavedSnapshot,phoneHistory,r.history||{});phoneSavedSnapshot=copy(r.history||{});changed.push(...changedHistoryIds(oldHistory,phoneHistory))}
   for(const id of (desktop?new Set([...Object.keys(desired.history),...Object.keys(old.history||{})]):[])){const rows=desired.history[id]||[],current=before.history[id]||[];if(stable(rows)===stable(current))continue;

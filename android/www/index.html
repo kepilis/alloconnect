@@ -187,7 +187,6 @@
         <span id="remoteStats" class="muted"></span>
         <button id="btnFull" class="icon-btn" aria-label="На весь экран">⛶</button>
       </div>
-      <button id="btnWatchReplay" class="btn">Смотреть вместе</button>
       <div id="remoteReason" class="reason"></div>
       <div id="fsControls" class="hidden">
         <button id="btnFsExit" class="fs-btn">✕</button>
@@ -230,7 +229,7 @@
     <form id="chatForm" class="chat-form">
       <button type="button" id="btnAttach" class="icon-btn" aria-label="Файл">📎</button>
       <textarea id="chatInput" class="msg-input" rows="1" placeholder="Сообщение" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
-      <button class="btn primary" type="submit">➤</button>
+      <button class="btn primary" type="submit" aria-label="Отправить сообщение">➤</button>
       <input id="fileInput" type="file" multiple class="hidden">
     </form>
   </div>
@@ -270,7 +269,7 @@
       <form id="gChatForm" class="chat-form">
         <button type="button" id="gAttach" class="icon-btn" aria-label="Файл">📎</button>
         <textarea id="gChatInput" class="msg-input" rows="1" placeholder="Сообщение всем" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
-        <button class="btn primary" type="submit">➤</button>
+        <button class="btn primary" type="submit" aria-label="Отправить сообщение всем">➤</button>
         <input id="gFileInput" type="file" multiple class="hidden">
       </form>
     </div>
@@ -305,13 +304,13 @@
     <div class="who"><b id="dmTitle"></b><div id="dmSub" class="muted small"></div></div>
     <button id="dmSearchBtn" class="icon-btn" aria-label="Поиск">🔍</button>
     <button id="dmClearBtn" class="icon-btn" aria-label="Очистить историю с другом">🗑</button>
-    <button id="btnDmCall" class="btn primary small-btn">Позвонить</button>
+    <button id="btnDmCall" class="icon-btn dm-call" aria-label="Позвонить другу" title="Позвонить другу">☎</button>
   </header>
   <div id="dmMessages" class="messages grow"></div>
   <form id="dmForm" class="chat-form">
     <button type="button" id="btnDmAttach" class="icon-btn" aria-label="Файл">📎</button>
     <textarea id="dmInput" class="msg-input" rows="1" placeholder="Сообщение" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" maxlength="2000" enterkeyhint="send"></textarea>
-    <button class="btn primary" type="submit">➤</button>
+    <button class="btn primary" type="submit" aria-label="Отправить сообщение">➤</button>
     <input id="dmFileInput" type="file" multiple class="hidden">
   </form>
 </section>
@@ -579,6 +578,15 @@
 </div>
 
 <!-- повтор: посмотреть, сохранить, отправить -->
+<dialog id="camPicker" aria-labelledby="camPickerTitle">
+  <h2 id="camPickerTitle">Какую камеру показать?</h2>
+  <p class="muted">Камера включится после выбора.</p>
+  <div class="camera-choices">
+    <button type="button" class="btn primary" data-facing="user">Фронтальная</button>
+    <button type="button" class="btn" data-facing="environment">Задняя</button>
+    <button type="button" class="btn" data-cam-cancel>Отмена</button>
+  </div>
+</dialog>
 <dialog id="watchDialog" aria-labelledby="watchTitle">
   <div id="watchShell">
   <h2 id="watchTitle">Смотреть вместе</h2>

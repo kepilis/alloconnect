@@ -7,7 +7,7 @@
    те же сообщения в канале друзей (call/answer/decline/busy/cancel/dm/rtc-restart).
    ========================================================= */
 const $ = (id) => document.getElementById(id);
-const VERSION = '0.16.20';
+const VERSION = '0.16.21';
 
 /* ---------- Лог (без IP, переписки и кодов) ---------- */
 function L(tag, data) { alo.log(String(tag).slice(0, 20), typeof data === 'string' ? data : JSON.stringify(data)); }
@@ -38,6 +38,19 @@ const DEFAULTS = {
 let myPresence='online';
 const presenceNames={online:'В сети',away:'Нет на месте',invisible:'Невидимка',offline:'Не в сети',dnd:'Не беспокоить'};
 const settings = () => ({ ...DEFAULTS, ...store.get('settings', {}) });
+
+let nativeSystemBars = null;
+function syncNativeStatusBar() {
+  // The native window uses a dark status-bar background even when Android is
+  // in its light theme. Capacitor's default follows the system theme and can
+  // otherwise put black clock/network icons on that dark background.
+  const capacitor = window.Capacitor;
+  if (!alo.native || !capacitor?.isPluginAvailable?.('SystemBars')) return;
+  try {
+    nativeSystemBars ||= capacitor.registerPlugin('SystemBars');
+    nativeSystemBars.setStyle({ style: 'DARK', bar: 'StatusBar' }).catch(() => {});
+  } catch { /* Older native clients can omit the optional plugin. */ }
+}
 
 function bindSettingsCats(){
   const open=store.get('settingsOpen',[]);
@@ -84,7 +97,7 @@ function topDialog() {
 
 function focusOpenedDialog(dialog) {
   if (!dialogOpeners.has(dialog)) dialogOpeners.set(dialog, document.activeElement);
-  dialog.querySelector('[data-dialog-title]').focus();
+  dialog.querySelector('[data-dialog-title]')?.focus({ preventScroll: true });
 }
 
 function restoreDialogFocus(dialog) {
@@ -764,7 +777,7 @@ function onData(d) {
       if(d.fid==null||d.fid===svidOut?.fid)startVideoEcho();
       break;
     case 'svid-stop':
-      if(Number.isInteger(d.fid)&&d.fid===svidOut?.fid) { const old=svidOut; old.end?.(); old.status.remove(); URL.revokeObjectURL(old.url); svidOut=null; }
+      if(Number.isInteger(d.fid)&&d.fid===svidOut?.fid) stopScreenVideo();
       break;
     case 'svid-cancel':
       if(Number.isInteger(d.fid)&&SH)cancelShareVideo(d.fid);
@@ -921,6 +934,7 @@ function showRemoteScreen() {
   v.muted = S.deafened;
   v.volume = Number($('screenVol').value) / 100;
   v.play().catch(() => {});
+  v.onloadeddata = () => refreshClip();
   $('remoteScreenOwner').textContent = S.friendNick || 'друг';
   $('remoteScreenWrap').classList.remove('hidden');
   $('screenVolRow').classList.remove('hidden');
@@ -936,6 +950,7 @@ function showRemoteScreen() {
 }
 
 function hideRemoteScreen() {
+  stopScreenVideo();
   ctlViewStop(false, 'показ закончился');
   cancelPlacement();
   tools.mode = null;
@@ -947,6 +962,7 @@ function hideRemoteScreen() {
   updateToolbar();
   if ($('remoteScreenWrap').classList.contains('fs')) setFullscreen(false);
   $('remoteScreen').srcObject = null;
+  $('remoteScreen').onloadeddata = null;
   $('remoteReason').textContent = '';
   $('remoteStats').textContent = '';
   $('remoteScreenWrap').classList.add('hidden');
@@ -1000,6 +1016,10 @@ function clipTarget() {
 
 async function refreshClip() {
   const t = clipTarget();
+  // Android receiver tracks can omit width/height from getSettings(). Wait for
+  // the first decoded frame and use the player's real dimensions instead of
+  // allocating a 720p recorder for an incoming 360p/180p stream.
+  if (t && ($('remoteScreen').readyState < 2 || !$('remoteScreen').videoWidth || !$('remoteScreen').videoHeight)) { updateClipBtns(); return; }
   const key = t ? t.key + ':' + (t.video?.id || '') : null;
   if (key === S.clipKey) return;
   stopClip();
@@ -1010,7 +1030,8 @@ async function refreshClip() {
   S.clipMix = mix;
   const rec = new window.ClipRecorder(Math.max(5, Math.min(120, Number(settings().clipSeconds) || 30)));
   S.clip = rec;
-  const ok = await rec.start(t.video, mix.track);
+  const ok = await rec.start(t.video, mix.track, { width: $('remoteScreen').videoWidth, height: $('remoteScreen').videoHeight });
+  if (S.clip !== rec) { rec.stop(); return; }
   if (!ok) { const st = t.video.getSettings?.() || {}; L('clip', { startFailed: rec.err, size: `${st.width}x${st.height}` }); stopClip(); }
   else L('clip', { started: t.key, seconds: rec.seconds });
   updateClipBtns();
@@ -1024,7 +1045,11 @@ function stopClip() {
   S.clipKey = null;
   updateClipBtns();
 }
-function updateClipBtns() { $('toolClip').classList.toggle('hidden', !S.clip); }
+function updateClipBtns() {
+  $('toolClip').classList.toggle('hidden', !settings().clip || $('remoteScreenWrap').classList.contains('hidden'));
+  $('toolClip').disabled = !S.clip?.running;
+  $('toolClip').title = S.clip?.running ? 'Повтор последних секунд' : 'Повтор недоступен на этом устройстве';
+}
 
 async function saveClip() {
   const rec = S.clip;
@@ -1045,13 +1070,15 @@ async function saveClip() {
 }
 
 function showClipPreview(file, secs, frames) {
+  if ($('remoteScreenWrap').classList.contains('fs')) setFullscreen(false);
   if (S.clipUrl) URL.revokeObjectURL(S.clipUrl);
   const url = URL.createObjectURL(file);
   S.clipUrl = url;
   S.clipFile = file;
   watchTogether.preview(file, frames);
   $('clipVideo').src = url;
-  $('clipInfo').textContent = `Последние ${secs} с · ${fmtSize(file.size)}`;
+  const noAudio = settings().clipAudio === true && !(window.AudioEncoder && window.MediaStreamTrackProcessor);
+  $('clipInfo').textContent = `Последние ${secs} с · ${fmtSize(file.size)}` + (noAudio ? ' · без звука: WebView не поддерживает запись аудио' : '');
   $('clipModal').classList.remove('hidden');
   $('clipSend').disabled = !S.connected;
 }
@@ -1849,6 +1876,7 @@ function commitPlacement() {
 }
 
 function sendScreenVideo(p, pl) {
+  stopScreenVideo(true);
   const vol = p.vid.vol / 100;
   const snd = p.vid.snd && p.vid.vol > 0;
   store.set('settings', { ...settings(), svidVol: p.vid.vol, svidSound: p.vid.snd });
@@ -1887,19 +1915,36 @@ function startVideoEcho() {
   $('screenView').appendChild(box);
   placeEcho(box, my.pl, my.aspect);
   my.echo = box;
-  const end = () => { if (!box.isConnected) return; v.pause(); box.remove(); URL.revokeObjectURL(my.url); if (svidOut === my) svidOut = null; };
+  let ended = false, timer;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(timer);
+    pauseMediaIn(v, true);
+    box.remove();
+    URL.revokeObjectURL(my.url);
+    if (svidOut === my) svidOut = null;
+  };
   my.end=end;
   v.onended = end;
   v.onerror = end;
-  v.play().catch(() => { v.muted = true; v.play().catch(end); });
-  setTimeout(end, (SVID_SEC + 2) * 1000);
+  v.play().catch(() => { if (ended) return; v.muted = true; v.play().catch(end); });
+  timer = setTimeout(end, (SVID_SEC + 2) * 1000);
+}
+
+function stopScreenVideo(notify = false) {
+  const current = svidOut;
+  if (!current) return;
+  if (notify) send({ t: 'svid-cancel', fid: current.fid });
+  current.status.remove();
+  if (current.end) current.end();
+  else { pauseMediaIn(current.echo, true); current.echo?.remove(); URL.revokeObjectURL(current.url); }
+  if (svidOut === current) svidOut = null;
 }
 
 function onVideoRefused(why) {
   if (!svidOut) return;
-  svidOut.status.remove();
-  URL.revokeObjectURL(svidOut.url);
-  svidOut = null;
+  stopScreenVideo();
   const txt = { off: `${S.friendNick} выключил картинки и видео на экран`, big: 'Видео слишком большое для друга', fmt: `У ${S.friendNick} это видео не открылось`, long: 'Видео длиннее минуты', busy: `${S.friendNick} сейчас не стримит` }[why];
   toast(txt || 'Друг не принял видео');
 }
@@ -2261,8 +2306,11 @@ function bindLiveTools() {
   };
   $('toolVpad').onclick = () => setVpad(!VP.on);
   $('toolClip').onclick = () => saveClip();
-  $('btnWatchReplay').onclick = () => saveClip();
   $('clipClose').onclick = () => closeClipPreview();
+  $('clipModal').addEventListener('click', e => { if (e.target === $('clipModal')) closeClipPreview(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !$('clipModal').classList.contains('hidden') && !$('watchDialog').open) { e.preventDefault(); closeClipPreview(); }
+  });
   $('clipSave').onclick = () => { if (S.clipFile) saveBlob(S.clipFile, S.clipFile.name, 'video/mp4'); };
   $('clipSend').onclick = () => {
     if (!S.connected || !S.fileChan || !S.clipFile) { toast('Друг не в звонке'); return; }
@@ -2367,6 +2415,9 @@ async function prepare(setup) {
 
 function enterCall() {
   S.inCall = true;
+  setCompose(composers.call, null);
+  $('chatInput').value = '';
+  closeSearch('call');
   showScreen('call');
   $('meName').textContent = S.nick;
   $('meInitial').textContent = initial(S.nick);
@@ -2488,6 +2539,10 @@ function setStatus(kind, text) {
 const initial = (s) => (s || '?').trim().charAt(0).toUpperCase() || '?';
 
 function toggleChat(open = !S.chatOpen) {
+  if (!open) {
+    pauseMediaIn($('messages'));
+    if ($('chatPanel').contains(document.activeElement)) document.activeElement.blur();
+  }
   S.chatOpen = open;
   $('chatPanel').classList.toggle('hidden', !open);
   $('btnChat').classList.toggle('on', open);
@@ -2504,6 +2559,12 @@ function updateUnread() {
    Экраны лобби
    ========================================================= */
 function showScreen(id) {
+  for (const screen of document.querySelectorAll('.screen.active')) {
+    if (screen.id === id) continue;
+    for (const messages of screen.querySelectorAll('.messages')) pauseMediaIn(messages);
+    if (screen.contains(document.activeElement)) document.activeElement.blur();
+    if (!$('stickerPicker').classList.contains('hidden')) $('stkClose').click();
+  }
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('active', s.id === id);
 }
 function showStep(id) {
@@ -2597,7 +2658,20 @@ function toEnd(s) { s.scrollTop = s.scrollHeight; s.progTop = s.scrollTop; s.sti
 const boxSizes = typeof ResizeObserver === 'function' ? new ResizeObserver((list) => {
   for (const e of list) { const s = e.target.parentElement; if (s && s.stick !== false) toEnd(s); }
 }) : null;
+function pauseMediaIn(root, release = false) {
+  if (!root) return;
+  const media = root.matches?.('video,audio') ? [root] : root.querySelectorAll('video,audio');
+  for (const element of media) {
+    element.pause();
+    if (release) { element.srcObject = null; element.removeAttribute('src'); element.load(); }
+  }
+  if (release) {
+    const messages = root.matches?.('.msg') ? [root, ...root.querySelectorAll('.msg')] : root.querySelectorAll('.msg');
+    for (const message of messages) if (message.fileUrl) { URL.revokeObjectURL(message.fileUrl); message.fileUrl = null; }
+  }
+}
 function mountConv(conv, host) {
+  pauseMediaIn(host);
   host.replaceChildren(conv.box);
   if (!host.stickInit) {
     host.stickInit = true;
@@ -2611,6 +2685,40 @@ function mountConv(conv, host) {
   }
   if (boxSizes && !conv.box.observed) { conv.box.observed = true; boxSizes.observe(conv.box); }
   toEnd(host);
+}
+async function refreshConvHistory(conv) {
+  const host = conv.box.parentElement;
+  const stick = !host || host.stick !== false;
+  const top = host?.scrollTop || 0;
+  const edge = host?.getBoundingClientRect().top || 0;
+  const anchor = host && [...conv.box.querySelectorAll('.msg[data-mid]')].find(message => message.getBoundingClientRect().bottom >= edge);
+  const mid = anchor?.dataset.mid;
+  const offset = anchor ? anchor.getBoundingClientRect().top - edge : 0;
+  pauseMediaIn(conv.box, true);
+  conv.box.replaceChildren();
+  conv.msgs?.clear();
+  conv.loaded = false;
+  await loadHistory(conv);
+  for (const cp of Object.values(composers)) {
+    if (cp.owner !== conv) continue;
+    const item = conv.msgs?.get(cp.item?.e.mid);
+    if (!item || item.e.deleted) setCompose(cp, null);
+    else {
+      cp.item = item;
+      cp.bar.querySelector('small').textContent = snip(item.e.type === 'file' ? '📎 ' + item.e.text : item.e.text, 80);
+    }
+  }
+  const draft = dmDrafts.get(conv);
+  if (draft?.mode) {
+    draft.item = conv.msgs?.get(draft.item?.e.mid) || null;
+    if (!draft.item || draft.item.e.deleted) { draft.mode = null; draft.item = null; }
+  }
+  if (host && conv.box.parentElement === host && !stick) {
+    const current = conv.msgs?.get(mid)?.el;
+    host.scrollTop = current ? host.scrollTop + current.getBoundingClientRect().top - host.getBoundingClientRect().top - offset : top;
+    host.progTop = host.scrollTop;
+    host.stick = false;
+  } else if (conv.box.parentElement === host) scrollEnd(conv, true);
 }
 function scrollEnd(conv, force) {
   const s = conv?.box.parentElement;
@@ -2636,6 +2744,8 @@ function recordStatus(conv, mid, st) {
 }
 function clearHistory(conv) {
   if (!conv?.id) return;
+  clearComposeReferences(conv);
+  pauseMediaIn(conv.box, true);
   historyFiles.clear(conv.id).catch(e=>L('history',{fileClearError:String(e.message)}));
   store.del('hist.' + conv.id);
   window.accountLabData?.ready&&accountLabData.clearHistory(conv.id);
@@ -2648,7 +2758,7 @@ function clearAllHistory() {
   window.accountLabData?.ready&&accountLabData.clearHistory();
   historyFiles.clear().catch(e=>L('history',{fileClearError:String(e.message)}));
   for (const k of Object.keys(localStorage)) if (k.startsWith('aloc.hist.')) localStorage.removeItem(k);
-  for (const c of convs.values()) { c.box.replaceChildren(); c.msgs?.clear?.(); c.loaded = true; }
+  for (const c of convs.values()) { clearComposeReferences(c); pauseMediaIn(c.box, true); c.box.replaceChildren(); c.msgs?.clear?.(); c.loaded = true; }
   L('history', { cleared: 'all' });
 }
 // кнопка «удалить»: первое нажатие — «Точно?», второе в течение 4 с — действие
@@ -2690,6 +2800,7 @@ function loadHistory(conv) {
 }
 function adoptConv(temp, id, nick) {
   const conv = getConv(id, nick);
+  for (const cp of Object.values(composers)) if (cp.owner === temp) cp.owner = conv;
   for (const el of [...temp.box.children]) conv.box.appendChild(el);
   for (const [k, v] of temp.msgs || []) { conv.msgs ??= new Map(); conv.msgs.set(k, v); }
   for (const e of temp.pending) record(conv, e);
@@ -2861,6 +2972,7 @@ function markEdited(el) {
   if (meta && !meta.querySelector('.edited')) { const s = document.createElement('span'); s.className = 'edited'; s.textContent = ' · изменено'; meta.appendChild(s); }
 }
 function renderDeleted(el, e) {
+  pauseMediaIn(el, true);
   e.deleted = true;
   e.react = {};
   el.classList.add('deleted');
@@ -2981,6 +3093,7 @@ const composers = {
 function setCompose(cp, mode, item) {
   cp.mode = mode;
   cp.item = item || null;
+  cp.owner = mode ? cp.conv() : null;
   if (!cp.bar) {
     cp.bar = document.createElement('div');
     cp.bar.className = 'compose-bar hidden';
@@ -3005,12 +3118,14 @@ function cancelCompose(cp) {
 }
 function composeTakeReply(cp) {
   if (cp.mode !== 'reply' || !cp.item) return null;
+  if (cp.owner !== cp.conv() || cp.owner?.msgs?.get(cp.item.e.mid)?.e.deleted || cp.item.e.deleted) { setCompose(cp, null); return null; }
   const e = cp.item.e;
   setCompose(cp, null);
   return { mid: e.mid, by: e.who, text: snip(e.type === 'file' ? '📎 ' + e.text : e.text) };
 }
 function composeSubmitEdit(cp, conv, text) {
   if (cp.mode !== 'edit' || !cp.item) return false;
+  if (cp.owner !== conv || cp.item.e.deleted) { setCompose(cp, null); toast('Сообщение больше нельзя изменить. Текст сохранён в поле ввода'); return true; }
   const it = cp.item;
   setCompose(cp, null);
   $(cp.input).value = '';
@@ -3046,6 +3161,11 @@ function showMsgActs(el, cp) {
 function hideMsgActs() { $('msgActs').classList.add('hidden'); actFor = null; }
 
 function bindMsgUi() {
+  for (const cp of Object.values(composers)) {
+    $(cp.input).addEventListener('keydown', event => {
+      if (event.key === 'Escape' && cp.mode) { event.preventDefault(); event.stopPropagation(); cancelCompose(cp); }
+    });
+  }
   const sheet = $('msgActs');
   sheet.querySelector('.ma-row').innerHTML = MSG_REACTS.map((r) => `<button type="button" class="ma-react" data-r="${r}">${r}</button>`).join('');
   for (const [host, cp] of [['messages', composers.call], ['dmMessages', composers.dm], ['gMessages',composers.grp]]) {
@@ -3077,6 +3197,15 @@ const searches = {
   call: { host: 'messages', conv: () => S.callConv, el: null, t: 0 },
   dm: { host: 'dmMessages', conv: () => dmOpen, el: null, t: 0 },
 };
+function closeSearch(kind) {
+  const search = searches[kind];
+  clearTimeout(search.t);
+  if (!search.el) return;
+  if (search.el.contains(document.activeElement)) document.activeElement.blur();
+  search.el.classList.add('hidden');
+  search.el.querySelector('input').value = '';
+  search.el.querySelector('.ms-results').replaceChildren();
+}
 function toggleSearch(kind) {
   const sr = searches[kind];
   if (sr.el && !sr.el.classList.contains('hidden')) { sr.el.classList.add('hidden'); return; }
@@ -3155,6 +3284,9 @@ function fileBubble(conv, who, meta, mine, opt = {}) {
   return {
     progress(done) { prog.firstChild.style.width = Math.min(100, (100 * done) / Math.max(1, meta.size)) + '%'; },
     done(url, blob) {
+      if (!m.parentNode || ticket.epoch !== historyFiles.stamp(ticket.id) || (opt.mid && conv.msgs?.get(opt.mid)?.e.deleted)) { URL.revokeObjectURL(url); return; }
+      if (m.fileUrl && m.fileUrl !== url) URL.revokeObjectURL(m.fileUrl);
+      m.fileUrl = url;
       if(!opt.restored&&blob&&opt.mid) ticket.saved=historyFiles.put(ticket.id,opt.mid,meta,blob,ticket.epoch).catch(e=>{L('history',{fileSaveError:String(e.message)});toast('Файл получен, но не сохранён в истории: недостаточно места или хранилище недоступно');});
       prog.remove();
       // полученный файл — кнопка «Сохранить» (в WebView ссылка на blob сама ничего не скачивает)
@@ -4335,11 +4467,33 @@ async function onRtcRestartAns(id, msg) {
    Чат с другом без звонка (текст — через канал друзей)
    ========================================================= */
 let dmOpen = null;
+// Drafts stay in this WebView session and belong to their conversation.
+const dmDrafts = new WeakMap();
+function clearComposeReferences(conv) {
+  for (const cp of Object.values(composers)) if (cp.owner === conv) setCompose(cp, null);
+  const draft = dmDrafts.get(conv);
+  if (draft) { draft.mode = null; draft.item = null; }
+  if (actFor?.conv === conv) hideMsgActs();
+}
+function saveDmDraft() {
+  if (!dmOpen) return;
+  const cp = composers.dm;
+  dmDrafts.set(dmOpen, { text: $('dmInput').value, mode: cp.owner === dmOpen ? cp.mode : null, item: cp.item });
+}
+function restoreDmDraft(conv) {
+  const draft = dmDrafts.get(conv);
+  setCompose(composers.dm, null);
+  if (draft?.mode && draft.item && !draft.item.e.deleted) setCompose(composers.dm, draft.mode, draft.item);
+  $('dmInput').value = draft?.text || '';
+}
 function openDm(id) {
   const f = friendsList.find((x) => x.id === id);
   if (!f) return;
   const conv = getConv(id, f.nick);
+  const changed = dmOpen !== conv;
+  if (changed) { saveDmDraft(); closeSearch('dm'); hideMsgActs(); if (!$('stickerPicker').classList.contains('hidden')) $('stkClose').click(); }
   dmOpen = conv;
+  if (changed) restoreDmDraft(conv);
   conv.unread = 0;
   $('dmTitle').textContent = f.nick;
   updateDmHead();
@@ -4359,6 +4513,11 @@ function updateDmHead() {
 }
 function closeDm() {
   if (!dmOpen) return;
+  saveDmDraft();
+  pauseMediaIn($('dmMessages'));
+  closeSearch('dm');
+  hideMsgActs();
+  setCompose(composers.dm, null);
   dmOpen = null;
   if ($('dm').classList.contains('active')) showScreen(S.inCall ? 'call' : 'lobby');
 }
@@ -4523,7 +4682,10 @@ async function dmSendFiles(list, extra = {}) {
 /* =========================================================
    Настройки
    ========================================================= */
+let settingsGeneration = 0;
 async function openSettings() {
+  if (!$('settings').classList.contains('hidden')) return;
+  const generation = ++settingsGeneration;
   const o = settings();
   $('optMinKbps').value = o.minKbps;
   $('optStunAlt').checked = !!o.stunAlt;
@@ -4531,8 +4693,7 @@ async function openSettings() {
   $('optStunCustom').value = o.stunCustom || '';
   $('optRelayUrl').value = o.relayUrl || '';
   $('relayDeviceId').value = myIdent?.id || '';
-  const relayInfo = await alo.friendsInfo();
-  $('relayStatus').textContent = !o.relayUrl ? 'Резерв выключен' : relayInfo.relayState === 'ready' ? 'Резерв доступен' : 'Нет подтверждённого подключения к резерву';
+  $('relayStatus').textContent = !o.relayUrl ? 'Резерв выключен' : 'Проверяем резерв…';
   $('optTurnUrl').value = o.turnUrl || '';
   $('optTurnUser').value = o.turnUser || '';
   $('optTurnPass').value = o.turnPass || '';
@@ -4566,9 +4727,17 @@ async function openSettings() {
   applyTheme(o.theme || '');
   $('settings').classList.remove('hidden');
   focusOpenedDialog($('settings'));
-  await renderStatus();
+  const valid = () => settingsGeneration === generation && !$('settings').classList.contains('hidden');
+  await Promise.all([
+    alo.friendsInfo().then(relayInfo => {
+      if (valid()) $('relayStatus').textContent = !o.relayUrl ? 'Резерв выключен' : relayInfo.relayState === 'ready' ? 'Резерв доступен' : 'Нет подтверждённого подключения к резерву';
+    }),
+    renderStatus(valid),
+  ]);
 }
 function closeSettings() {
+  if ($('settings').classList.contains('hidden')) return;
+  settingsGeneration++;
   const o = settings();
   const next = {
     ...o,
@@ -4608,8 +4777,9 @@ function kv(ul, rows) {
     ul.appendChild(li);
   }
 }
-async function renderStatus() {
+async function renderStatus(valid = () => true) {
   const st = await alo.status();
+  if (!valid()) return;
   $('optOnlineBg').checked = !!st.onlineBg;
   const box = $('bgChecks');
   box.innerHTML = '';
@@ -4766,10 +4936,23 @@ function bind() {
 
   // аппаратная «Назад»
   alo.on('back', () => {
+    if ($('camPicker').open) { CAM.chooseCancel?.(); return; }
     if (watchTogether.back()) return;
+    const dialog = topDialog();
+    if (dialog?.id === 'msgActs') { hideMsgActs(); return; }
+    const closeButton = { fcModal: 'fcClose', gPick: 'gPickClose', groupManualReply: 'groupManualReplyClose', shareIn: 'shareInCancel' }[dialog?.id];
+    if (closeButton) { $(closeButton).click(); return; }
+    if (!$('clipModal').classList.contains('hidden')) { closeClipPreview(); return; }
     if(window.accountLab?.closePanel?.())return;
     if (window.talkingAvatar?.closeEditor()) return;
     if (!$('settings').classList.contains('hidden')) { closeSettings(); return; }
+    if (!$('stickerPicker').classList.contains('hidden')) { $('stkClose').click(); return; }
+    if (!$('soundpad').classList.contains('hidden')) { spOpen(false); return; }
+    for (const [kind, search] of Object.entries(searches)) {
+      if (search.el && !search.el.classList.contains('hidden') && search.el.closest('.screen.active')) { closeSearch(kind); return; }
+    }
+    const composer = $('dm').classList.contains('active') ? composers.dm : G.active && G.chatOpen ? composers.grp : S.chatOpen ? composers.call : null;
+    if (composer?.mode) { cancelCompose(composer); return; }
     if ($('remoteScreenWrap').classList.contains('fs')) { setFullscreen(false); return; }
     if ($('dm').classList.contains('active')) { closeDm(); return; }
     if (G.active && G.chatOpen) { grpToggleChat(false); return; }
@@ -4782,6 +4965,7 @@ function bind() {
   alo.on('launch', (e) => onLaunch(e.action));
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      syncNativeStatusBar();
       setTimeout(checkClipboard, 300);
       takePending();
       renderStatus().catch(() => {});
@@ -5306,18 +5490,45 @@ function bindUpdates() {
 
 // поля сообщений (textarea): Enter — отправить (как раньше у однострочного), поле растёт под текст
 function growMsgInput(el) {
+  if (!el.getClientRects().length) return;
+  const box = el.form?.parentElement?.querySelector('.messages');
+  const stick = box && atBottom(box);
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + (el.offsetHeight - el.clientHeight) + 'px';
+  if (stick) toEnd(box);
 }
 function bindMsgInputs() {
+  const viewport = window.visualViewport;
+  let fullHeight = innerHeight;
+  window.addEventListener('orientationchange', () => { fullHeight = 0; });
+  const resizeViewport = () => {
+    const height = Math.round(viewport?.height || innerHeight);
+    const typing = document.activeElement?.matches('.msg-input');
+    if (!typing) fullHeight = innerHeight;
+    else fullHeight = Math.max(fullHeight, innerHeight);
+    document.documentElement.style.setProperty('--app-height', height + 'px');
+    document.body.classList.toggle('keyboard-open', !!typing && fullHeight - height > 100);
+  };
+  viewport?.addEventListener('resize', resizeViewport);
+  window.addEventListener('resize', resizeViewport);
+  document.addEventListener('focusin', resizeViewport);
+  document.addEventListener('focusout', () => requestAnimationFrame(resizeViewport));
+  resizeViewport();
   for (const el of document.querySelectorAll('.msg-input')) {
+    // Prevent the send button from dismissing the software keyboard. Preserve
+    // click/submit semantics, including keyboard and assistive activation.
+    el.form?.addEventListener('pointerdown', e => {
+      const button = e.target.closest('button');
+      if (button?.type === 'submit' && document.activeElement === el) e.preventDefault();
+    });
     const send = () => el.form?.requestSubmit();
     // IME Enter may confirm a suggested/composed word rather than send a message.
-    let composing = false;
+    let composing = false, newline = false;
     el.addEventListener('compositionstart', () => { composing = true; });
     el.addEventListener('compositionend', () => { composing = false; });
-    el.addEventListener('beforeinput', (e) => { if (!composing && !e.isComposing && (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph')) { e.preventDefault(); send(); } });
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !composing && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } });
+    el.addEventListener('beforeinput', (e) => { if (!composing && !e.isComposing && (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph')) { if (newline) { newline = false; return; } e.preventDefault(); send(); } });
+    el.addEventListener('keydown', (e) => { newline = e.key === 'Enter' && e.shiftKey; if (e.key === 'Enter' && !e.shiftKey && !composing && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } });
+    el.addEventListener('keyup', () => { newline = false; });
     el.addEventListener('input', () => growMsgInput(el));
     el.addEventListener('focus', () => growMsgInput(el));
     // после отправки/вставки текста кодом (value = …) — подогнать высоту
@@ -5353,6 +5564,7 @@ async function entryCodeContinue(){
    Старт
    ========================================================= */
 (async function main() {
+  syncNativeStatusBar();
   bindSettingsCats();
   bind();
   bindUpdates();
